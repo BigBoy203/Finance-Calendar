@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Finance Calendar</title>
+  <link rel="icon" href="assets/icon.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="root">
+    <div id="fallback-error" style="display:none; max-width:560px; margin:60px auto; font-family:-apple-system,Segoe UI,sans-serif; padding:0 20px;">
+      <h2>Finance Calendar couldn't start</h2>
+      <p id="fallback-error-message" style="color:#666;"></p>
+      <p style="color:#666; font-size:13px;">
+        This usually happens when the page is opened by double-clicking the file directly. Try serving this
+        folder with a local server instead - for example, run <code>npx serve .</code> or
+        <code>python3 -m http.server</code> from this folder, then open the address it gives you in your
+        browser. See README.md for details.
+      </p>
+    </div>
+  </div>
+  <script>
+    function showFallback(message) {
+      var fallback = document.getElementById('fallback-error');
+      var root = document.getElementById('root');
+      if (fallback && root && root.contains(fallback)) {
+        fallback.style.display = 'block';
+        document.getElementById('fallback-error-message').textContent = message;
+      }
+    }
+    window.addEventListener('error', function (e) {
+      showFallback((e && e.message) ? e.message : 'An unknown error prevented the app from loading.');
+    });
+    // Safety net: if nothing has replaced the fallback content after a few
+    // seconds (e.g. a hang with no thrown error), show it anyway.
+    setTimeout(function () {
+      showFallback('The app is taking unusually long to load, or failed to load silently.');
+    }, 6000);
+  </script>
+  <script src="vendor/react.production.min.js"></script>
+  <script src="vendor/react-dom.production.min.js"></script>
+  <script src="storage.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
