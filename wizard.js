@@ -52,7 +52,10 @@ function presetEntry(preset, defaults) {
 }
 
 function OnboardingWizard({ data, onComplete }) {
+  const [phase, setPhase] = useState('import'); // 'import' | 'setup'
   const [step, setStep] = useState(0);
+  const [importError, setImportError] = useState(null);
+  const [importing, setImporting] = useState(false);
 
   const [income, setIncome] = useState(
     data.incomeSources && data.incomeSources.length
@@ -176,6 +179,42 @@ function OnboardingWizard({ data, onComplete }) {
       onAdd: () => setCreditCards([...creditCards, blankCreditCard()]),
       onRemove: (id) => setCreditCards(creditCards.filter((c) => c.id !== id))
     });
+  }
+
+  async function handleImportFromFile() {
+    setImportError(null);
+    setImporting(true);
+    const result = await window.api.importData();
+    setImporting(false);
+    if (result.success) {
+      onComplete(result.data);
+    } else if (!result.canceled) {
+      setImportError(result.error || 'Import failed. Please check the file and try again.');
+    }
+  }
+
+  // Step 0 of onboarding: ask if the user has an existing backup to import.
+  // No warning needed here since there is no saved data yet at this point.
+  if (phase === 'import') {
+    return h('div', { className: 'wizard-shell' },
+      h('div', null,
+        h('h2', null, 'Welcome to Finance Calendar'),
+        h('p', { style: { color: 'var(--text-secondary)', marginTop: '4px' } },
+          'Do you have a .json backup from a previous install or the web version that you\u2019d like to restore?')
+      ),
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' } },
+        h('button', {
+          className: 'primary',
+          onClick: handleImportFromFile,
+          disabled: importing
+        }, importing ? 'Importing\u2026' : 'Yes \u2014 import my backup file'),
+        h('button', { onClick: () => setPhase('setup') }, 'No \u2014 start fresh'),
+        importError ? h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--late-red)' } }, importError) : null
+      ),
+      h('p', { style: { fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '16px' } },
+        'Choosing "Import" will load your backup file and take you straight into the app with all your existing data. ',
+        'Choosing "Start fresh" takes you through the quick setup wizard.')
+    );
   }
 
   return h('div', { className: 'wizard-shell' },

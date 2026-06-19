@@ -56,6 +56,17 @@ function formatDate(date, settings, opts) {
   });
 }
 
+// Formats an ISO timestamp for the activity log - relative for anything
+// from today, otherwise a short date + time.
+function formatLogTimestamp(isoString) {
+  const d = new Date(isoString);
+  const now = new Date();
+  const isToday = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  if (isToday) return time;
+  return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${time}`;
+}
+
 const FREQS = ['none', 'weekly', 'biweekly', 'monthly', 'yearly'];
 const FREQ_LABELS = {
   none: 'one-time',
@@ -65,12 +76,42 @@ const FREQ_LABELS = {
   yearly: 'yearly'
 };
 
-function addInterval(date, freq) {
-  const d = new Date(date);
-  if (freq === 'weekly') d.setDate(d.getDate() + 7);
-  else if (freq === 'biweekly') d.setDate(d.getDate() + 14);
-  else if (freq === 'monthly') d.setMonth(d.getMonth() + 1);
-  else if (freq === 'yearly') d.setFullYear(d.getFullYear() + 1);
+// Days in a given month. monthIndex is 0-based (0 = January).
+function daysInMonth(year, monthIndex) {
+  return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+// Computes the Nth occurrence after `anchor` for a given frequency, always
+// measuring from the original anchor date rather than chaining from a
+// previous (possibly clamped) occurrence. This matters for monthly/yearly
+// frequencies: a bill due on the 30th should land on Feb 28/29 in February,
+// then go right back to the 30th in March - not stay stuck at 28 forever,
+// which is what would happen if each step clamped relative to the last one.
+function addIntervals(anchor, freq, count) {
+  const d = new Date(anchor);
+  if (freq === 'weekly') {
+    d.setDate(d.getDate() + 7 * count);
+    return d;
+  }
+  if (freq === 'biweekly') {
+    d.setDate(d.getDate() + 14 * count);
+    return d;
+  }
+  if (freq === 'monthly') {
+    const anchorDay = anchor.getDate();
+    const targetMonthIndex = anchor.getMonth() + count;
+    const targetYear = anchor.getFullYear() + Math.floor(targetMonthIndex / 12);
+    const normalizedMonthIndex = ((targetMonthIndex % 12) + 12) % 12;
+    const clampedDay = Math.min(anchorDay, daysInMonth(targetYear, normalizedMonthIndex));
+    return new Date(targetYear, normalizedMonthIndex, clampedDay);
+  }
+  if (freq === 'yearly') {
+    const anchorDay = anchor.getDate();
+    const targetYear = anchor.getFullYear() + count;
+    // handles Feb 29 on a leap year rolling into a non-leap year
+    const clampedDay = Math.min(anchorDay, daysInMonth(targetYear, anchor.getMonth()));
+    return new Date(targetYear, anchor.getMonth(), clampedDay);
+  }
   return d;
 }
 
@@ -110,15 +151,24 @@ function expandEntry(entry, rangeStart, rangeEnd) {
     return occurrences;
   }
 
+  // Always measure occurrences as "N intervals from the original anchor
+  // date" rather than repeatedly stepping from the previous occurrence -
+  // this prevents short-month clamping (e.g. the 30th landing on Feb 28)
+  // from permanently drifting the day-of-month in later months.
+  const anchor = parseYmd(entry.date);
+  let count = 0;
   let safety = 0;
+  cur = addIntervals(anchor, freq, count);
   while (cur < rangeStart && safety < 3000) {
-    cur = addInterval(cur, freq);
+    count++;
+    cur = addIntervals(anchor, freq, count);
     safety++;
   }
   safety = 0;
   while (cur <= end && safety < 600) {
     occurrences.push({ ...entry, occDate: ymd(cur) });
-    cur = addInterval(cur, freq);
+    count++;
+    cur = addIntervals(anchor, freq, count);
     safety++;
   }
   return occurrences;
@@ -128,24 +178,67 @@ function expandEntry(entry, rangeStart, rangeEnd) {
 // Applies per-occurrence price overrides from data.overrides when present.
 function expandAll(entries, kind, rangeStart, rangeEnd, data) {
   const all = [];
-  entries.forEach((e) => {
-    expandEntry(e, rangeStart, rangeEnd).forEach((occ) => {
-      const override = data && data.overrides ? data.overrides[`${e.id}|${occ.occDate}`] : null;
-      const hasOverride = override && override.amount !== undefined && override.amount !== null;
+  const removed = (data && data.removedOccurrences) || {};
+  entries.forEach((entry) => {
+    expandEntry(entry, rangeStart, rangeEnd).forEach((occ) => {
+      if (removed[`${entry.id}|${occ.occDate}`]) return; // this single date was removed; rule untouched
+      const override = data ? getOverride(data, entry.id, occ.occDate) : null;
+      const hasOverride = hasAmountOverride(override);
       all.push({
         ...occ,
         kind,
-        amount: hasOverride ? Number(override.amount) || 0 : entryAmount(e),
-        isRange: !!e.useAmountRange,
-        hasOverride: !!hasOverride
+        amount: hasOverride ? Number(override.amount) || 0 : entryAmount(entry),
+        isRange: !!entry.useAmountRange,
+        hasOverride
       });
     });
   });
   return all;
 }
 
+// Removes a single occurrence of a recurring entry without touching the
+// recurring rule, so past and future occurrences are unaffected.
+function removeOccurrence(data, entryId, occDate) {
+  const key = `${entryId}|${occDate}`;
+  return { ...data, removedOccurrences: { ...(data.removedOccurrences || {}), [key]: true } };
+}
+
+// Appends a message to the activity log shown in Settings. Newest first,
+// capped at 50 entries.
+function logActivity(data, message) {
+  const entry = { id: uid(), timestamp: new Date().toISOString(), message };
+  return { ...data, activityLog: [entry, ...(data.activityLog || [])].slice(0, 50) };
+}
+
 function getOverride(data, entryId, occDate) {
   return data.overrides ? data.overrides[`${entryId}|${occDate}`] : null;
+}
+
+// True when an override actually sets a price (vs. being absent or blank).
+function hasAmountOverride(override) {
+  return !!(override && override.amount !== undefined && override.amount !== null);
+}
+
+// Effective amount for one occurrence of an entry on a given date: the
+// per-occurrence override if one is set, otherwise the entry's own amount.
+function resolvedAmount(data, entry, occDate) {
+  const override = getOverride(data, entry.id, occDate);
+  return hasAmountOverride(override) ? Number(override.amount) || 0 : entryAmount(entry);
+}
+
+// Turns a one-time entry into the occurrence shape the UI works with
+// (occDate, resolved amount, range/override flags, bill-or-income kind).
+function oneTimeOccurrence(data, entry) {
+  const override = getOverride(data, entry.id, entry.date);
+  const hasOverride = hasAmountOverride(override);
+  return {
+    ...entry,
+    occDate: entry.date,
+    amount: hasOverride ? Number(override.amount) || 0 : entryAmount(entry),
+    isRange: !!entry.useAmountRange,
+    hasOverride,
+    kind: entry.oneTimeKind === 'income' ? 'income' : 'bill'
+  };
 }
 
 // Display label for an occurrence: shows the actual price if an override is set,
@@ -193,18 +286,37 @@ function toggleForcedLate(data, entryId, occDate) {
 }
 
 // Toggles paid status for an occurrence, clearing any manual "late" flag at
-// the same time since a bill can't be both paid and marked late.
+// the same time since a bill can't be both paid and marked late. If the
+// occurrence is a credit card's recurring payment (synthetic "cc-{cardId}"
+// id) and auto-deduct is on, the card's amountPaid moves by the payment
+// amount in the same direction.
 function togglePaidStatus(data, entryId, occDate) {
   const key = `${entryId}|${occDate}`;
   const nextPaid = { ...data.paidHistory };
   const nextForced = { ...(data.forcedLate || {}) };
-  if (nextPaid[key]) {
+  const wasPaid = !!nextPaid[key];
+  if (wasPaid) {
     delete nextPaid[key];
   } else {
     nextPaid[key] = true;
     delete nextForced[key];
   }
-  return { ...data, paidHistory: nextPaid, forcedLate: nextForced };
+
+  let nextCreditCards = data.creditCards;
+  const autoDeduct = data.settings.autoDeductCardPayments !== false;
+  if (autoDeduct && entryId.startsWith('cc-')) {
+    const cardId = entryId.slice(3);
+    const card = (data.creditCards || []).find((c) => c.id === cardId);
+    if (card && card.hasRecurringPayment) {
+      const amount = Number(card.paymentAmount) || 0;
+      const delta = wasPaid ? -amount : amount; // unmarking paid reverses the deduction
+      nextCreditCards = data.creditCards.map((c) =>
+        c.id === cardId ? { ...c, amountPaid: Math.max(0, (Number(c.amountPaid) || 0) + delta) } : c
+      );
+    }
+  }
+
+  return { ...data, paidHistory: nextPaid, forcedLate: nextForced, creditCards: nextCreditCards };
 }
 
 function daysBetween(a, b) {
@@ -221,35 +333,8 @@ function getEarliestTrackedDate(data) {
   return new Date(2000, 0, 1);
 }
 
-// Lighten/darken a hex color by `amount` (-1 to 1). Used to derive a soft
-// background tint and a readable text shade from a single category color.
-function shadeHex(hex, amount) {
-  let c = hex.replace('#', '');
-  if (c.length === 3) c = c.split('').map((ch) => ch + ch).join('');
-  const num = parseInt(c, 16);
-  let r = (num >> 16) & 0xff;
-  let g = (num >> 8) & 0xff;
-  let b = num & 0xff;
-  if (amount >= 0) {
-    r = Math.round(r + (255 - r) * amount);
-    g = Math.round(g + (255 - g) * amount);
-    b = Math.round(b + (255 - b) * amount);
-  } else {
-    r = Math.round(r * (1 + amount));
-    g = Math.round(g * (1 + amount));
-    b = Math.round(b * (1 + amount));
-  }
-  const toHex = (v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0');
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-}
-
-// Returns { bg, text } CSS colors for a calendar chip/bar given a base hex color.
-function chipColors(hex) {
-  return { bg: shadeHex(hex, 0.78), text: shadeHex(hex, -0.25) };
-}
-
-// Returns '#ffffff' or '#1a1a1a' depending on which reads better against a
-// given hex background color (simple relative luminance check).
+// Picks black or white text for a given background color using a simple
+// luminance check, so chips stay readable whatever color is chosen.
 function readableTextOn(hex) {
   let c = (hex || '#888888').replace('#', '');
   if (c.length === 3) c = c.split('').map((ch) => ch + ch).join('');
@@ -395,18 +480,7 @@ function getLateBills(data) {
   const lateOneTime = data.oneTimeEntries
     .filter((e) => e.oneTimeKind === 'payment' && e.date && parseYmd(e.date) < cutoff && parseYmd(e.date) >= pastRangeStart &&
       !isPaid(data, e.id, e.date) && !isDismissedLate(data, e.id, e.date))
-    .map((e) => {
-      const override = getOverride(data, e.id, e.date);
-      const hasOverride = override && override.amount !== undefined && override.amount !== null;
-      return {
-        ...e,
-        occDate: e.date,
-        amount: hasOverride ? Number(override.amount) || 0 : entryAmount(e),
-        isRange: !!e.useAmountRange,
-        hasOverride: !!hasOverride,
-        kind: 'bill'
-      };
-    });
+    .map((e) => oneTimeOccurrence(data, e));
 
   const autoLate = [...late, ...lateOneTime]
     .map((o) => ({ ...o, daysLate: daysBetween(parseYmd(o.occDate), today), forcedLate: false }));
@@ -428,13 +502,12 @@ function getLateBills(data) {
     const entry = entryById[entryId];
     if (!entry) return;
     const override = getOverride(data, entryId, occDate);
-    const hasOverride = override && override.amount !== undefined && override.amount !== null;
     forced.push({
       ...entry,
       occDate,
-      amount: hasOverride ? Number(override.amount) || 0 : entryAmount(entry),
+      amount: hasAmountOverride(override) ? Number(override.amount) || 0 : entryAmount(entry),
       isRange: !!entry.useAmountRange,
-      hasOverride: !!hasOverride,
+      hasOverride: hasAmountOverride(override),
       kind: 'bill',
       daysLate: daysBetween(parseYmd(occDate), today),
       forcedLate: true
@@ -467,40 +540,41 @@ function getNeedsAttention(data) {
   cutoff.setDate(cutoff.getDate() - grace);
 
   const rangeStart = getEarliestTrackedDate(data);
-  const rangeEnd = new Date(today);
-  const lookaheadDays = data.settings.needsAttentionLookaheadDays !== undefined && data.settings.needsAttentionLookaheadDays !== null
-    ? data.settings.needsAttentionLookaheadDays
-    : 7;
-  rangeEnd.setDate(rangeEnd.getDate() + lookaheadDays);
 
-  const allBills = getAllBillLikeEntries(data);
-  const occs = expandAll(allBills, 'bill', rangeStart, rangeEnd, data);
+  // bills and income each get their own "days before due" lookahead window
+  const lookaheadEnd = (days) => {
+    const end = new Date(today);
+    end.setDate(end.getDate() + days);
+    return end;
+  };
+  const settingOr = (value, fallback) => (value === undefined || value === null ? fallback : value);
+  const billRangeEnd = lookaheadEnd(settingOr(data.settings.needsAttentionLookaheadDays, 7));
+  const incomeRangeEnd = lookaheadEnd(settingOr(data.settings.incomeNeedsAttentionLookaheadDays, 1));
 
-  const oneTime = data.oneTimeEntries
+  const inRange = (occDate, end) => {
+    const d = parseYmd(occDate);
+    return d >= rangeStart && d <= end;
+  };
+
+  const billOccs = expandAll(getAllBillLikeEntries(data), 'bill', rangeStart, billRangeEnd, data);
+  const oneTimePayments = data.oneTimeEntries
     .filter((e) => e.oneTimeKind === 'payment' && e.date)
-    .map((e) => {
-      const override = getOverride(data, e.id, e.date);
-      const hasOverride = override && override.amount !== undefined && override.amount !== null;
-      return {
-        ...e,
-        occDate: e.date,
-        amount: hasOverride ? Number(override.amount) || 0 : entryAmount(e),
-        isRange: !!e.useAmountRange,
-        hasOverride: !!hasOverride,
-        kind: 'bill'
-      };
-    })
-    .filter((o) => {
-      const d = parseYmd(o.occDate);
-      return d >= rangeStart && d <= rangeEnd;
-    });
+    .map((e) => oneTimeOccurrence(data, e))
+    .filter((o) => inRange(o.occDate, billRangeEnd));
 
-  const candidates = [...occs, ...oneTime].filter((o) =>
+  const incomeOccs = expandAll(data.incomeSources, 'income', rangeStart, incomeRangeEnd, data);
+  const oneTimeIncome = data.oneTimeEntries
+    .filter((e) => e.oneTimeKind === 'income' && e.date)
+    .map((e) => oneTimeOccurrence(data, e))
+    .filter((o) => inRange(o.occDate, incomeRangeEnd));
+
+  const candidates = [...billOccs, ...oneTimePayments, ...incomeOccs, ...oneTimeIncome].filter((o) =>
     o.isRange && !o.useDateRange && !o.hasOverride
   );
 
   // also pull in any manually forced-late range-priced occurrences that fall
-  // outside the normal lookback/lookahead window (e.g. flagged far in the past)
+  // outside the normal lookback/lookahead window (e.g. flagged far in the past).
+  // this only applies to bills - income is never forced-late.
   const candidateKeys = new Set(candidates.map((o) => `${o.id}|${o.occDate}`));
   const entryById = buildEntryLookup(data);
   const extraForced = Object.keys(data.forcedLate || {})
@@ -512,14 +586,16 @@ function getNeedsAttention(data) {
       const entry = entryById[entryId];
       if (!entry || !entry.useAmountRange || entry.useDateRange) return null;
       if (getOverride(data, entryId, occDate)) return null;
-      return { ...entry, occDate, amount: entryAmount(entry), isRange: true, hasOverride: false };
+      return { ...entry, occDate, amount: entryAmount(entry), isRange: true, hasOverride: false, kind: 'bill' };
     })
     .filter(Boolean);
 
   return [...candidates, ...extraForced]
     .map((o) => {
       const occDate = parseYmd(o.occDate);
-      const late = isForcedLate(data, o.id, o.occDate) || (occDate < cutoff && !isPaid(data, o.id, o.occDate));
+      // income is never flagged late - it just keeps showing as "needs
+      // attention" (not yet priced) until a real amount is entered
+      const late = o.kind === 'income' ? false : (isForcedLate(data, o.id, o.occDate) || (occDate < cutoff && !isPaid(data, o.id, o.occDate)));
       return { ...o, late, daysLate: late ? daysBetween(occDate, today) : 0 };
     })
     .sort((a, b) => {
@@ -546,13 +622,14 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [page, setPage] = useState('home');
+  const [billsExpanded, setBillsExpanded] = useState(true);
   const [postSetupPrompt, setPostSetupPrompt] = useState(false);
   const [quickAdd, setQuickAdd] = useState(null); // { date } or null
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
 
   useEffect(() => {
     if (!window.api || typeof window.api.loadData !== 'function') {
-      setLoadError('Storage layer (storage.js) did not load. Check that all files were kept together and try serving this folder over http:// instead of opening the file directly.');
+      setLoadError('Storage layer (storage.js) did not load. Make sure all files were kept together, and try serving this folder over http:// instead of opening the file directly.');
       setLoading(false);
       return;
     }
@@ -568,16 +645,14 @@ function App() {
       });
   }, []);
 
-  // Monday backup reminder - shows at most once per day, only on Mondays,
-  // only if the user hasn't turned it off in Settings.
+  // Monday backup reminder - browser data can be cleared, so nudge the user
+  // to download a backup. Shows at most once per day, only on Mondays, only
+  // if they haven't turned it off in Settings.
   useEffect(() => {
     if (!data || !data.onboardingComplete) return;
     if (data.settings.backupReminderEnabled === false) return;
-    const today = new Date();
-    const isMonday = today.getDay() === 1;
-    if (!isMonday) return;
-    const todayStr = todayYmd();
-    if (data.settings.lastBackupReminderShown === todayStr) return;
+    if (new Date().getDay() !== 1) return; // 1 = Monday
+    if (data.settings.lastBackupReminderShown === todayYmd()) return;
     setShowBackupPrompt(true);
   }, [data && data.onboardingComplete, data && data.settings && data.settings.backupReminderEnabled]);
 
@@ -586,16 +661,8 @@ function App() {
     persist({ ...data, settings: { ...data.settings, lastBackupReminderShown: todayYmd() } });
   }
 
-  function downloadBackupNow() {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `finance-calendar-backup-${todayYmd()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  async function downloadBackupNow() {
+    await window.api.exportData();
     dismissBackupPrompt();
   }
 
@@ -641,9 +708,9 @@ function App() {
       h('p', { style: { color: 'var(--text-secondary)' } },
         loadError || 'Something went wrong loading the app and no data was returned.'),
       h('p', { style: { color: 'var(--text-secondary)', fontSize: '13px' } },
-        'If you opened this by double-clicking index.html, try instead serving this folder with a local ' +
-        'server (for example, running "npx serve ." or "python3 -m http.server" from this folder) and ' +
-        'opening the address it gives you. See README.md for details.')
+        'If you opened this by double-clicking index.html, try serving the folder with a local server instead ' +
+        '(for example, "npx serve ." or "python3 -m http.server" from this folder) and open the address it gives you. ' +
+        'See README.md for details.')
     );
   }
 
@@ -672,10 +739,14 @@ function App() {
     { id: 'home', label: 'Home', icon: 'home' },
     { id: 'calendar', label: 'Calendar', icon: 'calendar' },
     { id: 'late', label: 'Late payments', icon: 'alert' },
-    { id: 'essentials', label: 'Essentials', icon: 'list' },
-    { id: 'subscriptions', label: 'Subscriptions', icon: 'apps' },
-    { id: 'creditcards', label: 'Credit cards', icon: 'card' },
-    { id: 'allbills', label: 'All bills', icon: 'allbills' },
+    {
+      id: 'allbills', label: 'All bills', icon: 'allbills',
+      children: [
+        { id: 'essentials', label: 'Essentials', icon: 'list' },
+        { id: 'creditcards', label: 'Credit cards', icon: 'card' },
+        { id: 'subscriptions', label: 'Subscriptions', icon: 'apps' }
+      ]
+    },
     { id: 'settings', label: 'Settings', icon: 'settings' }
   ];
 
@@ -707,22 +778,48 @@ function App() {
         h('img', { src: 'assets/icon.png', alt: '', className: 'sidebar-logo' }),
         h('h1', null, 'Finance Calendar')
       ),
-      NAV_ITEMS.map((item) =>
-        h('div', {
-          key: item.id,
-          className: `sidebar-link${page === item.id ? ' active' : ''}`,
-          onClick: () => setPage(item.id)
-        },
-          h(Icon, { name: item.icon }),
-          item.label,
-          (item.id === 'late' && lateTotal > 0)
-            ? h('span', { className: 'nav-badge' }, fmtCurrency(lateTotal, data.settings.currency))
-            : null,
-          (item.id === 'allbills' && needsAttentionCount > 0)
-            ? h('span', { className: 'nav-badge round attention' }, needsAttentionCount)
-            : null
-        )
-      ),
+      NAV_ITEMS.map((item) => {
+        if (!item.children) {
+          return h('div', {
+            key: item.id,
+            className: `sidebar-link${page === item.id ? ' active' : ''}`,
+            onClick: () => setPage(item.id)
+          },
+            h(Icon, { name: item.icon }),
+            item.label,
+            item.id === 'late' && lateTotal > 0
+              ? h('span', { className: 'nav-badge' }, fmtCurrency(lateTotal, data.settings.currency))
+              : null
+          );
+        }
+
+        // "All bills" is both a page and a dropdown: clicking it (or its
+        // caret) navigates to the page and toggles the child links.
+        const openBills = () => { setPage(item.id); setBillsExpanded((v) => !v); };
+        return h('div', { key: item.id },
+          h('div', {
+            className: `sidebar-link${page === item.id ? ' active' : ''}`,
+            onClick: openBills
+          },
+            h(Icon, { name: item.icon }),
+            item.label,
+            needsAttentionCount > 0
+              ? h('span', { className: 'nav-badge round attention' }, needsAttentionCount)
+              : null,
+            h('span', { className: `sidebar-caret${billsExpanded ? ' open' : ''}` }, '\u203a')
+          ),
+          billsExpanded ? h('div', { className: 'sidebar-sublist' },
+            item.children.map((child) => h('div', {
+              key: child.id,
+              className: `sidebar-link sidebar-sublink${page === child.id ? ' active' : ''}`,
+              onClick: () => setPage(child.id)
+            },
+              h(Icon, { name: child.icon }),
+              child.label
+            ))
+          ) : null
+        );
+      }),
       h('a', {
         className: 'sidebar-link sidebar-download',
         href: 'downloads/FinanceCalendar.exe',
@@ -739,7 +836,6 @@ function App() {
       initialDate: quickAdd.date,
       onClose: () => setQuickAdd(null)
     }) : null,
-
     showBackupPrompt ? h(BackupReminderModal, {
       onDownloadBackup: downloadBackupNow,
       onDismiss: dismissBackupPrompt
@@ -747,7 +843,7 @@ function App() {
   );
 }
 
-/* ---------------- Weekly Backup Reminder Modal ---------------- */
+/* ---------------- Weekly Backup Reminder Modal (web only) ---------------- */
 
 function BackupReminderModal({ onDownloadBackup, onDismiss }) {
   return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onDismiss(); } },
@@ -784,6 +880,8 @@ function getBlankData() {
     paidHistory: {},
     dismissedLate: {},
     forcedLate: {},
+    removedOccurrences: {},
+    activityLog: [],
     overrides: {},
     settings: {
       theme: 'system',
@@ -792,6 +890,8 @@ function getBlankData() {
       firstDayOfWeek: 0,
       lateGraceDays: 0,
       needsAttentionLookaheadDays: 7,
+      incomeNeedsAttentionLookaheadDays: 1,
+      autoDeductCardPayments: true,
       installDate: null,
       dateFormat: 'short',
       showWeekNumbers: false,

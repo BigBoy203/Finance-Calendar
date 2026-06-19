@@ -56,6 +56,17 @@ function formatDate(date, settings, opts) {
   });
 }
 
+// Formats an ISO timestamp for the activity log - relative for anything
+// from today, otherwise a short date + time.
+function formatLogTimestamp(isoString) {
+  const d = new Date(isoString);
+  const now = new Date();
+  const isToday = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  if (isToday) return time;
+  return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${time}`;
+}
+
 const FREQS = ['none', 'weekly', 'biweekly', 'monthly', 'yearly'];
 const FREQ_LABELS = {
   none: 'one-time',
@@ -65,12 +76,42 @@ const FREQ_LABELS = {
   yearly: 'yearly'
 };
 
-function addInterval(date, freq) {
-  const d = new Date(date);
-  if (freq === 'weekly') d.setDate(d.getDate() + 7);
-  else if (freq === 'biweekly') d.setDate(d.getDate() + 14);
-  else if (freq === 'monthly') d.setMonth(d.getMonth() + 1);
-  else if (freq === 'yearly') d.setFullYear(d.getFullYear() + 1);
+// Days in a given month. monthIndex is 0-based (0 = January).
+function daysInMonth(year, monthIndex) {
+  return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+// Computes the Nth occurrence after `anchor` for a given frequency, always
+// measuring from the original anchor date rather than chaining from a
+// previous (possibly clamped) occurrence. This matters for monthly/yearly
+// frequencies: a bill due on the 30th should land on Feb 28/29 in February,
+// then go right back to the 30th in March - not stay stuck at 28 forever,
+// which is what would happen if each step clamped relative to the last one.
+function addIntervals(anchor, freq, count) {
+  const d = new Date(anchor);
+  if (freq === 'weekly') {
+    d.setDate(d.getDate() + 7 * count);
+    return d;
+  }
+  if (freq === 'biweekly') {
+    d.setDate(d.getDate() + 14 * count);
+    return d;
+  }
+  if (freq === 'monthly') {
+    const anchorDay = anchor.getDate();
+    const targetMonthIndex = anchor.getMonth() + count;
+    const targetYear = anchor.getFullYear() + Math.floor(targetMonthIndex / 12);
+    const normalizedMonthIndex = ((targetMonthIndex % 12) + 12) % 12;
+    const clampedDay = Math.min(anchorDay, daysInMonth(targetYear, normalizedMonthIndex));
+    return new Date(targetYear, normalizedMonthIndex, clampedDay);
+  }
+  if (freq === 'yearly') {
+    const anchorDay = anchor.getDate();
+    const targetYear = anchor.getFullYear() + count;
+    // handles Feb 29 on a leap year rolling into a non-leap year
+    const clampedDay = Math.min(anchorDay, daysInMonth(targetYear, anchor.getMonth()));
+    return new Date(targetYear, anchor.getMonth(), clampedDay);
+  }
   return d;
 }
 
@@ -110,15 +151,24 @@ function expandEntry(entry, rangeStart, rangeEnd) {
     return occurrences;
   }
 
+  // Always measure occurrences as "N intervals from the original anchor
+  // date" rather than repeatedly stepping from the previous occurrence -
+  // this prevents short-month clamping (e.g. the 30th landing on Feb 28)
+  // from permanently drifting the day-of-month in later months.
+  const anchor = parseYmd(entry.date);
+  let count = 0;
   let safety = 0;
+  cur = addIntervals(anchor, freq, count);
   while (cur < rangeStart && safety < 3000) {
-    cur = addInterval(cur, freq);
+    count++;
+    cur = addIntervals(anchor, freq, count);
     safety++;
   }
   safety = 0;
   while (cur <= end && safety < 600) {
     occurrences.push({ ...entry, occDate: ymd(cur) });
-    cur = addInterval(cur, freq);
+    count++;
+    cur = addIntervals(anchor, freq, count);
     safety++;
   }
   return occurrences;
@@ -128,24 +178,67 @@ function expandEntry(entry, rangeStart, rangeEnd) {
 // Applies per-occurrence price overrides from data.overrides when present.
 function expandAll(entries, kind, rangeStart, rangeEnd, data) {
   const all = [];
-  entries.forEach((e) => {
-    expandEntry(e, rangeStart, rangeEnd).forEach((occ) => {
-      const override = data && data.overrides ? data.overrides[`${e.id}|${occ.occDate}`] : null;
-      const hasOverride = override && override.amount !== undefined && override.amount !== null;
+  const removed = (data && data.removedOccurrences) || {};
+  entries.forEach((entry) => {
+    expandEntry(entry, rangeStart, rangeEnd).forEach((occ) => {
+      if (removed[`${entry.id}|${occ.occDate}`]) return; // this single date was removed; rule untouched
+      const override = data ? getOverride(data, entry.id, occ.occDate) : null;
+      const hasOverride = hasAmountOverride(override);
       all.push({
         ...occ,
         kind,
-        amount: hasOverride ? Number(override.amount) || 0 : entryAmount(e),
-        isRange: !!e.useAmountRange,
-        hasOverride: !!hasOverride
+        amount: hasOverride ? Number(override.amount) || 0 : entryAmount(entry),
+        isRange: !!entry.useAmountRange,
+        hasOverride
       });
     });
   });
   return all;
 }
 
+// Removes a single occurrence of a recurring entry without touching the
+// recurring rule, so past and future occurrences are unaffected.
+function removeOccurrence(data, entryId, occDate) {
+  const key = `${entryId}|${occDate}`;
+  return { ...data, removedOccurrences: { ...(data.removedOccurrences || {}), [key]: true } };
+}
+
+// Appends a message to the activity log shown in Settings. Newest first,
+// capped at 50 entries.
+function logActivity(data, message) {
+  const entry = { id: uid(), timestamp: new Date().toISOString(), message };
+  return { ...data, activityLog: [entry, ...(data.activityLog || [])].slice(0, 50) };
+}
+
 function getOverride(data, entryId, occDate) {
   return data.overrides ? data.overrides[`${entryId}|${occDate}`] : null;
+}
+
+// True when an override actually sets a price (vs. being absent or blank).
+function hasAmountOverride(override) {
+  return !!(override && override.amount !== undefined && override.amount !== null);
+}
+
+// Effective amount for one occurrence of an entry on a given date: the
+// per-occurrence override if one is set, otherwise the entry's own amount.
+function resolvedAmount(data, entry, occDate) {
+  const override = getOverride(data, entry.id, occDate);
+  return hasAmountOverride(override) ? Number(override.amount) || 0 : entryAmount(entry);
+}
+
+// Turns a one-time entry into the occurrence shape the UI works with
+// (occDate, resolved amount, range/override flags, bill-or-income kind).
+function oneTimeOccurrence(data, entry) {
+  const override = getOverride(data, entry.id, entry.date);
+  const hasOverride = hasAmountOverride(override);
+  return {
+    ...entry,
+    occDate: entry.date,
+    amount: hasOverride ? Number(override.amount) || 0 : entryAmount(entry),
+    isRange: !!entry.useAmountRange,
+    hasOverride,
+    kind: entry.oneTimeKind === 'income' ? 'income' : 'bill'
+  };
 }
 
 // Display label for an occurrence: shows the actual price if an override is set,
@@ -193,18 +286,37 @@ function toggleForcedLate(data, entryId, occDate) {
 }
 
 // Toggles paid status for an occurrence, clearing any manual "late" flag at
-// the same time since a bill can't be both paid and marked late.
+// the same time since a bill can't be both paid and marked late. If the
+// occurrence is a credit card's recurring payment (synthetic "cc-{cardId}"
+// id) and auto-deduct is on, the card's amountPaid moves by the payment
+// amount in the same direction.
 function togglePaidStatus(data, entryId, occDate) {
   const key = `${entryId}|${occDate}`;
   const nextPaid = { ...data.paidHistory };
   const nextForced = { ...(data.forcedLate || {}) };
-  if (nextPaid[key]) {
+  const wasPaid = !!nextPaid[key];
+  if (wasPaid) {
     delete nextPaid[key];
   } else {
     nextPaid[key] = true;
     delete nextForced[key];
   }
-  return { ...data, paidHistory: nextPaid, forcedLate: nextForced };
+
+  let nextCreditCards = data.creditCards;
+  const autoDeduct = data.settings.autoDeductCardPayments !== false;
+  if (autoDeduct && entryId.startsWith('cc-')) {
+    const cardId = entryId.slice(3);
+    const card = (data.creditCards || []).find((c) => c.id === cardId);
+    if (card && card.hasRecurringPayment) {
+      const amount = Number(card.paymentAmount) || 0;
+      const delta = wasPaid ? -amount : amount; // unmarking paid reverses the deduction
+      nextCreditCards = data.creditCards.map((c) =>
+        c.id === cardId ? { ...c, amountPaid: Math.max(0, (Number(c.amountPaid) || 0) + delta) } : c
+      );
+    }
+  }
+
+  return { ...data, paidHistory: nextPaid, forcedLate: nextForced, creditCards: nextCreditCards };
 }
 
 function daysBetween(a, b) {
@@ -221,35 +333,8 @@ function getEarliestTrackedDate(data) {
   return new Date(2000, 0, 1);
 }
 
-// Lighten/darken a hex color by `amount` (-1 to 1). Used to derive a soft
-// background tint and a readable text shade from a single category color.
-function shadeHex(hex, amount) {
-  let c = hex.replace('#', '');
-  if (c.length === 3) c = c.split('').map((ch) => ch + ch).join('');
-  const num = parseInt(c, 16);
-  let r = (num >> 16) & 0xff;
-  let g = (num >> 8) & 0xff;
-  let b = num & 0xff;
-  if (amount >= 0) {
-    r = Math.round(r + (255 - r) * amount);
-    g = Math.round(g + (255 - g) * amount);
-    b = Math.round(b + (255 - b) * amount);
-  } else {
-    r = Math.round(r * (1 + amount));
-    g = Math.round(g * (1 + amount));
-    b = Math.round(b * (1 + amount));
-  }
-  const toHex = (v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0');
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-}
-
-// Returns { bg, text } CSS colors for a calendar chip/bar given a base hex color.
-function chipColors(hex) {
-  return { bg: shadeHex(hex, 0.78), text: shadeHex(hex, -0.25) };
-}
-
-// Returns '#ffffff' or '#1a1a1a' depending on which reads better against a
-// given hex background color (simple relative luminance check).
+// Picks black or white text for a given background color using a simple
+// luminance check, so chips stay readable whatever color is chosen.
 function readableTextOn(hex) {
   let c = (hex || '#888888').replace('#', '');
   if (c.length === 3) c = c.split('').map((ch) => ch + ch).join('');
@@ -395,18 +480,7 @@ function getLateBills(data) {
   const lateOneTime = data.oneTimeEntries
     .filter((e) => e.oneTimeKind === 'payment' && e.date && parseYmd(e.date) < cutoff && parseYmd(e.date) >= pastRangeStart &&
       !isPaid(data, e.id, e.date) && !isDismissedLate(data, e.id, e.date))
-    .map((e) => {
-      const override = getOverride(data, e.id, e.date);
-      const hasOverride = override && override.amount !== undefined && override.amount !== null;
-      return {
-        ...e,
-        occDate: e.date,
-        amount: hasOverride ? Number(override.amount) || 0 : entryAmount(e),
-        isRange: !!e.useAmountRange,
-        hasOverride: !!hasOverride,
-        kind: 'bill'
-      };
-    });
+    .map((e) => oneTimeOccurrence(data, e));
 
   const autoLate = [...late, ...lateOneTime]
     .map((o) => ({ ...o, daysLate: daysBetween(parseYmd(o.occDate), today), forcedLate: false }));
@@ -428,13 +502,12 @@ function getLateBills(data) {
     const entry = entryById[entryId];
     if (!entry) return;
     const override = getOverride(data, entryId, occDate);
-    const hasOverride = override && override.amount !== undefined && override.amount !== null;
     forced.push({
       ...entry,
       occDate,
-      amount: hasOverride ? Number(override.amount) || 0 : entryAmount(entry),
+      amount: hasAmountOverride(override) ? Number(override.amount) || 0 : entryAmount(entry),
       isRange: !!entry.useAmountRange,
-      hasOverride: !!hasOverride,
+      hasOverride: hasAmountOverride(override),
       kind: 'bill',
       daysLate: daysBetween(parseYmd(occDate), today),
       forcedLate: true
@@ -467,40 +540,41 @@ function getNeedsAttention(data) {
   cutoff.setDate(cutoff.getDate() - grace);
 
   const rangeStart = getEarliestTrackedDate(data);
-  const rangeEnd = new Date(today);
-  const lookaheadDays = data.settings.needsAttentionLookaheadDays !== undefined && data.settings.needsAttentionLookaheadDays !== null
-    ? data.settings.needsAttentionLookaheadDays
-    : 7;
-  rangeEnd.setDate(rangeEnd.getDate() + lookaheadDays);
 
-  const allBills = getAllBillLikeEntries(data);
-  const occs = expandAll(allBills, 'bill', rangeStart, rangeEnd, data);
+  // bills and income each get their own "days before due" lookahead window
+  const lookaheadEnd = (days) => {
+    const end = new Date(today);
+    end.setDate(end.getDate() + days);
+    return end;
+  };
+  const settingOr = (value, fallback) => (value === undefined || value === null ? fallback : value);
+  const billRangeEnd = lookaheadEnd(settingOr(data.settings.needsAttentionLookaheadDays, 7));
+  const incomeRangeEnd = lookaheadEnd(settingOr(data.settings.incomeNeedsAttentionLookaheadDays, 1));
 
-  const oneTime = data.oneTimeEntries
+  const inRange = (occDate, end) => {
+    const d = parseYmd(occDate);
+    return d >= rangeStart && d <= end;
+  };
+
+  const billOccs = expandAll(getAllBillLikeEntries(data), 'bill', rangeStart, billRangeEnd, data);
+  const oneTimePayments = data.oneTimeEntries
     .filter((e) => e.oneTimeKind === 'payment' && e.date)
-    .map((e) => {
-      const override = getOverride(data, e.id, e.date);
-      const hasOverride = override && override.amount !== undefined && override.amount !== null;
-      return {
-        ...e,
-        occDate: e.date,
-        amount: hasOverride ? Number(override.amount) || 0 : entryAmount(e),
-        isRange: !!e.useAmountRange,
-        hasOverride: !!hasOverride,
-        kind: 'bill'
-      };
-    })
-    .filter((o) => {
-      const d = parseYmd(o.occDate);
-      return d >= rangeStart && d <= rangeEnd;
-    });
+    .map((e) => oneTimeOccurrence(data, e))
+    .filter((o) => inRange(o.occDate, billRangeEnd));
 
-  const candidates = [...occs, ...oneTime].filter((o) =>
+  const incomeOccs = expandAll(data.incomeSources, 'income', rangeStart, incomeRangeEnd, data);
+  const oneTimeIncome = data.oneTimeEntries
+    .filter((e) => e.oneTimeKind === 'income' && e.date)
+    .map((e) => oneTimeOccurrence(data, e))
+    .filter((o) => inRange(o.occDate, incomeRangeEnd));
+
+  const candidates = [...billOccs, ...oneTimePayments, ...incomeOccs, ...oneTimeIncome].filter((o) =>
     o.isRange && !o.useDateRange && !o.hasOverride
   );
 
   // also pull in any manually forced-late range-priced occurrences that fall
-  // outside the normal lookback/lookahead window (e.g. flagged far in the past)
+  // outside the normal lookback/lookahead window (e.g. flagged far in the past).
+  // this only applies to bills - income is never forced-late.
   const candidateKeys = new Set(candidates.map((o) => `${o.id}|${o.occDate}`));
   const entryById = buildEntryLookup(data);
   const extraForced = Object.keys(data.forcedLate || {})
@@ -512,14 +586,16 @@ function getNeedsAttention(data) {
       const entry = entryById[entryId];
       if (!entry || !entry.useAmountRange || entry.useDateRange) return null;
       if (getOverride(data, entryId, occDate)) return null;
-      return { ...entry, occDate, amount: entryAmount(entry), isRange: true, hasOverride: false };
+      return { ...entry, occDate, amount: entryAmount(entry), isRange: true, hasOverride: false, kind: 'bill' };
     })
     .filter(Boolean);
 
   return [...candidates, ...extraForced]
     .map((o) => {
       const occDate = parseYmd(o.occDate);
-      const late = isForcedLate(data, o.id, o.occDate) || (occDate < cutoff && !isPaid(data, o.id, o.occDate));
+      // income is never flagged late - it just keeps showing as "needs
+      // attention" (not yet priced) until a real amount is entered
+      const late = o.kind === 'income' ? false : (isForcedLate(data, o.id, o.occDate) || (occDate < cutoff && !isPaid(data, o.id, o.occDate)));
       return { ...o, late, daysLate: late ? daysBetween(occDate, today) : 0 };
     })
     .sort((a, b) => {
@@ -546,13 +622,14 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [page, setPage] = useState('home');
+  const [billsExpanded, setBillsExpanded] = useState(true);
   const [postSetupPrompt, setPostSetupPrompt] = useState(false);
   const [quickAdd, setQuickAdd] = useState(null); // { date } or null
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
 
   useEffect(() => {
     if (!window.api || typeof window.api.loadData !== 'function') {
-      setLoadError('Storage layer (storage.js) did not load. Check that all files were kept together and try serving this folder over http:// instead of opening the file directly.');
+      setLoadError('Storage layer (storage.js) did not load. Make sure all files were kept together, and try serving this folder over http:// instead of opening the file directly.');
       setLoading(false);
       return;
     }
@@ -568,16 +645,14 @@ function App() {
       });
   }, []);
 
-  // Monday backup reminder - shows at most once per day, only on Mondays,
-  // only if the user hasn't turned it off in Settings.
+  // Monday backup reminder - browser data can be cleared, so nudge the user
+  // to download a backup. Shows at most once per day, only on Mondays, only
+  // if they haven't turned it off in Settings.
   useEffect(() => {
     if (!data || !data.onboardingComplete) return;
     if (data.settings.backupReminderEnabled === false) return;
-    const today = new Date();
-    const isMonday = today.getDay() === 1;
-    if (!isMonday) return;
-    const todayStr = todayYmd();
-    if (data.settings.lastBackupReminderShown === todayStr) return;
+    if (new Date().getDay() !== 1) return; // 1 = Monday
+    if (data.settings.lastBackupReminderShown === todayYmd()) return;
     setShowBackupPrompt(true);
   }, [data && data.onboardingComplete, data && data.settings && data.settings.backupReminderEnabled]);
 
@@ -586,16 +661,8 @@ function App() {
     persist({ ...data, settings: { ...data.settings, lastBackupReminderShown: todayYmd() } });
   }
 
-  function downloadBackupNow() {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `finance-calendar-backup-${todayYmd()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  async function downloadBackupNow() {
+    await window.api.exportData();
     dismissBackupPrompt();
   }
 
@@ -641,9 +708,9 @@ function App() {
       h('p', { style: { color: 'var(--text-secondary)' } },
         loadError || 'Something went wrong loading the app and no data was returned.'),
       h('p', { style: { color: 'var(--text-secondary)', fontSize: '13px' } },
-        'If you opened this by double-clicking index.html, try instead serving this folder with a local ' +
-        'server (for example, running "npx serve ." or "python3 -m http.server" from this folder) and ' +
-        'opening the address it gives you. See README.md for details.')
+        'If you opened this by double-clicking index.html, try serving the folder with a local server instead ' +
+        '(for example, "npx serve ." or "python3 -m http.server" from this folder) and open the address it gives you. ' +
+        'See README.md for details.')
     );
   }
 
@@ -672,10 +739,14 @@ function App() {
     { id: 'home', label: 'Home', icon: 'home' },
     { id: 'calendar', label: 'Calendar', icon: 'calendar' },
     { id: 'late', label: 'Late payments', icon: 'alert' },
-    { id: 'essentials', label: 'Essentials', icon: 'list' },
-    { id: 'subscriptions', label: 'Subscriptions', icon: 'apps' },
-    { id: 'creditcards', label: 'Credit cards', icon: 'card' },
-    { id: 'allbills', label: 'All bills', icon: 'allbills' },
+    {
+      id: 'allbills', label: 'All bills', icon: 'allbills',
+      children: [
+        { id: 'essentials', label: 'Essentials', icon: 'list' },
+        { id: 'creditcards', label: 'Credit cards', icon: 'card' },
+        { id: 'subscriptions', label: 'Subscriptions', icon: 'apps' }
+      ]
+    },
     { id: 'settings', label: 'Settings', icon: 'settings' }
   ];
 
@@ -707,22 +778,48 @@ function App() {
         h('img', { src: 'assets/icon.png', alt: '', className: 'sidebar-logo' }),
         h('h1', null, 'Finance Calendar')
       ),
-      NAV_ITEMS.map((item) =>
-        h('div', {
-          key: item.id,
-          className: `sidebar-link${page === item.id ? ' active' : ''}`,
-          onClick: () => setPage(item.id)
-        },
-          h(Icon, { name: item.icon }),
-          item.label,
-          (item.id === 'late' && lateTotal > 0)
-            ? h('span', { className: 'nav-badge' }, fmtCurrency(lateTotal, data.settings.currency))
-            : null,
-          (item.id === 'allbills' && needsAttentionCount > 0)
-            ? h('span', { className: 'nav-badge round attention' }, needsAttentionCount)
-            : null
-        )
-      ),
+      NAV_ITEMS.map((item) => {
+        if (!item.children) {
+          return h('div', {
+            key: item.id,
+            className: `sidebar-link${page === item.id ? ' active' : ''}`,
+            onClick: () => setPage(item.id)
+          },
+            h(Icon, { name: item.icon }),
+            item.label,
+            item.id === 'late' && lateTotal > 0
+              ? h('span', { className: 'nav-badge' }, fmtCurrency(lateTotal, data.settings.currency))
+              : null
+          );
+        }
+
+        // "All bills" is both a page and a dropdown: clicking it (or its
+        // caret) navigates to the page and toggles the child links.
+        const openBills = () => { setPage(item.id); setBillsExpanded((v) => !v); };
+        return h('div', { key: item.id },
+          h('div', {
+            className: `sidebar-link${page === item.id ? ' active' : ''}`,
+            onClick: openBills
+          },
+            h(Icon, { name: item.icon }),
+            item.label,
+            needsAttentionCount > 0
+              ? h('span', { className: 'nav-badge round attention' }, needsAttentionCount)
+              : null,
+            h('span', { className: `sidebar-caret${billsExpanded ? ' open' : ''}` }, '\u203a')
+          ),
+          billsExpanded ? h('div', { className: 'sidebar-sublist' },
+            item.children.map((child) => h('div', {
+              key: child.id,
+              className: `sidebar-link sidebar-sublink${page === child.id ? ' active' : ''}`,
+              onClick: () => setPage(child.id)
+            },
+              h(Icon, { name: child.icon }),
+              child.label
+            ))
+          ) : null
+        );
+      }),
       h('a', {
         className: 'sidebar-link sidebar-download',
         href: 'downloads/FinanceCalendar.exe',
@@ -739,7 +836,6 @@ function App() {
       initialDate: quickAdd.date,
       onClose: () => setQuickAdd(null)
     }) : null,
-
     showBackupPrompt ? h(BackupReminderModal, {
       onDownloadBackup: downloadBackupNow,
       onDismiss: dismissBackupPrompt
@@ -747,7 +843,7 @@ function App() {
   );
 }
 
-/* ---------------- Weekly Backup Reminder Modal ---------------- */
+/* ---------------- Weekly Backup Reminder Modal (web only) ---------------- */
 
 function BackupReminderModal({ onDownloadBackup, onDismiss }) {
   return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onDismiss(); } },
@@ -784,6 +880,8 @@ function getBlankData() {
     paidHistory: {},
     dismissedLate: {},
     forcedLate: {},
+    removedOccurrences: {},
+    activityLog: [],
     overrides: {},
     settings: {
       theme: 'system',
@@ -792,6 +890,8 @@ function getBlankData() {
       firstDayOfWeek: 0,
       lateGraceDays: 0,
       needsAttentionLookaheadDays: 7,
+      incomeNeedsAttentionLookaheadDays: 1,
+      autoDeductCardPayments: true,
       installDate: null,
       dateFormat: 'short',
       showWeekNumbers: false,
@@ -1061,7 +1161,10 @@ function presetEntry(preset, defaults) {
 }
 
 function OnboardingWizard({ data, onComplete }) {
+  const [phase, setPhase] = useState('import'); // 'import' | 'setup'
   const [step, setStep] = useState(0);
+  const [importError, setImportError] = useState(null);
+  const [importing, setImporting] = useState(false);
 
   const [income, setIncome] = useState(
     data.incomeSources && data.incomeSources.length
@@ -1185,6 +1288,42 @@ function OnboardingWizard({ data, onComplete }) {
       onAdd: () => setCreditCards([...creditCards, blankCreditCard()]),
       onRemove: (id) => setCreditCards(creditCards.filter((c) => c.id !== id))
     });
+  }
+
+  async function handleImportFromFile() {
+    setImportError(null);
+    setImporting(true);
+    const result = await window.api.importData();
+    setImporting(false);
+    if (result.success) {
+      onComplete(result.data);
+    } else if (!result.canceled) {
+      setImportError(result.error || 'Import failed. Please check the file and try again.');
+    }
+  }
+
+  // Step 0 of onboarding: ask if the user has an existing backup to import.
+  // No warning needed here since there is no saved data yet at this point.
+  if (phase === 'import') {
+    return h('div', { className: 'wizard-shell' },
+      h('div', null,
+        h('h2', null, 'Welcome to Finance Calendar'),
+        h('p', { style: { color: 'var(--text-secondary)', marginTop: '4px' } },
+          'Do you have a .json backup from a previous install or the web version that you\u2019d like to restore?')
+      ),
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' } },
+        h('button', {
+          className: 'primary',
+          onClick: handleImportFromFile,
+          disabled: importing
+        }, importing ? 'Importing\u2026' : 'Yes \u2014 import my backup file'),
+        h('button', { onClick: () => setPhase('setup') }, 'No \u2014 start fresh'),
+        importError ? h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--late-red)' } }, importError) : null
+      ),
+      h('p', { style: { fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '16px' } },
+        'Choosing "Import" will load your backup file and take you straight into the app with all your existing data. ',
+        'Choosing "Start fresh" takes you through the quick setup wizard.')
+    );
   }
 
   return h('div', { className: 'wizard-shell' },
@@ -1417,13 +1556,13 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
     };
 
     if (type === 'bill') {
-      setData({ ...data, majorBills: [...data.majorBills, entry] });
+      setData(logActivity({ ...data, majorBills: [...data.majorBills, entry] }, `Added bill "${entry.name}"`));
     } else if (type === 'subscription') {
-      setData({ ...data, subscriptions: [...data.subscriptions, entry] });
+      setData(logActivity({ ...data, subscriptions: [...data.subscriptions, entry] }, `Added subscription "${entry.name}"`));
     } else if (type === 'oneTimePayment') {
-      setData({ ...data, oneTimeEntries: [...data.oneTimeEntries, { ...entry, freq: 'none', oneTimeKind: 'payment' }] });
+      setData(logActivity({ ...data, oneTimeEntries: [...data.oneTimeEntries, { ...entry, freq: 'none', oneTimeKind: 'payment' }] }, `Added one-time payment "${entry.name}"`));
     } else if (type === 'oneTimeIncome') {
-      setData({ ...data, oneTimeEntries: [...data.oneTimeEntries, { ...entry, freq: 'none', oneTimeKind: 'income' }] });
+      setData(logActivity({ ...data, oneTimeEntries: [...data.oneTimeEntries, { ...entry, freq: 'none', oneTimeKind: 'income' }] }, `Added one-time income "${entry.name}"`));
     }
     onClose();
   }
@@ -1521,8 +1660,12 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
 }
 /* ---------------- Home Page ---------------- */
 
+const DONUT_COLORS = ['#D85A5A', '#D8A857', '#8B6FD6', '#4FAE6B', '#D8845A', '#5AA8D8', '#C75AA8', '#7A8C5A'];
+
 function HomePage({ data, setData }) {
   const currency = data.settings.currency;
+  const [breakdownGroupBy, setBreakdownGroupBy] = useState('source'); // 'source' | 'category'
+  const [breakdownFilter, setBreakdownFilter] = useState('bills'); // 'bills' | 'income' | 'both'
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -1558,19 +1701,7 @@ function HomePage({ data, setData }) {
 
   const oneTimePaymentsThisMonth = useMemo(() => oneTimeThisMonth
     .filter((e) => e.oneTimeKind === 'payment')
-    .map((e) => {
-      const override = getOverride(data, e.id, e.date);
-      const hasOverride = override && override.amount !== undefined && override.amount !== null;
-      return {
-        ...e,
-        occDate: e.date,
-        amount: hasOverride ? Number(override.amount) || 0 : entryAmount(e),
-        isRange: !!e.useAmountRange,
-        hasOverride: !!hasOverride,
-        kind: 'bill',
-        sourceList: 'oneTimeEntries'
-      };
-    }), [oneTimeThisMonth, data]);
+    .map((e) => ({ ...oneTimeOccurrence(data, e), sourceList: 'oneTimeEntries' })), [oneTimeThisMonth, data]);
 
   const oneTimeIncomeThisMonth = oneTimeThisMonth.filter((e) => e.oneTimeKind === 'income');
 
@@ -1622,15 +1753,172 @@ function HomePage({ data, setData }) {
       .filter((o) => isPaid(data, o.id, o.occDate))
       .reduce((sum, o) => sum + o.amount, 0);
 
-  // all bills this month, paid or not - for the tile grid
+  // all bills this month, paid or not - for the tile grid. Paid bills sort
+  // to the end so the grid stays focused on what still needs attention.
   const allTiles = useMemo(() => {
     return [...billOccurrences, ...oneTimePaymentsThisMonth]
-      .sort((a, b) => a.occDate.localeCompare(b.occDate));
-  }, [billOccurrences, oneTimePaymentsThisMonth]);
+      .sort((a, b) => {
+        const aPaid = isPaid(data, a.id, a.occDate);
+        const bPaid = isPaid(data, b.id, b.occDate);
+        if (aPaid !== bPaid) return aPaid ? 1 : -1;
+        return a.occDate.localeCompare(b.occDate);
+      });
+  }, [billOccurrences, oneTimePaymentsThisMonth, data]);
 
-  function togglePaid(entryId, occDate) {
-    setData(togglePaidStatus(data, entryId, occDate));
+  function togglePaid(o) {
+    const wasPaid = isPaid(data, o.id, o.occDate);
+    let next = togglePaidStatus(data, o.id, o.occDate);
+    next = logActivity(next, `${wasPaid ? 'Unmarked' : 'Marked'} "${o.name}" as paid`);
+    setData(next);
   }
+
+  // Day-by-day cumulative totals across the month, for the cash-flow chart -
+  // one running total for bills, one for income, so their overlap/timing is
+  // visible at a glance.
+  const cashFlowSeries = useMemo(() => {
+    const daysInMonth = monthEnd.getDate();
+    const billsByDay = new Array(daysInMonth + 1).fill(0);
+    const incomeByDay = new Array(daysInMonth + 1).fill(0);
+
+    [...billOccurrences, ...oneTimePaymentsThisMonth].forEach((o) => {
+      const day = parseYmd(o.occDate).getDate();
+      billsByDay[day] += o.amount;
+    });
+    incomeOccurrences.forEach((o) => {
+      const day = parseYmd(o.occDate).getDate();
+      incomeByDay[day] += o.amount;
+    });
+    oneTimeIncomeThisMonth.forEach((o) => {
+      const day = parseYmd(o.date).getDate();
+      incomeByDay[day] += entryAmount(o);
+    });
+
+    let runningBills = 0;
+    let runningIncome = 0;
+    const points = [];
+    for (let day = 1; day <= daysInMonth; day++) {
+      runningBills += billsByDay[day];
+      runningIncome += incomeByDay[day];
+      points.push({
+        day,
+        bills: runningBills,
+        income: runningIncome,
+        net: runningIncome - runningBills,
+        dailyBills: billsByDay[day],
+        dailyIncome: incomeByDay[day],
+        dailyNet: incomeByDay[day] - billsByDay[day]
+      });
+    }
+    return points;
+  }, [billOccurrences, oneTimePaymentsThisMonth, incomeOccurrences, oneTimeIncomeThisMonth, cursor]);
+
+  // last month's totals, for the comparison card
+  const lastMonthTotals = useMemo(() => {
+    const lastMonthStart = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1);
+    const lastMonthEnd = new Date(cursor.getFullYear(), cursor.getMonth(), 0);
+
+    const lastBills = expandAll(allBills, 'bill', lastMonthStart, lastMonthEnd, data);
+    const lastIncome = expandAll(data.incomeSources, 'income', lastMonthStart, lastMonthEnd, data);
+    const lastOneTime = data.oneTimeEntries.filter((e) => {
+      if (!e.date) return false;
+      const d = parseYmd(e.date);
+      return d >= lastMonthStart && d <= lastMonthEnd;
+    });
+    const lastOneTimeBills = lastOneTime.filter((e) => e.oneTimeKind === 'payment')
+      .reduce((sum, e) => sum + resolvedAmount(data, e, e.date), 0);
+    const lastOneTimeIncome = lastOneTime.filter((e) => e.oneTimeKind === 'income')
+      .reduce((sum, e) => sum + resolvedAmount(data, e, e.date), 0);
+
+    const totalBillsLast = lastBills.reduce((sum, o) => sum + o.amount, 0) + lastOneTimeBills;
+    const totalIncomeLast = lastIncome.reduce((sum, o) => sum + o.amount, 0) + lastOneTimeIncome;
+    return { totalBills: totalBillsLast, totalIncome: totalIncomeLast };
+  }, [data, cursor]);
+
+  // summary stats - biggest bill, biggest income source, average bill size
+  const monthSummary = useMemo(() => {
+    const billRows = [...billOccurrences, ...oneTimePaymentsThisMonth];
+    const incomeRows = [...incomeOccurrences, ...oneTimeIncomeThisMonth.map((o) => ({ ...o, amount: resolvedAmount(data, o, o.date) }))];
+
+    const biggestBill = billRows.reduce((max, o) => (!max || o.amount > max.amount ? o : max), null);
+    const biggestIncome = incomeRows.reduce((max, o) => (!max || o.amount > max.amount ? o : max), null);
+    const avgBill = billRows.length > 0 ? billRows.reduce((s, o) => s + o.amount, 0) / billRows.length : 0;
+
+    return { biggestBill, biggestIncome, avgBill, billCount: billRows.length };
+  }, [billOccurrences, oneTimePaymentsThisMonth, incomeOccurrences, oneTimeIncomeThisMonth, data]);
+
+  const SOURCE_GROUP_LABELS = {
+    majorBills: 'Essentials',
+    subscriptions: 'Subscriptions',
+    creditCards: 'Credit cards',
+    oneTimeEntries: 'One-time',
+    incomeSources: 'Income'
+  };
+
+  const breakdownData = useMemo(() => {
+    const rows = [];
+    if (breakdownFilter === 'bills' || breakdownFilter === 'both') {
+      billOccurrences.forEach((o) => rows.push(o));
+      oneTimePaymentsThisMonth.forEach((o) => rows.push(o));
+    }
+    if (breakdownFilter === 'income' || breakdownFilter === 'both') {
+      incomeOccurrences.forEach((o) => rows.push(o));
+      oneTimeIncomeThisMonth.forEach((o) => {
+        rows.push({ ...o, amount: resolvedAmount(data, o, o.date), sourceList: 'oneTimeEntries' });
+      });
+    }
+
+    const sc = data.settings.sectionColors || {};
+    // for one-time entries, payments and income use separate configurable
+    // colors even though they share a sourceList key
+    const sourceColorFor = (o) => {
+      if (o.sourceList === 'oneTimeEntries') return o.kind === 'income' ? sc.oneTimeIncome : sc.oneTimePayments;
+      return sc[o.sourceList];
+    };
+
+    const groups = {};
+    rows.forEach((o) => {
+      if (breakdownGroupBy === 'source') {
+        // one-time payments and one-time income are tracked as separate
+        // groups (they have separate colors), even though both live under
+        // the oneTimeEntries sourceList
+        const groupKey = o.sourceList === 'oneTimeEntries' ? `oneTimeEntries:${o.kind}` : o.sourceList;
+        const label = o.sourceList === 'oneTimeEntries'
+          ? (o.kind === 'income' ? 'One-time income' : 'One-time payments')
+          : (SOURCE_GROUP_LABELS[o.sourceList] || 'Other');
+        if (!groups[groupKey]) groups[groupKey] = { label, amount: 0, color: sourceColorFor(o) || DONUT_COLORS[0] };
+        groups[groupKey].amount += o.amount;
+      } else {
+        const key = o.category || 'Other';
+        if (!groups[key]) groups[key] = { label: key, amount: 0, color: null };
+        groups[key].amount += o.amount;
+      }
+    });
+
+    const total = Object.values(groups).reduce((s, v) => s + v.amount, 0);
+    return Object.values(groups)
+      .sort((a, b) => b.amount - a.amount)
+      .map((g, i) => ({ ...g, pct: total > 0 ? g.amount / total : 0, color: g.color || DONUT_COLORS[i % DONUT_COLORS.length] }));
+  }, [billOccurrences, oneTimePaymentsThisMonth, incomeOccurrences, oneTimeIncomeThisMonth, breakdownGroupBy, breakdownFilter, data]);
+
+  // next 7 days, bills and income combined, chronological - independent of
+  // the month being viewed, since due dates can straddle month boundaries
+  const next7Days = useMemo(() => {
+    const start = new Date(today);
+    const end = new Date(today);
+    end.setDate(end.getDate() + 7);
+    const within = (dateStr) => {
+      const d = parseYmd(dateStr);
+      return d >= start && d <= end;
+    };
+
+    const billOccs7 = expandAll(allBills, 'bill', start, end, data).map((o) => ({ ...o, sourceList: sourceListById[o.id] }));
+    const incomeOccs7 = expandAll(data.incomeSources, 'income', start, end, data).map((o) => ({ ...o, sourceList: 'incomeSources' }));
+    const oneTime7 = data.oneTimeEntries
+      .filter((e) => e.date && within(e.date))
+      .map((e) => ({ ...oneTimeOccurrence(data, e), sourceList: 'oneTimeEntries' }));
+
+    return [...billOccs7, ...incomeOccs7, ...oneTime7].sort((a, b) => a.occDate.localeCompare(b.occDate));
+  }, [data, cursor]);
 
   function changeMonth(delta) {
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
@@ -1672,6 +1960,19 @@ function HomePage({ data, setData }) {
       )
     ),
 
+    h('div', { className: 'grid-2', style: { marginTop: '10px' } },
+      h('div', { className: 'metric-card' },
+        h('p', { className: 'metric-label' }, 'Net so far'),
+        h('p', { className: 'metric-value', style: { color: (incomeReceived - billsPaid) >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
+          `${(incomeReceived - billsPaid) >= 0 ? '+' : ''}${fmtCurrency(incomeReceived - billsPaid, currency)}`)
+      ),
+      h('div', { className: 'metric-card' },
+        h('p', { className: 'metric-label' }, 'Net projected for month'),
+        h('p', { className: 'metric-value', style: { color: (totalProjectedIncome - totalBills) >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
+          `${(totalProjectedIncome - totalBills) >= 0 ? '+' : ''}${fmtCurrency(totalProjectedIncome - totalBills, currency)}`)
+      )
+    ),
+
     h('p', { className: 'section-title' }, 'Bills this month'),
     allTiles.length === 0
       ? h('p', { className: 'empty-state' }, 'Nothing scheduled this month.')
@@ -1697,7 +1998,7 @@ function HomePage({ data, setData }) {
                   type: 'checkbox',
                   checked: paid,
                   onClick: (e) => e.stopPropagation(),
-                  onChange: () => togglePaid(o.id, o.occDate),
+                  onChange: () => togglePaid(o),
                   'aria-label': `Mark ${o.name} paid`
                 })
               ),
@@ -1710,7 +2011,269 @@ function HomePage({ data, setData }) {
     priceModal ? h(PriceOverrideModal, {
       data, setData, occ: priceModal, currency,
       onClose: () => setPriceModal(null)
-    }) : null
+    }) : null,
+
+    h('div', { className: 'home-chart-row' },
+      h('div', { className: 'home-chart-main' },
+        h(CashFlowChart, { points: cashFlowSeries, currency })
+      ),
+      h('div', { className: 'home-chart-side' },
+        h('p', { className: 'section-title', style: { marginTop: '0', marginBottom: '8px' } }, 'Next 7 days'),
+        next7Days.length === 0
+          ? h('p', { className: 'empty-state' }, 'Nothing due in the next 7 days.')
+          : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+              next7Days.map((o, i) => {
+                const d = parseYmd(o.occDate);
+                const dateLabel = formatDate(d, data.settings);
+                return h('div', { key: `${o.id}-${o.occDate}-${i}`, className: 'list-item clickable', onClick: () => setPriceModal(o) },
+                  h('div', null,
+                    h('p', { className: 'list-item-name' }, o.name),
+                    h('p', { className: 'list-item-sub' }, dateLabel)
+                  ),
+                  h('span', {
+                    className: 'list-item-amount',
+                    style: { color: o.kind === 'income' ? 'var(--text-success)' : 'inherit', fontSize: '12px' }
+                  }, `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`)
+                );
+              })
+            )
+      )
+    ),
+
+    h('div', { className: 'home-bottom-row' },
+      h(CategoryDonut, {
+        data: breakdownData, currency,
+        groupBy: breakdownGroupBy, setGroupBy: setBreakdownGroupBy,
+        filter: breakdownFilter, setFilter: setBreakdownFilter
+      }),
+      h('div', { className: 'home-side-cards' },
+        h(MonthSummaryCard, { summary: monthSummary, currency }),
+        h(MonthComparisonCard, { lastMonth: lastMonthTotals, thisMonth: { totalBills, totalIncome: totalProjectedIncome }, currency })
+      )
+    )
+  );
+}
+
+/* ---------------- Month Summary Card ---------------- */
+
+function MonthSummaryCard({ summary, currency }) {
+  return h('div', { className: 'card' },
+    h('p', { style: { margin: '0 0 10px', fontWeight: 500 } }, 'This month at a glance'),
+    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' } },
+      summary.biggestBill ? h('div', { className: 'row-between' },
+        h('span', { style: { color: 'var(--text-secondary)' } }, 'Biggest bill'),
+        h('span', null, `${summary.biggestBill.name} - ${fmtCurrency(summary.biggestBill.amount, currency)}`)
+      ) : null,
+      summary.biggestIncome ? h('div', { className: 'row-between' },
+        h('span', { style: { color: 'var(--text-secondary)' } }, 'Biggest income'),
+        h('span', { style: { color: 'var(--text-success)' } }, `${summary.biggestIncome.name} - ${fmtCurrency(summary.biggestIncome.amount, currency)}`)
+      ) : null,
+      h('div', { className: 'row-between' },
+        h('span', { style: { color: 'var(--text-secondary)' } }, `Average bill (${summary.billCount})`),
+        h('span', null, fmtCurrency(summary.avgBill, currency))
+      ),
+      (!summary.biggestBill && !summary.biggestIncome) ? h('p', { className: 'empty-state', style: { margin: 0 } }, 'Nothing scheduled this month yet.') : null
+    )
+  );
+}
+
+/* ---------------- Month Comparison Card ---------------- */
+
+function MonthComparisonCard({ lastMonth, thisMonth, currency }) {
+  const billsDelta = thisMonth.totalBills - lastMonth.totalBills;
+  const incomeDelta = thisMonth.totalIncome - lastMonth.totalIncome;
+
+  function deltaLabel(delta, goodIsUp) {
+    if (Math.abs(delta) < 0.01) return { text: 'No change', color: 'var(--text-tertiary)' };
+    const up = delta > 0;
+    const good = goodIsUp ? up : !up;
+    return {
+      text: `${up ? '+' : ''}${fmtCurrency(delta, currency)} vs last month`,
+      color: good ? 'var(--text-success)' : 'var(--late-red)'
+    };
+  }
+
+  const billsInfo = deltaLabel(billsDelta, false);
+  const incomeInfo = deltaLabel(incomeDelta, true);
+
+  return h('div', { className: 'card' },
+    h('p', { style: { margin: '0 0 10px', fontWeight: 500 } }, 'vs. last month'),
+    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' } },
+      h('div', null,
+        h('p', { style: { margin: 0, color: 'var(--text-secondary)' } }, 'Bills'),
+        h('p', { style: { margin: 0 } }, `${fmtCurrency(thisMonth.totalBills, currency)} `,
+          h('span', { style: { color: billsInfo.color, fontSize: '12px' } }, billsInfo.text))
+      ),
+      h('div', null,
+        h('p', { style: { margin: 0, color: 'var(--text-secondary)' } }, 'Income'),
+        h('p', { style: { margin: 0 } }, `${fmtCurrency(thisMonth.totalIncome, currency)} `,
+          h('span', { style: { color: incomeInfo.color, fontSize: '12px' } }, incomeInfo.text))
+      )
+    )
+  );
+}
+
+/* ---------------- Cumulative cash flow chart ---------------- */
+
+function CashFlowChart({ points, currency }) {
+  const [view, setView] = useState('cumulative'); // 'cumulative' | 'daily'
+  const [hoverIdx, setHoverIdx] = useState(null);
+
+  if (points.length === 0) return null;
+
+  const billsKey = view === 'cumulative' ? 'bills' : 'dailyBills';
+  const incomeKey = view === 'cumulative' ? 'income' : 'dailyIncome';
+  const netKey = view === 'cumulative' ? 'net' : 'dailyNet';
+
+  const allVals = points.flatMap((p) => [p[billsKey], p[incomeKey], p[netKey]]);
+  const maxVal = Math.max(...allVals, 1);
+  const minVal = view === 'daily' ? Math.min(...allVals, 0) : 0;
+
+  const W = 760, H = 200, PAD_L = 56, PAD_R = 16, PAD_T = 16, PAD_B = 24;
+  const innerW = W - PAD_L - PAD_R;
+  const innerH = H - PAD_T - PAD_B;
+  const stepX = points.length > 1 ? innerW / (points.length - 1) : 0;
+  const range = maxVal - minVal || 1;
+  const scaleY = (v) => PAD_T + innerH - ((v - minVal) / range) * innerH;
+  const zeroY = scaleY(0);
+
+  const pathFor = (key) => points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${PAD_L + i * stepX} ${scaleY(p[key])}`).join(' ');
+
+  // a handful of evenly-spaced day labels along the x-axis (avoid crowding for long months)
+  const labelEvery = points.length > 20 ? 5 : points.length > 10 ? 2 : 1;
+  const hovered = hoverIdx !== null ? points[hoverIdx] : null;
+
+  return h('div', null,
+    h('div', { className: 'row-between' },
+      h('p', { className: 'section-title', style: { margin: 0 } }, 'Cash flow this month'),
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '14px' } },
+        h('div', { style: { display: 'flex', gap: '14px', fontSize: '12px', color: 'var(--text-secondary)' } },
+          h('span', null, h('span', { style: { display: 'inline-block', width: 10, height: 10, background: 'var(--text-success)', marginRight: '4px', borderRadius: '2px' } }), 'Income'),
+          h('span', null, h('span', { style: { display: 'inline-block', width: 10, height: 10, background: 'var(--late-red)', marginRight: '4px', borderRadius: '2px' } }), 'Bills'),
+          h('span', null, h('span', { style: { display: 'inline-block', width: 10, height: 10, background: 'var(--accent)', marginRight: '4px', borderRadius: '2px' } }), 'Net')
+        ),
+        h('select', { value: view, onChange: (e) => setView(e.target.value), style: { fontSize: '12px', padding: '4px 8px' } },
+          h('option', { value: 'cumulative' }, 'Running total'),
+          h('option', { value: 'daily' }, 'Per day')
+        )
+      )
+    ),
+    h('div', { style: { position: 'relative' } },
+      h('svg', {
+        viewBox: `0 0 ${W} ${H}`,
+        className: 'cashflow-chart',
+        onMouseLeave: () => setHoverIdx(null)
+      },
+        // horizontal gridlines + scale labels
+        h('line', { x1: PAD_L, y1: PAD_T, x2: PAD_L, y2: H - PAD_B, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
+        h('line', { x1: PAD_L, y1: zeroY, x2: W - PAD_R, y2: zeroY, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
+        h('text', { x: PAD_L - 8, y: PAD_T + 4, fontSize: 10, fill: 'var(--text-secondary)', textAnchor: 'end' }, fmtCurrency(maxVal, currency)),
+        h('text', { x: PAD_L - 8, y: zeroY + 4, fontSize: 10, fill: 'var(--text-secondary)', textAnchor: 'end' }, fmtCurrency(0, currency)),
+        minVal < 0 ? h('text', { x: PAD_L - 8, y: H - PAD_B + 4, fontSize: 10, fill: 'var(--text-secondary)', textAnchor: 'end' }, fmtCurrency(minVal, currency)) : null,
+
+        points.map((p, i) => (
+          i % labelEvery === 0 ? h('text', {
+            key: `lbl-${i}`,
+            x: PAD_L + i * stepX,
+            y: H - PAD_B + 16,
+            fontSize: 9,
+            fill: 'var(--text-tertiary)',
+            textAnchor: 'middle'
+          }, p.day) : null
+        )),
+
+        h('path', { d: pathFor(billsKey), fill: 'none', stroke: 'var(--late-red)', strokeWidth: 2 }),
+        h('path', { d: pathFor(incomeKey), fill: 'none', stroke: 'var(--text-success)', strokeWidth: 2 }),
+        h('path', { d: pathFor(netKey), fill: 'none', stroke: 'var(--accent)', strokeWidth: 1.5, strokeDasharray: '4 3' }),
+
+        hovered ? h('line', {
+          x1: PAD_L + hoverIdx * stepX, y1: PAD_T, x2: PAD_L + hoverIdx * stepX, y2: H - PAD_B,
+          stroke: 'var(--border-secondary)', strokeWidth: 1
+        }) : null,
+
+        // invisible hit zones, one per data point, for hover detection
+        points.map((p, i) => h('rect', {
+          key: `hit-${i}`,
+          x: PAD_L + i * stepX - (stepX / 2 || 6),
+          y: PAD_T,
+          width: stepX || 12,
+          height: innerH,
+          fill: 'transparent',
+          onMouseEnter: () => setHoverIdx(i)
+        }))
+      ),
+      hovered ? h('div', {
+        className: 'cashflow-tooltip',
+        style: {
+          left: `${Math.min(82, Math.max(10, (PAD_L + hoverIdx * stepX) / W * 100))}%`
+        }
+      },
+        h('p', { className: 'cashflow-tooltip-day' }, `Day ${hovered.day}`),
+        h('p', { style: { color: 'var(--text-success)' } }, `Income: ${fmtCurrency(hovered[incomeKey], currency)}`),
+        h('p', { style: { color: 'var(--late-red)' } }, `Bills: ${fmtCurrency(hovered[billsKey], currency)}`),
+        h('p', { style: { color: 'var(--accent)' } }, `Net: ${hovered[netKey] >= 0 ? '+' : ''}${fmtCurrency(hovered[netKey], currency)}`)
+      ) : null
+    )
+  );
+}
+
+/* ---------------- Category Breakdown Donut ---------------- */
+
+function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setFilter }) {
+  const total = rows.reduce((s, r) => s + r.amount, 0);
+  const size = 160, r = 60, cx = 80, cy = 80;
+  const circumference = 2 * Math.PI * r;
+
+  let offsetAcc = 0;
+  const segments = rows.map((row) => {
+    const dash = row.pct * circumference;
+    const seg = { ...row, dash, offset: offsetAcc };
+    offsetAcc += dash;
+    return seg;
+  });
+
+  return h('div', null,
+    h('div', { className: 'row-between' },
+      h('p', { className: 'section-title', style: { margin: 0 } }, 'Where it goes'),
+      h('div', { style: { display: 'flex', gap: '8px' } },
+        h('select', { value: filter, onChange: (e) => setFilter(e.target.value), style: { fontSize: '12px', padding: '4px 8px' } },
+          h('option', { value: 'bills' }, 'Bills'),
+          h('option', { value: 'income' }, 'Income'),
+          h('option', { value: 'both' }, 'Both')
+        ),
+        h('select', { value: groupBy, onChange: (e) => setGroupBy(e.target.value), style: { fontSize: '12px', padding: '4px 8px' } },
+          h('option', { value: 'source' }, 'By source type'),
+          h('option', { value: 'category' }, 'By category')
+        )
+      )
+    ),
+    rows.length === 0
+      ? h('p', { className: 'empty-state' }, 'Nothing to show for this filter.')
+      : h('div', { style: { display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap', marginTop: '8px' } },
+          h('svg', { viewBox: `0 0 ${size} ${size}`, style: { width: '160px', height: '160px', flexShrink: 0 } },
+            segments.map((seg, i) => h('circle', {
+              key: i,
+              cx, cy, r,
+              fill: 'none',
+              stroke: seg.color,
+              strokeWidth: 24,
+              strokeDasharray: `${seg.dash} ${circumference - seg.dash}`,
+              strokeDashoffset: -seg.offset,
+              transform: `rotate(-90 ${cx} ${cy})`
+            })),
+            h('text', { x: cx, y: cy - 4, textAnchor: 'middle', fontSize: 13, fontWeight: 600, fill: 'var(--text-primary)' }, fmtCurrency(total, currency)),
+            h('text', { x: cx, y: cy + 12, textAnchor: 'middle', fontSize: 10, fill: 'var(--text-secondary)' }, 'total')
+          ),
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '180px' } },
+            segments.map((seg, i) => h('div', { key: i, style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', fontSize: '13px' } },
+              h('span', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+                h('span', { style: { width: 9, height: 9, borderRadius: '50%', background: seg.color, display: 'inline-block', flexShrink: 0 } }),
+                seg.label
+              ),
+              h('span', { style: { color: 'var(--text-secondary)' } }, `${fmtCurrency(seg.amount, currency)} (${Math.round(seg.pct * 100)}%)`)
+            ))
+          )
+        )
   );
 }
 
@@ -1719,6 +2282,7 @@ function HomePage({ data, setData }) {
 function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
   const existing = getOverride(data, occ.id, occ.occDate);
   const [price, setPrice] = useState(existing && existing.amount !== undefined ? String(existing.amount) : '');
+  const [confirmRemove, setConfirmRemove] = useState(false);
 
   function save() {
     const val = price === '' ? null : parseFloat(price);
@@ -1729,7 +2293,11 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
     } else {
       next[key] = { amount: val };
     }
-    setData({ ...data, overrides: next });
+    let nextData = { ...data, overrides: next };
+    if (val !== null && !isNaN(val)) {
+      nextData = logActivity(nextData, `Set price for "${occ.name}" to ${fmtCurrency(val, currency)}`);
+    }
+    setData(nextData);
     onClose();
   }
 
@@ -1737,13 +2305,29 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
     const key = `${occ.id}|${occ.occDate}`;
     const next = { ...data.overrides };
     delete next[key];
-    setData({ ...data, overrides: next });
+    let nextData = logActivity({ ...data, overrides: next }, `Cleared price override for "${occ.name}"`);
+    setData(nextData);
     onClose();
   }
 
   const forcedLate = isForcedLate(data, occ.id, occ.occDate);
   function toggleLate() {
-    setData(toggleForcedLate(data, occ.id, occ.occDate));
+    let next = toggleForcedLate(data, occ.id, occ.occDate);
+    next = logActivity(next, `${forcedLate ? 'Unmarked' : 'Marked'} "${occ.name}" as late`);
+    setData(next);
+  }
+
+  function removeThisOccurrence() {
+    let next;
+    if (occ.sourceList === 'oneTimeEntries') {
+      next = { ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== occ.id) };
+      next = logActivity(next, `Removed "${occ.name}"`);
+    } else {
+      next = removeOccurrence(data, occ.id, occ.occDate);
+      next = logActivity(next, `Removed "${occ.name}" from calendar for ${occ.occDate}`);
+    }
+    setData(next);
+    onClose();
   }
 
   const d = parseYmd(occ.occDate);
@@ -1771,13 +2355,24 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
       h('p', { style: { margin: 0, fontSize: '12px', color: 'var(--text-secondary)' } },
         'Setting this only affects this occurrence - future months still use the usual amount or range.'),
 
-      h('div', { className: 'row-between', style: { paddingTop: '8px', borderTop: '0.5px solid var(--border-tertiary)' } },
+      occ.kind !== 'income' ? h('div', { className: 'row-between', style: { paddingTop: '8px', borderTop: '0.5px solid var(--border-tertiary)' } },
         h('div', null,
           h('p', { style: { margin: 0, fontSize: '13px', fontWeight: 500 } }, 'Late status'),
           h('p', { style: { margin: 0, fontSize: '12px', color: 'var(--text-secondary)' } },
             forcedLate ? 'Manually marked late.' : 'Mark this occurrence late regardless of its due date.')
         ),
         h('button', { onClick: toggleLate }, forcedLate ? 'Unmark late' : 'Mark as late')
+      ) : null,
+
+      h('div', { className: 'row-between', style: { paddingTop: '8px', borderTop: '0.5px solid var(--border-tertiary)' } },
+        h('div', null,
+          h('p', { style: { margin: 0, fontSize: '13px', fontWeight: 500 } }, 'Remove this occurrence'),
+          h('p', { style: { margin: 0, fontSize: '12px', color: 'var(--text-secondary)' } },
+            occ.sourceList === 'oneTimeEntries' ? 'Deletes this entry entirely.' : 'Only this date - the recurring rule is unaffected.')
+        ),
+        confirmRemove
+          ? h('button', { className: 'danger-text', onClick: removeThisOccurrence }, 'Confirm remove?')
+          : h('button', { className: 'danger-text', onClick: () => setConfirmRemove(true) }, 'Remove')
       ),
 
       h('div', { className: 'row-between', style: { marginTop: '4px' } },
@@ -1795,17 +2390,23 @@ function LatePage({ data, setData, lateBills }) {
 
   const total = lateBills.reduce((sum, o) => sum + o.amount, 0);
 
-  function togglePaid(entryId, occDate) {
-    setData(togglePaidStatus(data, entryId, occDate));
+  function togglePaid(o) {
+    const wasPaid = isPaid(data, o.id, o.occDate);
+    let next = togglePaidStatus(data, o.id, o.occDate);
+    next = logActivity(next, `${wasPaid ? 'Unmarked' : 'Marked'} "${o.name}" as paid`);
+    setData(next);
   }
 
   function dismissLate(o) {
+    let next;
     if (o.forcedLate) {
-      setData(toggleForcedLate(data, o.id, o.occDate));
+      next = toggleForcedLate(data, o.id, o.occDate);
+      next = logActivity(next, `Unmarked "${o.name}" as late`);
     } else {
       const key = `${o.id}|${o.occDate}`;
-      setData({ ...data, dismissedLate: { ...data.dismissedLate, [key]: true } });
+      next = logActivity({ ...data, dismissedLate: { ...data.dismissedLate, [key]: true } }, `Dismissed late status for "${o.name}"`);
     }
+    setData(next);
   }
 
   function ageClass(days) {
@@ -1848,7 +2449,7 @@ function LatePage({ data, setData, lateBills }) {
               h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
                 h('span', { className: `age-pill ${ageClass(o.daysLate)}` }, ageLabel(o.daysLate)),
                 h('button', { onClick: () => setPriceModal(o) }, 'Set price'),
-                h('button', { className: 'primary', onClick: () => togglePaid(o.id, o.occDate) }, 'Pay now (ASAP)'),
+                h('button', { className: 'primary', onClick: () => togglePaid(o) }, 'Pay now (ASAP)'),
                 h('button', { className: 'danger-text', onClick: () => dismissLate(o) }, o.forcedLate ? 'Unmark late' : 'Dismiss')
               )
             );
@@ -1898,7 +2499,9 @@ function getDateRangeSpans(data, allBills, gridStart, gridEnd) {
     }
 
     // recurring with a date range - shift the span for each occurrence
+    const removed = data.removedOccurrences || {};
     expandEntry(e, gridStart, gridEnd).forEach((occ) => {
+      if (removed[`${e.id}|${occ.occDate}`]) return; // single occurrence removed, rule untouched
       const occStart = parseYmd(occ.occDate);
       const occEnd = new Date(occStart);
       occEnd.setDate(occEnd.getDate() + offsetDays);
@@ -1953,24 +2556,12 @@ function CalendarPage({ data, setData, onAddEntry }) {
       ...expandAll(data.incomeSources, 'income', gridStart, gridEnd, data)
     ].map((o) => ({ ...o, sourceList: sourceListById[o.id] }));
     const oneTime = data.oneTimeEntries
-      .filter((e) => e.date)
       .filter((e) => {
+        if (!e.date) return false;
         const d = parseYmd(e.date);
         return d >= gridStart && d <= gridEnd;
       })
-      .map((e) => {
-        const override = getOverride(data, e.id, e.date);
-        const hasOverride = override && override.amount !== undefined && override.amount !== null;
-        return {
-          ...e,
-          occDate: e.date,
-          amount: hasOverride ? Number(override.amount) || 0 : entryAmount(e),
-          isRange: !!e.useAmountRange,
-          hasOverride: !!hasOverride,
-          kind: e.oneTimeKind === 'income' ? 'income' : 'bill',
-          sourceList: 'oneTimeEntries'
-        };
-      });
+      .map((e) => ({ ...oneTimeOccurrence(data, e), sourceList: 'oneTimeEntries' }));
     return [...recurring, ...oneTime];
   }, [data, cursor]);
 
@@ -2161,9 +2752,13 @@ function CalendarPage({ data, setData, onAddEntry }) {
 function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAddEntry }) {
   const [priceModal, setPriceModal] = useState(null);
   const [editing, setEditing] = useState(null); // { sourceList, form } or null
+  const [confirmRemove, setConfirmRemove] = useState(null); // `${id}|${occDate}` or null
 
-  function togglePaid(entryId, occDate) {
-    setData(togglePaidStatus(data, entryId, occDate));
+  function togglePaid(o) {
+    const wasPaid = isPaid(data, o.id, o.occDate);
+    let next = togglePaidStatus(data, o.id, o.occDate);
+    next = logActivity(next, `${wasPaid ? 'Unmarked' : 'Marked'} "${o.name}" as paid`);
+    setData(next);
   }
 
   function openEdit(o) {
@@ -2172,12 +2767,31 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
   }
 
   function handleEditSubmit(cleaned) {
-    setData(applyEditedEntry(data, editing.sourceList, cleaned));
+    let next = applyEditedEntry(data, editing.sourceList, cleaned);
+    next = logActivity(next, `Edited "${cleaned.name}"`);
+    setData(next);
     setEditing(null);
   }
 
-  function toggleLate(entryId, occDate) {
-    setData(toggleForcedLate(data, entryId, occDate));
+  function toggleLate(o) {
+    const wasLate = isForcedLate(data, o.id, o.occDate);
+    let next = toggleForcedLate(data, o.id, o.occDate);
+    next = logActivity(next, `${wasLate ? 'Unmarked' : 'Marked'} "${o.name}" as late`);
+    setData(next);
+  }
+
+  function removeThisOccurrence(o) {
+    let next;
+    if (o.sourceList === 'oneTimeEntries') {
+      // one-time entries have exactly one occurrence - "remove" means delete it outright
+      next = { ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== o.id) };
+      next = logActivity(next, `Removed "${o.name}"`);
+    } else {
+      next = removeOccurrence(data, o.id, o.occDate);
+      next = logActivity(next, `Removed "${o.name}" from calendar for ${o.occDate}`);
+    }
+    setData(next);
+    setConfirmRemove(null);
   }
 
   const dateLabel = formatDate(parseYmd(dateStr), data.settings, { weekday: true, year: true });
@@ -2197,12 +2811,15 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
               const paid = o.kind === 'bill' && isPaid(data, o.id, o.occDate);
               const editable = o.sourceList !== 'creditCards';
               const forcedLate = o.kind === 'bill' && isForcedLate(data, o.id, o.occDate);
+              const removeKey = `${o.id}|${o.occDate}`;
+              const confirming = confirmRemove === removeKey;
+              const removeLabel = o.sourceList === 'oneTimeEntries' ? 'Remove' : 'Remove from calendar';
               return h('div', { key: `${o.id}-${i}`, className: 'list-item' },
                 h('div', { className: 'checkbox-row' },
                   o.kind === 'bill' ? h('input', {
                     type: 'checkbox',
                     checked: paid,
-                    onChange: () => togglePaid(o.id, o.occDate),
+                    onChange: () => togglePaid(o),
                     'aria-label': `Mark ${o.name} paid`
                   }) : null,
                   h('div', null,
@@ -2211,14 +2828,17 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
                     forcedLate ? h('span', { className: 'badge badge-danger', style: { marginTop: '2px', display: 'inline-block' } }, 'Marked late') : null
                   )
                 ),
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
                   h('span', {
                     className: 'list-item-amount',
                     style: { color: o.kind === 'income' ? 'var(--text-success)' : 'inherit' }
                   }, `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`),
-                  o.kind === 'bill' ? h('button', { onClick: () => setPriceModal(o) }, 'Set price') : null,
-                  o.kind === 'bill' ? h('button', { onClick: () => toggleLate(o.id, o.occDate) }, forcedLate ? 'Unmark late' : 'Mark as late') : null,
-                  editable ? h('button', { onClick: () => openEdit(o) }, 'Edit') : null
+                  h('button', { onClick: () => setPriceModal(o) }, 'Set price'),
+                  o.kind === 'bill' ? h('button', { onClick: () => toggleLate(o) }, forcedLate ? 'Unmark late' : 'Mark as late') : null,
+                  editable ? h('button', { onClick: () => openEdit(o) }, 'Edit') : null,
+                  confirming
+                    ? h('button', { className: 'danger-text', onClick: () => removeThisOccurrence(o) }, 'Confirm remove?')
+                    : h('button', { className: 'danger-text', onClick: () => setConfirmRemove(removeKey) }, removeLabel)
                 )
               );
             })
@@ -2241,7 +2861,7 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
 
 function BillsPage({ data, setData, onAddEntry }) {
   const currency = data.settings.currency;
-  const [editing, setEditing] = useState(null); // 'new' | entry object | null
+  const [editing, setEditing] = useState(null); // form-shape object while a bill is being added/edited, else null
 
   function openAdd() {
     setEditing({ ...blankEntry({ freq: 'monthly', category: 'Other' }), _isNew: true });
@@ -2252,18 +2872,17 @@ function BillsPage({ data, setData, onAddEntry }) {
   }
 
   function handleSubmit(cleaned) {
-    if (editing._isNew) {
-      const { _isNew, ...entry } = cleaned;
-      setData({ ...data, majorBills: [...data.majorBills, entry] });
+    const { _isNew, ...entry } = cleaned;
+    if (_isNew) {
+      setData(logActivity({ ...data, majorBills: [...data.majorBills, entry] }, `Added bill "${entry.name}"`));
     } else {
-      const { _isNew, ...entry } = cleaned;
-      setData({ ...data, majorBills: data.majorBills.map((e) => (e.id === entry.id ? entry : e)) });
+      setData(logActivity({ ...data, majorBills: data.majorBills.map((e) => (e.id === entry.id ? entry : e)) }, `Edited "${entry.name}"`));
     }
     setEditing(null);
   }
 
-  function deleteEntry(id) {
-    setData({ ...data, majorBills: data.majorBills.filter((e) => e.id !== id) });
+  function deleteEntry(entry) {
+    setData(logActivity({ ...data, majorBills: data.majorBills.filter((e) => e.id !== entry.id) }, `Deleted "${entry.name}"`));
   }
 
   const list = data.majorBills;
@@ -2290,7 +2909,7 @@ function BillsPage({ data, setData, onAddEntry }) {
                 h('span', { className: 'list-item-amount' }, entryAmountLabel(e, currency)),
                 h('button', {
                   className: 'x-btn',
-                  onClick: (ev) => { ev.stopPropagation(); deleteEntry(e.id); },
+                  onClick: (ev) => { ev.stopPropagation(); deleteEntry(e); },
                   'aria-label': `Delete ${e.name}`
                 }, '\u00d7')
               )
@@ -2324,18 +2943,17 @@ function SubscriptionsPage({ data, setData, onAddEntry }) {
   }
 
   function handleSubmit(cleaned) {
-    if (editing._isNew) {
-      const { _isNew, ...entry } = cleaned;
-      setData({ ...data, subscriptions: [...data.subscriptions, entry] });
+    const { _isNew, ...entry } = cleaned;
+    if (_isNew) {
+      setData(logActivity({ ...data, subscriptions: [...data.subscriptions, entry] }, `Added subscription "${entry.name}"`));
     } else {
-      const { _isNew, ...entry } = cleaned;
-      setData({ ...data, subscriptions: data.subscriptions.map((e) => (e.id === entry.id ? entry : e)) });
+      setData(logActivity({ ...data, subscriptions: data.subscriptions.map((e) => (e.id === entry.id ? entry : e)) }, `Edited "${entry.name}"`));
     }
     setEditing(null);
   }
 
-  function deleteEntry(id) {
-    setData({ ...data, subscriptions: data.subscriptions.filter((e) => e.id !== id) });
+  function deleteEntry(entry) {
+    setData(logActivity({ ...data, subscriptions: data.subscriptions.filter((e) => e.id !== entry.id) }, `Deleted "${entry.name}"`));
   }
 
   const list = data.subscriptions;
@@ -2371,7 +2989,7 @@ function SubscriptionsPage({ data, setData, onAddEntry }) {
                 h('span', { className: 'list-item-amount' }, entryAmountLabel(e, currency)),
                 h('button', {
                   className: 'x-btn',
-                  onClick: (ev) => { ev.stopPropagation(); deleteEntry(e.id); },
+                  onClick: (ev) => { ev.stopPropagation(); deleteEntry(e); },
                   'aria-label': `Delete ${e.name}`
                 }, '\u00d7')
               )
@@ -2454,15 +3072,16 @@ function CreditCardsPage({ data, setData }) {
       balanceDate: principalChanged ? todayYmd() : (form.balanceDate || todayYmd())
     };
     if (editingId) {
-      setData({ ...data, creditCards: cards.map((c) => (c.id === editingId ? entry : c)) });
+      setData(logActivity({ ...data, creditCards: cards.map((c) => (c.id === editingId ? entry : c)) }, `Edited credit card "${entry.name}"`));
     } else {
-      setData({ ...data, creditCards: [...cards, entry] });
+      setData(logActivity({ ...data, creditCards: [...cards, entry] }, `Added credit card "${entry.name}"`));
     }
     setShowForm(false);
   }
 
   function deleteCard(id) {
-    setData({ ...data, creditCards: cards.filter((c) => c.id !== id) });
+    const card = cards.find((c) => c.id === id);
+    setData(logActivity({ ...data, creditCards: cards.filter((c) => c.id !== id) }, `Deleted credit card "${card ? card.name : id}"`));
   }
 
   return h('div', null,
@@ -2692,14 +3311,16 @@ function AllBillsPage({ data, setData, needsAttention, onAddEntry }) {
 
   function deleteEntry(o) {
     if (o.kind !== 'bill' && o.kind !== 'income') return;
+    let next = null;
     if (o.sourceList === 'majorBills') {
-      setData({ ...data, majorBills: data.majorBills.filter((e) => e.id !== o.id) });
+      next = { ...data, majorBills: data.majorBills.filter((e) => e.id !== o.id) };
     } else if (o.sourceList === 'subscriptions') {
-      setData({ ...data, subscriptions: data.subscriptions.filter((e) => e.id !== o.id) });
+      next = { ...data, subscriptions: data.subscriptions.filter((e) => e.id !== o.id) };
     } else if (o.sourceList === 'oneTimeEntries') {
-      setData({ ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== o.id) });
+      next = { ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== o.id) };
     }
     // credit card payments are managed from the Credit Cards page
+    if (next) setData(logActivity(next, `Deleted "${o.name}"`));
   }
 
   function openEdit(e) {
@@ -2708,7 +3329,9 @@ function AllBillsPage({ data, setData, needsAttention, onAddEntry }) {
   }
 
   function handleEditSubmit(cleaned) {
-    setData(applyEditedEntry(data, editing.sourceList, cleaned));
+    let next = applyEditedEntry(data, editing.sourceList, cleaned);
+    next = logActivity(next, `Edited "${cleaned.name}"`);
+    setData(next);
     setEditing(null);
   }
 
@@ -2764,13 +3387,14 @@ function AllBillsPage({ data, setData, needsAttention, onAddEntry }) {
       !attentionCollapsed ? h('div', { style: { marginTop: '10px' } },
         h('div', { className: 'info-banner' },
           h('p', { style: { margin: 0, fontSize: '13px' } },
-            `These bills use a price range instead of a fixed amount, and are flagged here starting ${data.settings.needsAttentionLookaheadDays} day${data.settings.needsAttentionLookaheadDays === 1 ? '' : 's'} before they're due. Fill in the actual price once you know it - totals and projections stay more accurate when these are kept up to date. `,
+            `These bills and paychecks use a price range instead of a fixed amount. Bills are flagged here starting ${data.settings.needsAttentionLookaheadDays} day${data.settings.needsAttentionLookaheadDays === 1 ? '' : 's'} before they're due, and income starting ${data.settings.incomeNeedsAttentionLookaheadDays} day${data.settings.incomeNeedsAttentionLookaheadDays === 1 ? '' : 's'} before. Fill in the actual amount once you know it - totals and projections stay more accurate when these are kept up to date. `,
             h('button', { className: 'toggle-link', onClick: () => setShowInfo(!showInfo) }, showInfo ? 'Hide details' : 'Why does this matter?')
           ),
           showInfo ? h('p', { style: { margin: '8px 0 0', fontSize: '13px' } },
-            'Until a real price is entered, range-based bills use their midpoint for totals on Home and the Calendar. ',
+            'Until a real amount is entered, range-based bills and income use their midpoint for totals on Home and the Calendar. ',
             'If a bill is past due and still showing a range, it also appears in Late payments using that midpoint - entering the real ',
-            'price here updates both places without changing the usual range for future months. This lookahead window is adjustable in Settings.'
+            'amount here updates both places without changing the usual range for future occurrences. Income is never marked late - ',
+            'it simply keeps showing here until a real amount is entered. Both lookahead windows are adjustable in Settings.'
           ) : null
         ),
         needsAttention.length === 0
@@ -2848,19 +3472,24 @@ function AttentionRow({ o, data, setData, currency }) {
     const val = parseFloat(price);
     if (isNaN(val)) return;
     const key = `${o.id}|${o.occDate}`;
-    setData({ ...data, overrides: { ...data.overrides, [key]: { amount: val } } });
+    let next = { ...data, overrides: { ...data.overrides, [key]: { amount: val } } };
+    next = logActivity(next, `Set price for "${o.name}" to ${fmtCurrency(val, currency)}`);
+    setData(next);
   }
 
   const d = parseYmd(o.occDate);
   const dateLabel = formatDate(d, data.settings, { year: true });
   const forcedLate = isForcedLate(data, o.id, o.occDate);
   const ageText = o.daysLate < 0 ? `due in ${Math.abs(o.daysLate)}d` : `${o.daysLate} days late`;
+  const isIncome = o.kind === 'income';
 
   return h('div', { className: 'list-item', style: o.late ? { borderColor: 'var(--late-red)' } : null },
     h('div', null,
       h('p', { className: 'list-item-name' }, o.name),
       h('p', { className: 'list-item-sub' },
-        `${o.late ? 'Was due' : 'Due'} ${dateLabel} - usual range ${fmtCurrency(o.amountMin, currency)}-${fmtCurrency(o.amountMax, currency)}`),
+        `${o.late ? 'Was due' : 'Due'} ${dateLabel} - usual range `,
+        h('span', { style: { color: isIncome ? 'var(--text-success)' : 'inherit' } },
+          `${isIncome ? '+' : ''}${fmtCurrency(o.amountMin, currency)}-${isIncome ? '+' : ''}${fmtCurrency(o.amountMax, currency)}`)),
       forcedLate ? h('span', { className: 'badge badge-danger', style: { marginTop: '2px', display: 'inline-block' } }, 'Marked late') : null
     ),
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
@@ -2915,28 +3544,15 @@ function SettingsPage({ data, setData, onRestart }) {
   function handleIncomeSubmit(cleaned) {
     if (editingIncome._isNew) {
       const { _isNew, ...entry } = cleaned;
-      setData({ ...data, incomeSources: [...data.incomeSources, entry] });
+      setData(logActivity({ ...data, incomeSources: [...data.incomeSources, entry] }, `Added income source "${entry.name}"`));
     } else {
-      setData(applyEditedEntry(data, 'incomeSources', cleaned));
+      setData(logActivity(applyEditedEntry(data, 'incomeSources', cleaned), `Edited "${cleaned.name}"`));
     }
     setEditingIncome(null);
   }
 
-  function deleteIncome(id) {
-    setData({ ...data, incomeSources: data.incomeSources.filter((e) => e.id !== id) });
-  }
-
-  function downloadBackup() {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const stamp = todayYmd();
-    a.href = url;
-    a.download = `finance-calendar-backup-${stamp}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  function deleteIncome(entry) {
+    setData(logActivity({ ...data, incomeSources: data.incomeSources.filter((e) => e.id !== entry.id) }, `Deleted income source "${entry.name}"`));
   }
 
   let tabContent;
@@ -2948,7 +3564,7 @@ function SettingsPage({ data, setData, onRestart }) {
   } else if (tab === 'colors') {
     tabContent = h(ColorsTab, { data, updateSectionColor });
   } else {
-    tabContent = h(AdvancedTab, { data, updateSetting, onRestart, confirming, setConfirming, onDownloadBackup: downloadBackup });
+    tabContent = h(AdvancedTab, { data, setData, updateSetting, onRestart, confirming, setConfirming });
   }
 
   return h('div', null,
@@ -2997,7 +3613,7 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
                   h('span', { className: 'list-item-amount', style: { color: 'var(--text-success)' } }, `+${entryAmountLabel(e, currency)}`),
                   h('button', {
                     className: 'x-btn',
-                    onClick: (ev) => { ev.stopPropagation(); onDeleteIncome(e.id); },
+                    onClick: (ev) => { ev.stopPropagation(); onDeleteIncome(e); },
                     'aria-label': `Delete ${e.name}`
                   }, '\u00d7')
                 )
@@ -3061,7 +3677,7 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
           style: { width: '100px' }
         })
       ),
-      h('div', null,
+      h('div', { style: { marginBottom: '12px' } },
         h('label', null, 'Flag range-priced bills under "Needs attention" this many days before they\u2019re due'),
         h('input', {
           type: 'number', min: 0, max: 60,
@@ -3069,6 +3685,24 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
           onChange: (e) => updateSetting('needsAttentionLookaheadDays', parseInt(e.target.value, 10) || 0),
           style: { width: '100px' }
         })
+      ),
+      h('div', { style: { marginBottom: '12px' } },
+        h('label', null, 'Flag range-priced paychecks/income under "Needs attention" this many days before they\u2019re due'),
+        h('input', {
+          type: 'number', min: 0, max: 60,
+          value: data.settings.incomeNeedsAttentionLookaheadDays,
+          onChange: (e) => updateSetting('incomeNeedsAttentionLookaheadDays', parseInt(e.target.value, 10) || 0),
+          style: { width: '100px' }
+        })
+      ),
+      h('div', { className: 'checkbox-row' },
+        h('input', {
+          type: 'checkbox',
+          id: 'auto-deduct-cc',
+          checked: data.settings.autoDeductCardPayments !== false,
+          onChange: (e) => updateSetting('autoDeductCardPayments', e.target.checked)
+        }),
+        h('label', { htmlFor: 'auto-deduct-cc', style: { margin: 0 } }, 'Automatically deduct from a credit card\u2019s balance when its payment is marked paid')
       )
     )
   );
@@ -3106,7 +3740,39 @@ function ColorsTab({ data, updateSectionColor }) {
 
 /* ---------------- Advanced tab ---------------- */
 
-function AdvancedTab({ data, updateSetting, onRestart, confirming, setConfirming, onDownloadBackup }) {
+function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setConfirming }) {
+  const [importWarning, setImportWarning] = useState(false); // show warning modal before import
+  const [importError, setImportError] = useState(null);
+  const [importSuccess, setImportSuccess] = useState(false);
+  const [exportError, setExportError] = useState(null);
+  const [exportSuccess, setExportSuccess] = useState(false);
+
+  async function handleExport() {
+    setExportError(null);
+    setExportSuccess(false);
+    const result = await window.api.exportData();
+    if (result.success) {
+      setExportSuccess(true);
+      setTimeout(() => setExportSuccess(false), 3000);
+    } else if (!result.canceled) {
+      setExportError(result.error || 'Export failed.');
+    }
+  }
+
+  async function handleImportConfirmed() {
+    setImportWarning(false);
+    setImportError(null);
+    setImportSuccess(false);
+    const result = await window.api.importData();
+    if (result.success) {
+      setData(result.data);
+      setImportSuccess(true);
+      setTimeout(() => setImportSuccess(false), 4000);
+    } else if (!result.canceled) {
+      setImportError(result.error || 'Import failed.');
+    }
+  }
+
   return h('div', null,
     h('div', { className: 'card' },
       h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Display'),
@@ -3159,23 +3825,56 @@ function AdvancedTab({ data, updateSetting, onRestart, confirming, setConfirming
     ),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Data & backups'),
-      h('p', { style: { margin: '0 0 10px', fontSize: '13px', color: 'var(--text-secondary)' } },
-        'This web version stores your data in this browser only (IndexedDB) - it is not sent anywhere, but it ',
-        'also doesn\u2019t sync between browsers or devices, and can be lost if you clear this browser\u2019s site data. ',
-        'Download a backup file occasionally, especially before clearing browser data, switching browsers, or ',
-        'moving to a new computer. Keep the file somewhere safe, like a cloud drive folder or an external drive.'),
-      h('button', { className: 'primary', onClick: onDownloadBackup, style: { marginBottom: '10px' } }, 'Download backup (.json)'),
-      h('div', { className: 'checkbox-row' },
+      h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Activity log'),
+      (!data.activityLog || data.activityLog.length === 0)
+        ? h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } }, 'Nothing logged yet.')
+        : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '320px', overflowY: 'auto' } },
+            data.activityLog.slice(0, 25).map((entry) =>
+              h('div', { key: entry.id, style: { display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '13px' } },
+                h('span', null, entry.message),
+                h('span', { style: { color: 'var(--text-tertiary)', whiteSpace: 'nowrap', fontSize: '12px' } }, formatLogTimestamp(entry.timestamp))
+              )
+            )
+          )
+    ),
+
+    h('div', { className: 'card', style: { marginTop: '12px' } },
+      h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Data portability'),
+      h('p', { style: { margin: '0 0 12px', fontSize: '13px', color: 'var(--text-secondary)' } },
+        'Export your data as a .json file to back it up or move it to another computer. ',
+        'Import a previously exported file to restore or transfer your data \u2014 this will permanently replace everything currently saved in this app.'),
+      h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap' } },
+        h('button', { onClick: handleExport }, 'Export data (.json)'),
+        h('button', { onClick: () => setImportWarning(true) }, 'Import from .json file')
+      ),
+      exportSuccess ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--text-success)' } }, 'Export saved successfully.') : null,
+      exportError ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--late-red)' } }, exportError) : null,
+      importSuccess ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--text-success)' } }, 'Data imported successfully. Your app is now showing the imported data.') : null,
+      importError ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--late-red)' } }, importError) : null,
+      h('div', { className: 'checkbox-row', style: { marginTop: '12px', paddingTop: '12px', borderTop: '0.5px solid var(--border-tertiary)' } },
         h('input', {
           type: 'checkbox',
           id: 'backup-reminder',
           checked: data.settings.backupReminderEnabled !== false,
           onChange: (e) => updateSetting('backupReminderEnabled', e.target.checked)
         }),
-        h('label', { htmlFor: 'backup-reminder', style: { margin: 0 } }, 'Remind me to back up every Monday')
+        h('label', { htmlFor: 'backup-reminder', style: { margin: 0 } }, 'Remind me to download a backup every Monday')
       )
     ),
+
+    importWarning ? h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) setImportWarning(false); } },
+      h('div', { className: 'modal-content' },
+        h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px', color: 'var(--late-red)' } }, '\u26a0\ufe0f This will delete all your current data'),
+        h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
+          'Importing a file will permanently erase all your current bills, income, subscriptions, credit cards, history, and settings. ',
+          'This cannot be undone. Your current data will be gone immediately and replaced with whatever is in the file you choose.'),
+        h('p', { style: { margin: 0, fontSize: '14px', fontWeight: 500 } }, 'Are you absolutely sure you want to continue?'),
+        h('div', { className: 'row-between' },
+          h('button', { onClick: () => setImportWarning(false) }, 'Cancel \u2014 keep my current data'),
+          h('button', { className: 'danger-text', style: { borderColor: 'var(--late-red)' }, onClick: handleImportConfirmed }, 'Yes, delete and import')
+        )
+      )
+    ) : null,
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
       h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Reset all data'),
@@ -3192,10 +3891,9 @@ function AdvancedTab({ data, updateSetting, onRestart, confirming, setConfirming
     h('div', { className: 'card about-card', style: { marginTop: '12px' } },
       h('img', { src: 'assets/icon.png', alt: '', className: 'about-logo' }),
       h('div', null,
-        h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Finance Calendar (web)'),
+        h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Finance Calendar'),
         h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
-          'Stores all data locally in this browser - nothing is sent anywhere. A desktop app version is also ',
-          'available below, which keeps your data in a file on your computer instead of in the browser.')
+          'Stores all data locally on this computer in a JSON file - nothing is sent anywhere.')
       )
     )
   );

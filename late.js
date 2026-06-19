@@ -6,17 +6,23 @@ function LatePage({ data, setData, lateBills }) {
 
   const total = lateBills.reduce((sum, o) => sum + o.amount, 0);
 
-  function togglePaid(entryId, occDate) {
-    setData(togglePaidStatus(data, entryId, occDate));
+  function togglePaid(o) {
+    const wasPaid = isPaid(data, o.id, o.occDate);
+    let next = togglePaidStatus(data, o.id, o.occDate);
+    next = logActivity(next, `${wasPaid ? 'Unmarked' : 'Marked'} "${o.name}" as paid`);
+    setData(next);
   }
 
   function dismissLate(o) {
+    let next;
     if (o.forcedLate) {
-      setData(toggleForcedLate(data, o.id, o.occDate));
+      next = toggleForcedLate(data, o.id, o.occDate);
+      next = logActivity(next, `Unmarked "${o.name}" as late`);
     } else {
       const key = `${o.id}|${o.occDate}`;
-      setData({ ...data, dismissedLate: { ...data.dismissedLate, [key]: true } });
+      next = logActivity({ ...data, dismissedLate: { ...data.dismissedLate, [key]: true } }, `Dismissed late status for "${o.name}"`);
     }
+    setData(next);
   }
 
   function ageClass(days) {
@@ -59,7 +65,7 @@ function LatePage({ data, setData, lateBills }) {
               h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
                 h('span', { className: `age-pill ${ageClass(o.daysLate)}` }, ageLabel(o.daysLate)),
                 h('button', { onClick: () => setPriceModal(o) }, 'Set price'),
-                h('button', { className: 'primary', onClick: () => togglePaid(o.id, o.occDate) }, 'Pay now (ASAP)'),
+                h('button', { className: 'primary', onClick: () => togglePaid(o) }, 'Pay now (ASAP)'),
                 h('button', { className: 'danger-text', onClick: () => dismissLate(o) }, o.forcedLate ? 'Unmark late' : 'Dismiss')
               )
             );

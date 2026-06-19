@@ -35,7 +35,9 @@ function getDateRangeSpans(data, allBills, gridStart, gridEnd) {
     }
 
     // recurring with a date range - shift the span for each occurrence
+    const removed = data.removedOccurrences || {};
     expandEntry(e, gridStart, gridEnd).forEach((occ) => {
+      if (removed[`${e.id}|${occ.occDate}`]) return; // single occurrence removed, rule untouched
       const occStart = parseYmd(occ.occDate);
       const occEnd = new Date(occStart);
       occEnd.setDate(occEnd.getDate() + offsetDays);
@@ -90,24 +92,12 @@ function CalendarPage({ data, setData, onAddEntry }) {
       ...expandAll(data.incomeSources, 'income', gridStart, gridEnd, data)
     ].map((o) => ({ ...o, sourceList: sourceListById[o.id] }));
     const oneTime = data.oneTimeEntries
-      .filter((e) => e.date)
       .filter((e) => {
+        if (!e.date) return false;
         const d = parseYmd(e.date);
         return d >= gridStart && d <= gridEnd;
       })
-      .map((e) => {
-        const override = getOverride(data, e.id, e.date);
-        const hasOverride = override && override.amount !== undefined && override.amount !== null;
-        return {
-          ...e,
-          occDate: e.date,
-          amount: hasOverride ? Number(override.amount) || 0 : entryAmount(e),
-          isRange: !!e.useAmountRange,
-          hasOverride: !!hasOverride,
-          kind: e.oneTimeKind === 'income' ? 'income' : 'bill',
-          sourceList: 'oneTimeEntries'
-        };
-      });
+      .map((e) => ({ ...oneTimeOccurrence(data, e), sourceList: 'oneTimeEntries' }));
     return [...recurring, ...oneTime];
   }, [data, cursor]);
 
@@ -298,9 +288,13 @@ function CalendarPage({ data, setData, onAddEntry }) {
 function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAddEntry }) {
   const [priceModal, setPriceModal] = useState(null);
   const [editing, setEditing] = useState(null); // { sourceList, form } or null
+  const [confirmRemove, setConfirmRemove] = useState(null); // `${id}|${occDate}` or null
 
-  function togglePaid(entryId, occDate) {
-    setData(togglePaidStatus(data, entryId, occDate));
+  function togglePaid(o) {
+    const wasPaid = isPaid(data, o.id, o.occDate);
+    let next = togglePaidStatus(data, o.id, o.occDate);
+    next = logActivity(next, `${wasPaid ? 'Unmarked' : 'Marked'} "${o.name}" as paid`);
+    setData(next);
   }
 
   function openEdit(o) {
@@ -309,12 +303,31 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
   }
 
   function handleEditSubmit(cleaned) {
-    setData(applyEditedEntry(data, editing.sourceList, cleaned));
+    let next = applyEditedEntry(data, editing.sourceList, cleaned);
+    next = logActivity(next, `Edited "${cleaned.name}"`);
+    setData(next);
     setEditing(null);
   }
 
-  function toggleLate(entryId, occDate) {
-    setData(toggleForcedLate(data, entryId, occDate));
+  function toggleLate(o) {
+    const wasLate = isForcedLate(data, o.id, o.occDate);
+    let next = toggleForcedLate(data, o.id, o.occDate);
+    next = logActivity(next, `${wasLate ? 'Unmarked' : 'Marked'} "${o.name}" as late`);
+    setData(next);
+  }
+
+  function removeThisOccurrence(o) {
+    let next;
+    if (o.sourceList === 'oneTimeEntries') {
+      // one-time entries have exactly one occurrence - "remove" means delete it outright
+      next = { ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== o.id) };
+      next = logActivity(next, `Removed "${o.name}"`);
+    } else {
+      next = removeOccurrence(data, o.id, o.occDate);
+      next = logActivity(next, `Removed "${o.name}" from calendar for ${o.occDate}`);
+    }
+    setData(next);
+    setConfirmRemove(null);
   }
 
   const dateLabel = formatDate(parseYmd(dateStr), data.settings, { weekday: true, year: true });
@@ -334,12 +347,15 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
               const paid = o.kind === 'bill' && isPaid(data, o.id, o.occDate);
               const editable = o.sourceList !== 'creditCards';
               const forcedLate = o.kind === 'bill' && isForcedLate(data, o.id, o.occDate);
+              const removeKey = `${o.id}|${o.occDate}`;
+              const confirming = confirmRemove === removeKey;
+              const removeLabel = o.sourceList === 'oneTimeEntries' ? 'Remove' : 'Remove from calendar';
               return h('div', { key: `${o.id}-${i}`, className: 'list-item' },
                 h('div', { className: 'checkbox-row' },
                   o.kind === 'bill' ? h('input', {
                     type: 'checkbox',
                     checked: paid,
-                    onChange: () => togglePaid(o.id, o.occDate),
+                    onChange: () => togglePaid(o),
                     'aria-label': `Mark ${o.name} paid`
                   }) : null,
                   h('div', null,
@@ -348,14 +364,17 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
                     forcedLate ? h('span', { className: 'badge badge-danger', style: { marginTop: '2px', display: 'inline-block' } }, 'Marked late') : null
                   )
                 ),
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
                   h('span', {
                     className: 'list-item-amount',
                     style: { color: o.kind === 'income' ? 'var(--text-success)' : 'inherit' }
                   }, `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`),
-                  o.kind === 'bill' ? h('button', { onClick: () => setPriceModal(o) }, 'Set price') : null,
-                  o.kind === 'bill' ? h('button', { onClick: () => toggleLate(o.id, o.occDate) }, forcedLate ? 'Unmark late' : 'Mark as late') : null,
-                  editable ? h('button', { onClick: () => openEdit(o) }, 'Edit') : null
+                  h('button', { onClick: () => setPriceModal(o) }, 'Set price'),
+                  o.kind === 'bill' ? h('button', { onClick: () => toggleLate(o) }, forcedLate ? 'Unmark late' : 'Mark as late') : null,
+                  editable ? h('button', { onClick: () => openEdit(o) }, 'Edit') : null,
+                  confirming
+                    ? h('button', { className: 'danger-text', onClick: () => removeThisOccurrence(o) }, 'Confirm remove?')
+                    : h('button', { className: 'danger-text', onClick: () => setConfirmRemove(removeKey) }, removeLabel)
                 )
               );
             })

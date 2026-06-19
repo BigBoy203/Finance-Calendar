@@ -40,28 +40,15 @@ function SettingsPage({ data, setData, onRestart }) {
   function handleIncomeSubmit(cleaned) {
     if (editingIncome._isNew) {
       const { _isNew, ...entry } = cleaned;
-      setData({ ...data, incomeSources: [...data.incomeSources, entry] });
+      setData(logActivity({ ...data, incomeSources: [...data.incomeSources, entry] }, `Added income source "${entry.name}"`));
     } else {
-      setData(applyEditedEntry(data, 'incomeSources', cleaned));
+      setData(logActivity(applyEditedEntry(data, 'incomeSources', cleaned), `Edited "${cleaned.name}"`));
     }
     setEditingIncome(null);
   }
 
-  function deleteIncome(id) {
-    setData({ ...data, incomeSources: data.incomeSources.filter((e) => e.id !== id) });
-  }
-
-  function downloadBackup() {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const stamp = todayYmd();
-    a.href = url;
-    a.download = `finance-calendar-backup-${stamp}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  function deleteIncome(entry) {
+    setData(logActivity({ ...data, incomeSources: data.incomeSources.filter((e) => e.id !== entry.id) }, `Deleted income source "${entry.name}"`));
   }
 
   let tabContent;
@@ -73,7 +60,7 @@ function SettingsPage({ data, setData, onRestart }) {
   } else if (tab === 'colors') {
     tabContent = h(ColorsTab, { data, updateSectionColor });
   } else {
-    tabContent = h(AdvancedTab, { data, updateSetting, onRestart, confirming, setConfirming, onDownloadBackup: downloadBackup });
+    tabContent = h(AdvancedTab, { data, setData, updateSetting, onRestart, confirming, setConfirming });
   }
 
   return h('div', null,
@@ -122,7 +109,7 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
                   h('span', { className: 'list-item-amount', style: { color: 'var(--text-success)' } }, `+${entryAmountLabel(e, currency)}`),
                   h('button', {
                     className: 'x-btn',
-                    onClick: (ev) => { ev.stopPropagation(); onDeleteIncome(e.id); },
+                    onClick: (ev) => { ev.stopPropagation(); onDeleteIncome(e); },
                     'aria-label': `Delete ${e.name}`
                   }, '\u00d7')
                 )
@@ -186,7 +173,7 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
           style: { width: '100px' }
         })
       ),
-      h('div', null,
+      h('div', { style: { marginBottom: '12px' } },
         h('label', null, 'Flag range-priced bills under "Needs attention" this many days before they\u2019re due'),
         h('input', {
           type: 'number', min: 0, max: 60,
@@ -194,6 +181,24 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
           onChange: (e) => updateSetting('needsAttentionLookaheadDays', parseInt(e.target.value, 10) || 0),
           style: { width: '100px' }
         })
+      ),
+      h('div', { style: { marginBottom: '12px' } },
+        h('label', null, 'Flag range-priced paychecks/income under "Needs attention" this many days before they\u2019re due'),
+        h('input', {
+          type: 'number', min: 0, max: 60,
+          value: data.settings.incomeNeedsAttentionLookaheadDays,
+          onChange: (e) => updateSetting('incomeNeedsAttentionLookaheadDays', parseInt(e.target.value, 10) || 0),
+          style: { width: '100px' }
+        })
+      ),
+      h('div', { className: 'checkbox-row' },
+        h('input', {
+          type: 'checkbox',
+          id: 'auto-deduct-cc',
+          checked: data.settings.autoDeductCardPayments !== false,
+          onChange: (e) => updateSetting('autoDeductCardPayments', e.target.checked)
+        }),
+        h('label', { htmlFor: 'auto-deduct-cc', style: { margin: 0 } }, 'Automatically deduct from a credit card\u2019s balance when its payment is marked paid')
       )
     )
   );
@@ -231,7 +236,39 @@ function ColorsTab({ data, updateSectionColor }) {
 
 /* ---------------- Advanced tab ---------------- */
 
-function AdvancedTab({ data, updateSetting, onRestart, confirming, setConfirming, onDownloadBackup }) {
+function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setConfirming }) {
+  const [importWarning, setImportWarning] = useState(false); // show warning modal before import
+  const [importError, setImportError] = useState(null);
+  const [importSuccess, setImportSuccess] = useState(false);
+  const [exportError, setExportError] = useState(null);
+  const [exportSuccess, setExportSuccess] = useState(false);
+
+  async function handleExport() {
+    setExportError(null);
+    setExportSuccess(false);
+    const result = await window.api.exportData();
+    if (result.success) {
+      setExportSuccess(true);
+      setTimeout(() => setExportSuccess(false), 3000);
+    } else if (!result.canceled) {
+      setExportError(result.error || 'Export failed.');
+    }
+  }
+
+  async function handleImportConfirmed() {
+    setImportWarning(false);
+    setImportError(null);
+    setImportSuccess(false);
+    const result = await window.api.importData();
+    if (result.success) {
+      setData(result.data);
+      setImportSuccess(true);
+      setTimeout(() => setImportSuccess(false), 4000);
+    } else if (!result.canceled) {
+      setImportError(result.error || 'Import failed.');
+    }
+  }
+
   return h('div', null,
     h('div', { className: 'card' },
       h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Display'),
@@ -284,23 +321,56 @@ function AdvancedTab({ data, updateSetting, onRestart, confirming, setConfirming
     ),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Data & backups'),
-      h('p', { style: { margin: '0 0 10px', fontSize: '13px', color: 'var(--text-secondary)' } },
-        'This web version stores your data in this browser only (IndexedDB) - it is not sent anywhere, but it ',
-        'also doesn\u2019t sync between browsers or devices, and can be lost if you clear this browser\u2019s site data. ',
-        'Download a backup file occasionally, especially before clearing browser data, switching browsers, or ',
-        'moving to a new computer. Keep the file somewhere safe, like a cloud drive folder or an external drive.'),
-      h('button', { className: 'primary', onClick: onDownloadBackup, style: { marginBottom: '10px' } }, 'Download backup (.json)'),
-      h('div', { className: 'checkbox-row' },
+      h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Activity log'),
+      (!data.activityLog || data.activityLog.length === 0)
+        ? h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } }, 'Nothing logged yet.')
+        : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '320px', overflowY: 'auto' } },
+            data.activityLog.slice(0, 25).map((entry) =>
+              h('div', { key: entry.id, style: { display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '13px' } },
+                h('span', null, entry.message),
+                h('span', { style: { color: 'var(--text-tertiary)', whiteSpace: 'nowrap', fontSize: '12px' } }, formatLogTimestamp(entry.timestamp))
+              )
+            )
+          )
+    ),
+
+    h('div', { className: 'card', style: { marginTop: '12px' } },
+      h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Data portability'),
+      h('p', { style: { margin: '0 0 12px', fontSize: '13px', color: 'var(--text-secondary)' } },
+        'Export your data as a .json file to back it up or move it to another computer. ',
+        'Import a previously exported file to restore or transfer your data \u2014 this will permanently replace everything currently saved in this app.'),
+      h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap' } },
+        h('button', { onClick: handleExport }, 'Export data (.json)'),
+        h('button', { onClick: () => setImportWarning(true) }, 'Import from .json file')
+      ),
+      exportSuccess ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--text-success)' } }, 'Export saved successfully.') : null,
+      exportError ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--late-red)' } }, exportError) : null,
+      importSuccess ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--text-success)' } }, 'Data imported successfully. Your app is now showing the imported data.') : null,
+      importError ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--late-red)' } }, importError) : null,
+      h('div', { className: 'checkbox-row', style: { marginTop: '12px', paddingTop: '12px', borderTop: '0.5px solid var(--border-tertiary)' } },
         h('input', {
           type: 'checkbox',
           id: 'backup-reminder',
           checked: data.settings.backupReminderEnabled !== false,
           onChange: (e) => updateSetting('backupReminderEnabled', e.target.checked)
         }),
-        h('label', { htmlFor: 'backup-reminder', style: { margin: 0 } }, 'Remind me to back up every Monday')
+        h('label', { htmlFor: 'backup-reminder', style: { margin: 0 } }, 'Remind me to download a backup every Monday')
       )
     ),
+
+    importWarning ? h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) setImportWarning(false); } },
+      h('div', { className: 'modal-content' },
+        h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px', color: 'var(--late-red)' } }, '\u26a0\ufe0f This will delete all your current data'),
+        h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
+          'Importing a file will permanently erase all your current bills, income, subscriptions, credit cards, history, and settings. ',
+          'This cannot be undone. Your current data will be gone immediately and replaced with whatever is in the file you choose.'),
+        h('p', { style: { margin: 0, fontSize: '14px', fontWeight: 500 } }, 'Are you absolutely sure you want to continue?'),
+        h('div', { className: 'row-between' },
+          h('button', { onClick: () => setImportWarning(false) }, 'Cancel \u2014 keep my current data'),
+          h('button', { className: 'danger-text', style: { borderColor: 'var(--late-red)' }, onClick: handleImportConfirmed }, 'Yes, delete and import')
+        )
+      )
+    ) : null,
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
       h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Reset all data'),
@@ -317,10 +387,9 @@ function AdvancedTab({ data, updateSetting, onRestart, confirming, setConfirming
     h('div', { className: 'card about-card', style: { marginTop: '12px' } },
       h('img', { src: 'assets/icon.png', alt: '', className: 'about-logo' }),
       h('div', null,
-        h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Finance Calendar (web)'),
+        h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Finance Calendar'),
         h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
-          'Stores all data locally in this browser - nothing is sent anywhere. A desktop app version is also ',
-          'available below, which keeps your data in a file on your computer instead of in the browser.')
+          'Stores all data locally on this computer in a JSON file - nothing is sent anywhere.')
       )
     )
   );

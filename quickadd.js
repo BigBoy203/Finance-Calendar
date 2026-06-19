@@ -42,13 +42,13 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
     };
 
     if (type === 'bill') {
-      setData({ ...data, majorBills: [...data.majorBills, entry] });
+      setData(logActivity({ ...data, majorBills: [...data.majorBills, entry] }, `Added bill "${entry.name}"`));
     } else if (type === 'subscription') {
-      setData({ ...data, subscriptions: [...data.subscriptions, entry] });
+      setData(logActivity({ ...data, subscriptions: [...data.subscriptions, entry] }, `Added subscription "${entry.name}"`));
     } else if (type === 'oneTimePayment') {
-      setData({ ...data, oneTimeEntries: [...data.oneTimeEntries, { ...entry, freq: 'none', oneTimeKind: 'payment' }] });
+      setData(logActivity({ ...data, oneTimeEntries: [...data.oneTimeEntries, { ...entry, freq: 'none', oneTimeKind: 'payment' }] }, `Added one-time payment "${entry.name}"`));
     } else if (type === 'oneTimeIncome') {
-      setData({ ...data, oneTimeEntries: [...data.oneTimeEntries, { ...entry, freq: 'none', oneTimeKind: 'income' }] });
+      setData(logActivity({ ...data, oneTimeEntries: [...data.oneTimeEntries, { ...entry, freq: 'none', oneTimeKind: 'income' }] }, `Added one-time income "${entry.name}"`));
     }
     onClose();
   }

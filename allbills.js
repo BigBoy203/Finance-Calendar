@@ -12,14 +12,16 @@ function AllBillsPage({ data, setData, needsAttention, onAddEntry }) {
 
   function deleteEntry(o) {
     if (o.kind !== 'bill' && o.kind !== 'income') return;
+    let next = null;
     if (o.sourceList === 'majorBills') {
-      setData({ ...data, majorBills: data.majorBills.filter((e) => e.id !== o.id) });
+      next = { ...data, majorBills: data.majorBills.filter((e) => e.id !== o.id) };
     } else if (o.sourceList === 'subscriptions') {
-      setData({ ...data, subscriptions: data.subscriptions.filter((e) => e.id !== o.id) });
+      next = { ...data, subscriptions: data.subscriptions.filter((e) => e.id !== o.id) };
     } else if (o.sourceList === 'oneTimeEntries') {
-      setData({ ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== o.id) });
+      next = { ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== o.id) };
     }
     // credit card payments are managed from the Credit Cards page
+    if (next) setData(logActivity(next, `Deleted "${o.name}"`));
   }
 
   function openEdit(e) {
@@ -28,7 +30,9 @@ function AllBillsPage({ data, setData, needsAttention, onAddEntry }) {
   }
 
   function handleEditSubmit(cleaned) {
-    setData(applyEditedEntry(data, editing.sourceList, cleaned));
+    let next = applyEditedEntry(data, editing.sourceList, cleaned);
+    next = logActivity(next, `Edited "${cleaned.name}"`);
+    setData(next);
     setEditing(null);
   }
 
@@ -84,13 +88,14 @@ function AllBillsPage({ data, setData, needsAttention, onAddEntry }) {
       !attentionCollapsed ? h('div', { style: { marginTop: '10px' } },
         h('div', { className: 'info-banner' },
           h('p', { style: { margin: 0, fontSize: '13px' } },
-            `These bills use a price range instead of a fixed amount, and are flagged here starting ${data.settings.needsAttentionLookaheadDays} day${data.settings.needsAttentionLookaheadDays === 1 ? '' : 's'} before they're due. Fill in the actual price once you know it - totals and projections stay more accurate when these are kept up to date. `,
+            `These bills and paychecks use a price range instead of a fixed amount. Bills are flagged here starting ${data.settings.needsAttentionLookaheadDays} day${data.settings.needsAttentionLookaheadDays === 1 ? '' : 's'} before they're due, and income starting ${data.settings.incomeNeedsAttentionLookaheadDays} day${data.settings.incomeNeedsAttentionLookaheadDays === 1 ? '' : 's'} before. Fill in the actual amount once you know it - totals and projections stay more accurate when these are kept up to date. `,
             h('button', { className: 'toggle-link', onClick: () => setShowInfo(!showInfo) }, showInfo ? 'Hide details' : 'Why does this matter?')
           ),
           showInfo ? h('p', { style: { margin: '8px 0 0', fontSize: '13px' } },
-            'Until a real price is entered, range-based bills use their midpoint for totals on Home and the Calendar. ',
+            'Until a real amount is entered, range-based bills and income use their midpoint for totals on Home and the Calendar. ',
             'If a bill is past due and still showing a range, it also appears in Late payments using that midpoint - entering the real ',
-            'price here updates both places without changing the usual range for future months. This lookahead window is adjustable in Settings.'
+            'amount here updates both places without changing the usual range for future occurrences. Income is never marked late - ',
+            'it simply keeps showing here until a real amount is entered. Both lookahead windows are adjustable in Settings.'
           ) : null
         ),
         needsAttention.length === 0
@@ -168,19 +173,24 @@ function AttentionRow({ o, data, setData, currency }) {
     const val = parseFloat(price);
     if (isNaN(val)) return;
     const key = `${o.id}|${o.occDate}`;
-    setData({ ...data, overrides: { ...data.overrides, [key]: { amount: val } } });
+    let next = { ...data, overrides: { ...data.overrides, [key]: { amount: val } } };
+    next = logActivity(next, `Set price for "${o.name}" to ${fmtCurrency(val, currency)}`);
+    setData(next);
   }
 
   const d = parseYmd(o.occDate);
   const dateLabel = formatDate(d, data.settings, { year: true });
   const forcedLate = isForcedLate(data, o.id, o.occDate);
   const ageText = o.daysLate < 0 ? `due in ${Math.abs(o.daysLate)}d` : `${o.daysLate} days late`;
+  const isIncome = o.kind === 'income';
 
   return h('div', { className: 'list-item', style: o.late ? { borderColor: 'var(--late-red)' } : null },
     h('div', null,
       h('p', { className: 'list-item-name' }, o.name),
       h('p', { className: 'list-item-sub' },
-        `${o.late ? 'Was due' : 'Due'} ${dateLabel} - usual range ${fmtCurrency(o.amountMin, currency)}-${fmtCurrency(o.amountMax, currency)}`),
+        `${o.late ? 'Was due' : 'Due'} ${dateLabel} - usual range `,
+        h('span', { style: { color: isIncome ? 'var(--text-success)' : 'inherit' } },
+          `${isIncome ? '+' : ''}${fmtCurrency(o.amountMin, currency)}-${isIncome ? '+' : ''}${fmtCurrency(o.amountMax, currency)}`)),
       forcedLate ? h('span', { className: 'badge badge-danger', style: { marginTop: '2px', display: 'inline-block' } }, 'Marked late') : null
     ),
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },

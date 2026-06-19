@@ -2,7 +2,7 @@
 
 function BillsPage({ data, setData, onAddEntry }) {
   const currency = data.settings.currency;
-  const [editing, setEditing] = useState(null); // 'new' | entry object | null
+  const [editing, setEditing] = useState(null); // form-shape object while a bill is being added/edited, else null
 
   function openAdd() {
     setEditing({ ...blankEntry({ freq: 'monthly', category: 'Other' }), _isNew: true });
@@ -13,18 +13,17 @@ function BillsPage({ data, setData, onAddEntry }) {
   }
 
   function handleSubmit(cleaned) {
-    if (editing._isNew) {
-      const { _isNew, ...entry } = cleaned;
-      setData({ ...data, majorBills: [...data.majorBills, entry] });
+    const { _isNew, ...entry } = cleaned;
+    if (_isNew) {
+      setData(logActivity({ ...data, majorBills: [...data.majorBills, entry] }, `Added bill "${entry.name}"`));
     } else {
-      const { _isNew, ...entry } = cleaned;
-      setData({ ...data, majorBills: data.majorBills.map((e) => (e.id === entry.id ? entry : e)) });
+      setData(logActivity({ ...data, majorBills: data.majorBills.map((e) => (e.id === entry.id ? entry : e)) }, `Edited "${entry.name}"`));
     }
     setEditing(null);
   }
 
-  function deleteEntry(id) {
-    setData({ ...data, majorBills: data.majorBills.filter((e) => e.id !== id) });
+  function deleteEntry(entry) {
+    setData(logActivity({ ...data, majorBills: data.majorBills.filter((e) => e.id !== entry.id) }, `Deleted "${entry.name}"`));
   }
 
   const list = data.majorBills;
@@ -51,7 +50,7 @@ function BillsPage({ data, setData, onAddEntry }) {
                 h('span', { className: 'list-item-amount' }, entryAmountLabel(e, currency)),
                 h('button', {
                   className: 'x-btn',
-                  onClick: (ev) => { ev.stopPropagation(); deleteEntry(e.id); },
+                  onClick: (ev) => { ev.stopPropagation(); deleteEntry(e); },
                   'aria-label': `Delete ${e.name}`
                 }, '\u00d7')
               )

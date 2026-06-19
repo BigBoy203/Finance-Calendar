@@ -62,15 +62,16 @@ function CreditCardsPage({ data, setData }) {
       balanceDate: principalChanged ? todayYmd() : (form.balanceDate || todayYmd())
     };
     if (editingId) {
-      setData({ ...data, creditCards: cards.map((c) => (c.id === editingId ? entry : c)) });
+      setData(logActivity({ ...data, creditCards: cards.map((c) => (c.id === editingId ? entry : c)) }, `Edited credit card "${entry.name}"`));
     } else {
-      setData({ ...data, creditCards: [...cards, entry] });
+      setData(logActivity({ ...data, creditCards: [...cards, entry] }, `Added credit card "${entry.name}"`));
     }
     setShowForm(false);
   }
 
   function deleteCard(id) {
-    setData({ ...data, creditCards: cards.filter((c) => c.id !== id) });
+    const card = cards.find((c) => c.id === id);
+    setData(logActivity({ ...data, creditCards: cards.filter((c) => c.id !== id) }, `Deleted credit card "${card ? card.name : id}"`));
   }
 
   return h('div', null,

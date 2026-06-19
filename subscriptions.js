@@ -13,18 +13,17 @@ function SubscriptionsPage({ data, setData, onAddEntry }) {
   }
 
   function handleSubmit(cleaned) {
-    if (editing._isNew) {
-      const { _isNew, ...entry } = cleaned;
-      setData({ ...data, subscriptions: [...data.subscriptions, entry] });
+    const { _isNew, ...entry } = cleaned;
+    if (_isNew) {
+      setData(logActivity({ ...data, subscriptions: [...data.subscriptions, entry] }, `Added subscription "${entry.name}"`));
     } else {
-      const { _isNew, ...entry } = cleaned;
-      setData({ ...data, subscriptions: data.subscriptions.map((e) => (e.id === entry.id ? entry : e)) });
+      setData(logActivity({ ...data, subscriptions: data.subscriptions.map((e) => (e.id === entry.id ? entry : e)) }, `Edited "${entry.name}"`));
     }
     setEditing(null);
   }
 
-  function deleteEntry(id) {
-    setData({ ...data, subscriptions: data.subscriptions.filter((e) => e.id !== id) });
+  function deleteEntry(entry) {
+    setData(logActivity({ ...data, subscriptions: data.subscriptions.filter((e) => e.id !== entry.id) }, `Deleted "${entry.name}"`));
   }
 
   const list = data.subscriptions;
@@ -60,7 +59,7 @@ function SubscriptionsPage({ data, setData, onAddEntry }) {
                 h('span', { className: 'list-item-amount' }, entryAmountLabel(e, currency)),
                 h('button', {
                   className: 'x-btn',
-                  onClick: (ev) => { ev.stopPropagation(); deleteEntry(e.id); },
+                  onClick: (ev) => { ev.stopPropagation(); deleteEntry(e); },
                   'aria-label': `Delete ${e.name}`
                 }, '\u00d7')
               )
