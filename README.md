@@ -32,6 +32,33 @@ Because of that, the app has a few safety nets:
 Importing during first-time setup is offered as the very first onboarding
 step, so you can restore a backup before entering anything by hand.
 
+## On a phone
+
+The layout switches automatically at 768px wide - not by sniffing the
+browser's user agent, but by watching a media query, so it also reacts to
+rotating the phone, split-screen, or simply narrowing a desktop window.
+
+What changes on a phone:
+
+- The 200px sidebar is replaced by a **bottom tab bar** (Home, Calendar,
+  Late, Bills, Settings) with badges for late payments and items needing a
+  price. Essentials, Credit cards, and Subscriptions live behind the Bills
+  tab, reached from chips at the top of All bills, with a back arrow to
+  return.
+- A compact **top bar** carries the page title and a `+` button for quick add.
+- The **calendar** becomes an Apple-style month grid: each day is a number
+  with up to three colored dots beneath it, and tapping a day opens its
+  detail sheet. Date-range bars aren't drawn (there's no room), so those
+  entries show up as ordinary dots instead of being hidden.
+- **Modals slide up as bottom sheets** rather than appearing centered.
+- Lists stack into **cards** instead of wide rows, and every tap target is
+  sized for a thumb.
+- Text inputs use a 16px font, which is what stops iOS Safari from zooming
+  in whenever a field gets focus.
+
+If you save the site to your home screen it runs without browser chrome, and
+the layout accounts for notches and home indicators.
+
 ## Running it
 
 This is a set of static files - no server-side code, nothing to install.
@@ -63,6 +90,7 @@ Upload the entire folder together, including `assets/`, `vendor/`, and
 ## Files
 
 - `index.html`, `app.js`, `styles.css` - the app
+- `mobile.js` - the phone-width detection hook, bottom tab bar, and top bar
 - `storage.js` - the IndexedDB storage layer and the browser versions of
   export/import; this is the only file that differs in substance from the
   desktop build's data handling
@@ -73,9 +101,22 @@ Upload the entire folder together, including `assets/`, `vendor/`, and
 
 ## Updating from a newer desktop version later
 
-The renderer files here (`app_core.js`, `home.js`, `calendar.js`, etc.) are
-copied straight from the desktop build's `renderer/` folder. To re-sync after
-desktop changes, copy those files over, keep this `storage.js` and
-`index.html`, re-check that any new data-model fields are reflected in
-`storage.js`'s defaults, then rebuild `app.js` by concatenating the renderer
-files in the same order the desktop build uses.
+The renderer files here (`app_core.js`, `home.js`, `calendar.js`, etc.) come
+from the desktop build's `renderer/` folder, with mobile-specific branches
+added to `app_core.js`, `calendar.js`, and `allbills.js`. To re-sync after
+desktop changes, copy those files over, keep this `storage.js`, `mobile.js`,
+and `index.html`, re-apply the mobile branches, re-check that any new
+data-model fields are reflected in `storage.js`'s defaults, then rebuild
+`app.js`:
+
+```
+cat app_core.js mobile.js entryform.js wizard.js quickadd.js home.js \
+    late.js calendar.js bills.js subscriptions.js creditcards.js \
+    allbills.js settings.js > app.js
+echo "" >> app.js
+echo "ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));" >> app.js
+```
+
+Note `mobile.js` sits second, right after `app_core.js`.
+
+The Trading tab is intentionally desktop-only and is not part of this build.

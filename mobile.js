@@ -1,0 +1,106 @@
+/* ---------------- Mobile support ----------------
+ * Layout switching is driven by a media query rather than user-agent
+ * sniffing, so it reacts correctly to rotation, split-screen, and a desktop
+ * browser window simply being made narrow. The breakpoint here must match
+ * the one in styles.css.
+ */
+
+const MOBILE_BREAKPOINT = 768;
+
+// True while the viewport is phone-sized. Re-renders on resize/rotate.
+function useIsMobile() {
+  const query = `(max-width: ${MOBILE_BREAKPOINT}px)`;
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia
+      ? window.matchMedia(query).matches
+      : false
+  );
+
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia(query);
+    const onChange = (e) => setIsMobile(e.matches);
+    // addEventListener on MediaQueryList isn't in older Safari; fall back
+    if (mql.addEventListener) mql.addEventListener('change', onChange);
+    else mql.addListener(onChange);
+    setIsMobile(mql.matches);
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener('change', onChange);
+      else mql.removeListener(onChange);
+    };
+  }, []);
+
+  return isMobile;
+}
+
+// The five destinations that get a slot in the bottom bar. Everything else
+// (Essentials / Credit cards / Subscriptions) lives behind the "Bills" tab,
+// which opens All Bills - that page already links onward to each of them.
+const MOBILE_TABS = [
+  { id: 'home', label: 'Home', icon: 'home' },
+  { id: 'calendar', label: 'Calendar', icon: 'calendar' },
+  { id: 'late', label: 'Late', icon: 'alert' },
+  { id: 'allbills', label: 'Bills', icon: 'allbills' },
+  { id: 'settings', label: 'Settings', icon: 'settings' }
+];
+
+// Which bottom tab should light up for a given page. Sub-pages of All Bills
+// keep the Bills tab active so the user never sees "no tab selected".
+const TAB_FOR_PAGE = {
+  home: 'home',
+  calendar: 'calendar',
+  late: 'late',
+  allbills: 'allbills',
+  essentials: 'allbills',
+  creditcards: 'allbills',
+  subscriptions: 'allbills',
+  settings: 'settings'
+};
+
+function MobileTabBar({ page, setPage, lateCount, needsAttentionCount }) {
+  const activeTab = TAB_FOR_PAGE[page] || page;
+  return h('nav', { className: 'mobile-tabbar' },
+    MOBILE_TABS.map((tab) => {
+      const active = activeTab === tab.id;
+      let badge = null;
+      if (tab.id === 'late' && lateCount > 0) badge = lateCount;
+      if (tab.id === 'allbills' && needsAttentionCount > 0) badge = needsAttentionCount;
+      return h('button', {
+        key: tab.id,
+        className: `mobile-tab${active ? ' active' : ''}`,
+        onClick: () => setPage(tab.id),
+        'aria-label': tab.label,
+        'aria-current': active ? 'page' : undefined
+      },
+        h('span', { className: 'mobile-tab-icon' },
+          h(Icon, { name: tab.icon }),
+          badge != null ? h('span', { className: 'mobile-tab-badge' }, badge > 99 ? '99+' : badge) : null
+        ),
+        h('span', { className: 'mobile-tab-label' }, tab.label)
+      );
+    })
+  );
+}
+
+// Compact top bar shown on mobile in place of the sidebar brand block.
+// Sub-pages (reached from All bills) get a back arrow in place of the logo.
+function MobileHeader({ title, onQuickAdd, onBack }) {
+  return h('header', { className: 'mobile-header' },
+    h('div', { className: 'mobile-header-brand' },
+      onBack
+        ? h('button', { className: 'mobile-header-back', onClick: onBack, 'aria-label': 'Back' }, '\u2039')
+        : h('img', { src: 'assets/icon.png', alt: '', className: 'mobile-header-logo' }),
+      h('span', null, title || 'Finance Calendar')
+    ),
+    onQuickAdd
+      ? h('button', { className: 'mobile-header-add', onClick: onQuickAdd, 'aria-label': 'Quick add' }, '+')
+      : null
+  );
+}
+
+// Pages that live under All bills on mobile and therefore need a back arrow.
+const MOBILE_SUBPAGES = ['essentials', 'creditcards', 'subscriptions'];
+
+// Existing modals become bottom sheets on mobile purely through CSS
+// (see the .modal-overlay / .modal-content rules in the mobile block), so
+// there's no separate sheet component to keep in sync.

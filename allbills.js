@@ -1,6 +1,6 @@
 /* ---------------- All Bills Page ---------------- */
 
-function AllBillsPage({ data, setData, needsAttention, onAddEntry }) {
+function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddEntry }) {
   const currency = data.settings.currency;
   const [attentionCollapsed, setAttentionCollapsed] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
@@ -73,7 +73,15 @@ function AllBillsPage({ data, setData, needsAttention, onAddEntry }) {
   const visibleGroups = categoryFilter === 'all' ? grouped : grouped.filter(([key]) => key === categoryFilter);
 
   return h('div', null,
-    h('h2', null, 'All bills'),
+    isMobile ? null : h('h2', null, 'All bills'),
+
+    // On mobile the sidebar's sub-links are gone, so the editors for each
+    // group are reached from here instead.
+    isMobile && setPage ? h('div', { className: 'subnav-chips' },
+      h('button', { className: 'subnav-chip', onClick: () => setPage('essentials') }, 'Essentials'),
+      h('button', { className: 'subnav-chip', onClick: () => setPage('creditcards') }, 'Credit cards'),
+      h('button', { className: 'subnav-chip', onClick: () => setPage('subscriptions') }, 'Subscriptions')
+    ) : null,
 
     h('div', { className: 'attention-section' },
       h('div', { className: 'row-between attention-header', onClick: () => setAttentionCollapsed(!attentionCollapsed) },

@@ -626,6 +626,7 @@ function App() {
   const [postSetupPrompt, setPostSetupPrompt] = useState(false);
   const [quickAdd, setQuickAdd] = useState(null); // { date } or null
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (!window.api || typeof window.api.loadData !== 'function') {
@@ -757,7 +758,7 @@ function App() {
   if (page === 'home') {
     pageContent = h(HomePage, { data, setData: persist });
   } else if (page === 'calendar') {
-    pageContent = h(CalendarPage, { data, setData: persist, onAddEntry: (date) => setQuickAdd({ date }) });
+    pageContent = h(CalendarPage, { data, setData: persist, isMobile, onAddEntry: (date) => setQuickAdd({ date }) });
   } else if (page === 'late') {
     pageContent = h(LatePage, { data, setData: persist, lateBills });
   } else if (page === 'essentials') {
@@ -767,9 +768,45 @@ function App() {
   } else if (page === 'creditcards') {
     pageContent = h(CreditCardsPage, { data, setData: persist });
   } else if (page === 'allbills') {
-    pageContent = h(AllBillsPage, { data, setData: persist, needsAttention, onAddEntry: (date) => setQuickAdd({ date }) });
+    pageContent = h(AllBillsPage, { data, setData: persist, needsAttention, isMobile, setPage, onAddEntry: (date) => setQuickAdd({ date }) });
   } else if (page === 'settings') {
     pageContent = h(SettingsPage, { data, setData: persist, onRestart: () => persist({ ...getBlankData(), onboardingComplete: false }) });
+  }
+
+  // Mobile: a compact top bar + a native-style bottom tab bar replace the
+  // sidebar entirely. The page components themselves are unchanged; they
+  // adapt through CSS and the isMobile flag they receive via context below.
+  if (isMobile) {
+    const pageTitle = ({
+      home: 'Home', calendar: 'Calendar', late: 'Late payments',
+      allbills: 'All bills', essentials: 'Essentials', creditcards: 'Credit cards',
+      subscriptions: 'Subscriptions', settings: 'Settings'
+    })[page] || 'Finance Calendar';
+
+    return h('div', { className: 'app-shell mobile' },
+      h(MobileHeader, {
+        title: pageTitle,
+        onQuickAdd: () => setQuickAdd({ date: todayYmd() }),
+        onBack: MOBILE_SUBPAGES.includes(page) ? () => setPage('allbills') : null
+      }),
+      h('div', { className: 'main-content mobile' }, pageContent),
+      h(MobileTabBar, {
+        page,
+        setPage,
+        lateCount: lateBills.length,
+        needsAttentionCount
+      }),
+      quickAdd ? h(QuickAddModal, {
+        data,
+        setData: persist,
+        initialDate: quickAdd.date,
+        onClose: () => setQuickAdd(null)
+      }) : null,
+      showBackupPrompt ? h(BackupReminderModal, {
+        onDownloadBackup: downloadBackupNow,
+        onDismiss: dismissBackupPrompt
+      }) : null
+    );
   }
 
   return h('div', { className: 'app-shell' },
@@ -928,6 +965,112 @@ function Icon({ name }) {
     stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round'
   }, h('path', { d: paths[name] || '' }));
 }
+/* ---------------- Mobile support ----------------
+ * Layout switching is driven by a media query rather than user-agent
+ * sniffing, so it reacts correctly to rotation, split-screen, and a desktop
+ * browser window simply being made narrow. The breakpoint here must match
+ * the one in styles.css.
+ */
+
+const MOBILE_BREAKPOINT = 768;
+
+// True while the viewport is phone-sized. Re-renders on resize/rotate.
+function useIsMobile() {
+  const query = `(max-width: ${MOBILE_BREAKPOINT}px)`;
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia
+      ? window.matchMedia(query).matches
+      : false
+  );
+
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia(query);
+    const onChange = (e) => setIsMobile(e.matches);
+    // addEventListener on MediaQueryList isn't in older Safari; fall back
+    if (mql.addEventListener) mql.addEventListener('change', onChange);
+    else mql.addListener(onChange);
+    setIsMobile(mql.matches);
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener('change', onChange);
+      else mql.removeListener(onChange);
+    };
+  }, []);
+
+  return isMobile;
+}
+
+// The five destinations that get a slot in the bottom bar. Everything else
+// (Essentials / Credit cards / Subscriptions) lives behind the "Bills" tab,
+// which opens All Bills - that page already links onward to each of them.
+const MOBILE_TABS = [
+  { id: 'home', label: 'Home', icon: 'home' },
+  { id: 'calendar', label: 'Calendar', icon: 'calendar' },
+  { id: 'late', label: 'Late', icon: 'alert' },
+  { id: 'allbills', label: 'Bills', icon: 'allbills' },
+  { id: 'settings', label: 'Settings', icon: 'settings' }
+];
+
+// Which bottom tab should light up for a given page. Sub-pages of All Bills
+// keep the Bills tab active so the user never sees "no tab selected".
+const TAB_FOR_PAGE = {
+  home: 'home',
+  calendar: 'calendar',
+  late: 'late',
+  allbills: 'allbills',
+  essentials: 'allbills',
+  creditcards: 'allbills',
+  subscriptions: 'allbills',
+  settings: 'settings'
+};
+
+function MobileTabBar({ page, setPage, lateCount, needsAttentionCount }) {
+  const activeTab = TAB_FOR_PAGE[page] || page;
+  return h('nav', { className: 'mobile-tabbar' },
+    MOBILE_TABS.map((tab) => {
+      const active = activeTab === tab.id;
+      let badge = null;
+      if (tab.id === 'late' && lateCount > 0) badge = lateCount;
+      if (tab.id === 'allbills' && needsAttentionCount > 0) badge = needsAttentionCount;
+      return h('button', {
+        key: tab.id,
+        className: `mobile-tab${active ? ' active' : ''}`,
+        onClick: () => setPage(tab.id),
+        'aria-label': tab.label,
+        'aria-current': active ? 'page' : undefined
+      },
+        h('span', { className: 'mobile-tab-icon' },
+          h(Icon, { name: tab.icon }),
+          badge != null ? h('span', { className: 'mobile-tab-badge' }, badge > 99 ? '99+' : badge) : null
+        ),
+        h('span', { className: 'mobile-tab-label' }, tab.label)
+      );
+    })
+  );
+}
+
+// Compact top bar shown on mobile in place of the sidebar brand block.
+// Sub-pages (reached from All bills) get a back arrow in place of the logo.
+function MobileHeader({ title, onQuickAdd, onBack }) {
+  return h('header', { className: 'mobile-header' },
+    h('div', { className: 'mobile-header-brand' },
+      onBack
+        ? h('button', { className: 'mobile-header-back', onClick: onBack, 'aria-label': 'Back' }, '\u2039')
+        : h('img', { src: 'assets/icon.png', alt: '', className: 'mobile-header-logo' }),
+      h('span', null, title || 'Finance Calendar')
+    ),
+    onQuickAdd
+      ? h('button', { className: 'mobile-header-add', onClick: onQuickAdd, 'aria-label': 'Quick add' }, '+')
+      : null
+  );
+}
+
+// Pages that live under All bills on mobile and therefore need a back arrow.
+const MOBILE_SUBPAGES = ['essentials', 'creditcards', 'subscriptions'];
+
+// Existing modals become bottom sheets on mobile purely through CSS
+// (see the .modal-overlay / .modal-content rules in the mobile block), so
+// there's no separate sheet component to keep in sync.
 /* ---------------- Shared Entry Form Modal (add/edit) ---------------- */
 
 // A reusable modal for adding or editing a bill-like entry (name, amount or
@@ -2525,7 +2668,7 @@ function getDateRangeSpans(data, allBills, gridStart, gridEnd) {
   return spans;
 }
 
-function CalendarPage({ data, setData, onAddEntry }) {
+function CalendarPage({ data, setData, isMobile, onAddEntry }) {
   const currency = data.settings.currency;
   const firstDow = data.settings.firstDayOfWeek || 0;
   const [cursor, setCursor] = useState(() => {
@@ -2667,9 +2810,44 @@ function CalendarPage({ data, setData, onAddEntry }) {
             week.map((cd) => {
               const dateStr = ymd(cd);
               const inMonth = cd.getMonth() === cursor.getMonth();
-              const occs = (occByDate[dateStr] || []).filter((o) => !rangeEntryIds.has(o.id));
+              // Desktop hides range entries from the cells because they're
+              // drawn as bars across the overlay. Mobile has no bars, so they
+              // stay in the cells as ordinary dots.
+              const occs = isMobile
+                ? (occByDate[dateStr] || [])
+                : (occByDate[dateStr] || []).filter((o) => !rangeEntryIds.has(o.id));
               const isToday = dateStr === todayStr;
               const isPast = cd < today;
+              const isSelected = selectedDay === dateStr;
+
+              // Phones can't fit named chips in a 7-column grid, so each day
+              // becomes a number with up to three colored dots beneath it -
+              // the same information at a glance, tap to see the detail.
+              if (isMobile) {
+                const dots = occs.slice(0, 3).map((o, i) => {
+                  let bg;
+                  if (o.kind === 'income') {
+                    bg = getEntryColor(o, data) || '#4FAE6B';
+                  } else if (isPaid(data, o.id, o.occDate)) {
+                    bg = 'var(--text-tertiary)';
+                  } else {
+                    bg = getEntryColor(o, data) || '#D85A5A';
+                  }
+                  return h('span', { key: `${o.id}-${o.occDate}-${i}`, className: 'cal-dot', style: { background: bg } });
+                });
+                return h('button', {
+                  key: dateStr,
+                  className: `calendar-cell mobile${inMonth ? '' : ' outside'}${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}`,
+                  onClick: () => setSelectedDay(dateStr)
+                },
+                  h('span', { className: 'calendar-date' }, cd.getDate()),
+                  h('span', { className: 'cal-dot-row' },
+                    dots,
+                    occs.length > 3 ? h('span', { className: 'cal-dot more' }) : null
+                  )
+                );
+              }
+
               return h('div', {
                 key: dateStr,
                 className: `calendar-cell${inMonth ? '' : ' outside'}${isToday ? ' today' : ''}`,
@@ -2708,7 +2886,9 @@ function CalendarPage({ data, setData, onAddEntry }) {
           )
         ),
 
-        h('div', { className: 'range-overlay' },
+        // Range bars are drawn across the grid; on a phone-width grid there
+        // is no room for them, and their entries still appear in the day sheet.
+        isMobile ? null : h('div', { className: 'range-overlay' },
           rangeSegments.map((seg) => {
             const leftPct = (seg.startCol / 7) * 100;
             const widthPct = ((seg.endCol - seg.startCol + 1) / 7) * 100;
@@ -3299,7 +3479,7 @@ function ProjectionModal({ card, data, currency, onClose }) {
 }
 /* ---------------- All Bills Page ---------------- */
 
-function AllBillsPage({ data, setData, needsAttention, onAddEntry }) {
+function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddEntry }) {
   const currency = data.settings.currency;
   const [attentionCollapsed, setAttentionCollapsed] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
@@ -3372,7 +3552,15 @@ function AllBillsPage({ data, setData, needsAttention, onAddEntry }) {
   const visibleGroups = categoryFilter === 'all' ? grouped : grouped.filter(([key]) => key === categoryFilter);
 
   return h('div', null,
-    h('h2', null, 'All bills'),
+    isMobile ? null : h('h2', null, 'All bills'),
+
+    // On mobile the sidebar's sub-links are gone, so the editors for each
+    // group are reached from here instead.
+    isMobile && setPage ? h('div', { className: 'subnav-chips' },
+      h('button', { className: 'subnav-chip', onClick: () => setPage('essentials') }, 'Essentials'),
+      h('button', { className: 'subnav-chip', onClick: () => setPage('creditcards') }, 'Credit cards'),
+      h('button', { className: 'subnav-chip', onClick: () => setPage('subscriptions') }, 'Subscriptions')
+    ) : null,
 
     h('div', { className: 'attention-section' },
       h('div', { className: 'row-between attention-header', onClick: () => setAttentionCollapsed(!attentionCollapsed) },
@@ -3859,6 +4047,17 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
           onChange: (e) => updateSetting('backupReminderEnabled', e.target.checked)
         }),
         h('label', { htmlFor: 'backup-reminder', style: { margin: 0 } }, 'Remind me to download a backup every Monday')
+      ),
+      // The sidebar isn't rendered on mobile, so the desktop download lives
+      // here too - it's the only place a phone user would find it.
+      h('div', { style: { marginTop: '12px', paddingTop: '12px', borderTop: '0.5px solid var(--border-tertiary)' } },
+        h('a', {
+          href: 'downloads/FinanceCalendar.exe',
+          download: 'FinanceCalendar.exe',
+          style: { fontSize: '13px', color: 'var(--accent-text)' }
+        }, 'Download the Windows desktop app'),
+        h('p', { style: { margin: '4px 0 0', fontSize: '12px', color: 'var(--text-tertiary)' } },
+          'The desktop app saves to a file on your computer instead of browser storage.')
       )
     ),
 

@@ -61,7 +61,7 @@ function getDateRangeSpans(data, allBills, gridStart, gridEnd) {
   return spans;
 }
 
-function CalendarPage({ data, setData, onAddEntry }) {
+function CalendarPage({ data, setData, isMobile, onAddEntry }) {
   const currency = data.settings.currency;
   const firstDow = data.settings.firstDayOfWeek || 0;
   const [cursor, setCursor] = useState(() => {
@@ -203,9 +203,44 @@ function CalendarPage({ data, setData, onAddEntry }) {
             week.map((cd) => {
               const dateStr = ymd(cd);
               const inMonth = cd.getMonth() === cursor.getMonth();
-              const occs = (occByDate[dateStr] || []).filter((o) => !rangeEntryIds.has(o.id));
+              // Desktop hides range entries from the cells because they're
+              // drawn as bars across the overlay. Mobile has no bars, so they
+              // stay in the cells as ordinary dots.
+              const occs = isMobile
+                ? (occByDate[dateStr] || [])
+                : (occByDate[dateStr] || []).filter((o) => !rangeEntryIds.has(o.id));
               const isToday = dateStr === todayStr;
               const isPast = cd < today;
+              const isSelected = selectedDay === dateStr;
+
+              // Phones can't fit named chips in a 7-column grid, so each day
+              // becomes a number with up to three colored dots beneath it -
+              // the same information at a glance, tap to see the detail.
+              if (isMobile) {
+                const dots = occs.slice(0, 3).map((o, i) => {
+                  let bg;
+                  if (o.kind === 'income') {
+                    bg = getEntryColor(o, data) || '#4FAE6B';
+                  } else if (isPaid(data, o.id, o.occDate)) {
+                    bg = 'var(--text-tertiary)';
+                  } else {
+                    bg = getEntryColor(o, data) || '#D85A5A';
+                  }
+                  return h('span', { key: `${o.id}-${o.occDate}-${i}`, className: 'cal-dot', style: { background: bg } });
+                });
+                return h('button', {
+                  key: dateStr,
+                  className: `calendar-cell mobile${inMonth ? '' : ' outside'}${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}`,
+                  onClick: () => setSelectedDay(dateStr)
+                },
+                  h('span', { className: 'calendar-date' }, cd.getDate()),
+                  h('span', { className: 'cal-dot-row' },
+                    dots,
+                    occs.length > 3 ? h('span', { className: 'cal-dot more' }) : null
+                  )
+                );
+              }
+
               return h('div', {
                 key: dateStr,
                 className: `calendar-cell${inMonth ? '' : ' outside'}${isToday ? ' today' : ''}`,
@@ -244,7 +279,9 @@ function CalendarPage({ data, setData, onAddEntry }) {
           )
         ),
 
-        h('div', { className: 'range-overlay' },
+        // Range bars are drawn across the grid; on a phone-width grid there
+        // is no room for them, and their entries still appear in the day sheet.
+        isMobile ? null : h('div', { className: 'range-overlay' },
           rangeSegments.map((seg) => {
             const leftPct = (seg.startCol / 7) * 100;
             const widthPct = ((seg.endCol - seg.startCol + 1) / 7) * 100;

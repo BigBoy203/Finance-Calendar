@@ -2,6 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <!-- viewport-fit=cover so we can pad around iPhone home indicators / notches -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#1e1e1c" media="(prefers-color-scheme: dark)" />
+  <!-- lets the site behave like a standalone app when saved to a home screen -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Finance Calendar" />
+  <link rel="apple-touch-icon" href="assets/icon.png" />
   <title>Finance Calendar</title>
   <link rel="icon" href="assets/icon.png" />
   <link rel="stylesheet" href="styles.css" />
@@ -41,5 +51,15 @@
   <script src="vendor/react-dom.production.min.js"></script>
   <script src="storage.js"></script>
   <script src="app.js"></script>
+  <script>
+    // A real viewport-height unit for mobile browsers, where 100vh includes
+    // the collapsing address bar and overshoots the visible area.
+    function setVh() {
+      document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
+    }
+    setVh();
+    window.addEventListener('resize', setVh);
+    window.addEventListener('orientationchange', setVh);
+  </script>
 </body>
 </html>

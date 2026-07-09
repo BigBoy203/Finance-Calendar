@@ -355,6 +355,17 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
           onChange: (e) => updateSetting('backupReminderEnabled', e.target.checked)
         }),
         h('label', { htmlFor: 'backup-reminder', style: { margin: 0 } }, 'Remind me to download a backup every Monday')
+      ),
+      // The sidebar isn't rendered on mobile, so the desktop download lives
+      // here too - it's the only place a phone user would find it.
+      h('div', { style: { marginTop: '12px', paddingTop: '12px', borderTop: '0.5px solid var(--border-tertiary)' } },
+        h('a', {
+          href: 'downloads/FinanceCalendar.exe',
+          download: 'FinanceCalendar.exe',
+          style: { fontSize: '13px', color: 'var(--accent-text)' }
+        }, 'Download the Windows desktop app'),
+        h('p', { style: { margin: '4px 0 0', fontSize: '12px', color: 'var(--text-tertiary)' } },
+          'The desktop app saves to a file on your computer instead of browser storage.')
       )
     ),
 

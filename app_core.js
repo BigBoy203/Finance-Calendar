@@ -626,6 +626,7 @@ function App() {
   const [postSetupPrompt, setPostSetupPrompt] = useState(false);
   const [quickAdd, setQuickAdd] = useState(null); // { date } or null
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (!window.api || typeof window.api.loadData !== 'function') {
@@ -757,7 +758,7 @@ function App() {
   if (page === 'home') {
     pageContent = h(HomePage, { data, setData: persist });
   } else if (page === 'calendar') {
-    pageContent = h(CalendarPage, { data, setData: persist, onAddEntry: (date) => setQuickAdd({ date }) });
+    pageContent = h(CalendarPage, { data, setData: persist, isMobile, onAddEntry: (date) => setQuickAdd({ date }) });
   } else if (page === 'late') {
     pageContent = h(LatePage, { data, setData: persist, lateBills });
   } else if (page === 'essentials') {
@@ -767,9 +768,45 @@ function App() {
   } else if (page === 'creditcards') {
     pageContent = h(CreditCardsPage, { data, setData: persist });
   } else if (page === 'allbills') {
-    pageContent = h(AllBillsPage, { data, setData: persist, needsAttention, onAddEntry: (date) => setQuickAdd({ date }) });
+    pageContent = h(AllBillsPage, { data, setData: persist, needsAttention, isMobile, setPage, onAddEntry: (date) => setQuickAdd({ date }) });
   } else if (page === 'settings') {
     pageContent = h(SettingsPage, { data, setData: persist, onRestart: () => persist({ ...getBlankData(), onboardingComplete: false }) });
+  }
+
+  // Mobile: a compact top bar + a native-style bottom tab bar replace the
+  // sidebar entirely. The page components themselves are unchanged; they
+  // adapt through CSS and the isMobile flag they receive via context below.
+  if (isMobile) {
+    const pageTitle = ({
+      home: 'Home', calendar: 'Calendar', late: 'Late payments',
+      allbills: 'All bills', essentials: 'Essentials', creditcards: 'Credit cards',
+      subscriptions: 'Subscriptions', settings: 'Settings'
+    })[page] || 'Finance Calendar';
+
+    return h('div', { className: 'app-shell mobile' },
+      h(MobileHeader, {
+        title: pageTitle,
+        onQuickAdd: () => setQuickAdd({ date: todayYmd() }),
+        onBack: MOBILE_SUBPAGES.includes(page) ? () => setPage('allbills') : null
+      }),
+      h('div', { className: 'main-content mobile' }, pageContent),
+      h(MobileTabBar, {
+        page,
+        setPage,
+        lateCount: lateBills.length,
+        needsAttentionCount
+      }),
+      quickAdd ? h(QuickAddModal, {
+        data,
+        setData: persist,
+        initialDate: quickAdd.date,
+        onClose: () => setQuickAdd(null)
+      }) : null,
+      showBackupPrompt ? h(BackupReminderModal, {
+        onDownloadBackup: downloadBackupNow,
+        onDismiss: dismissBackupPrompt
+      }) : null
+    );
   }
 
   return h('div', { className: 'app-shell' },

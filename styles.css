@@ -1163,3 +1163,398 @@ label {
   color: var(--text-tertiary);
   text-transform: none;
 }
+
+/* =====================================================================
+   MOBILE
+   Everything below only applies at phone widths. The breakpoint here
+   must stay in sync with MOBILE_BREAKPOINT in mobile.js.
+   ===================================================================== */
+
+/* Chrome/Safari on phones can double-tap-zoom and rubber-band the whole
+   document. Locking overflow-x here is what stops the "everything drags
+   around" behaviour - the page is never wider than the viewport. */
+@media (max-width: 768px) {
+  html, body {
+    overflow-x: hidden;
+    width: 100%;
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior-y: none;
+  }
+
+  .app-shell.mobile {
+    display: flex;
+    flex-direction: column;
+    /* --vh is set from JS; 100vh overshoots when the address bar collapses */
+    min-height: calc(var(--vh, 1vh) * 100);
+    height: auto;
+  }
+
+  /* ---------- top bar ---------- */
+  .mobile-header {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 16px;
+    padding-top: calc(10px + env(safe-area-inset-top));
+    background: var(--bg-secondary);
+    border-bottom: 0.5px solid var(--border-tertiary);
+  }
+  .mobile-header-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--text-primary);
+    min-width: 0;
+  }
+  .mobile-header-brand span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mobile-header-logo {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    flex-shrink: 0;
+  }
+  .mobile-header-add {
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    padding: 0;
+    font-size: 22px;
+    line-height: 1;
+    border-radius: 50%;
+    border: none;
+    background: var(--accent);
+    color: #fff;
+  }
+
+  /* ---------- content ---------- */
+  .main-content.mobile {
+    flex: 1;
+    padding: 16px 16px 0;
+    /* clear the fixed tab bar + the iOS home indicator */
+    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  /* ---------- bottom tab bar ---------- */
+  .mobile-tabbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    display: flex;
+    background: var(--bg-secondary);
+    border-top: 0.5px solid var(--border-tertiary);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .mobile-tab {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    /* 56px keeps every tab a comfortable thumb target */
+    min-height: 56px;
+    padding: 6px 2px;
+    border: none;
+    background: transparent;
+    color: var(--text-tertiary);
+    cursor: pointer;
+  }
+  .mobile-tab.active {
+    color: var(--accent);
+  }
+  .mobile-tab-icon {
+    position: relative;
+    display: flex;
+  }
+  .mobile-tab-label {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.1px;
+  }
+  .mobile-tab-badge {
+    position: absolute;
+    top: -5px;
+    right: -9px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--late-red);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 16px;
+    text-align: center;
+  }
+
+  /* ---------- modals become bottom sheets ---------- */
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal-content {
+    width: 100%;
+    max-width: 100%;
+    max-height: 88vh;
+    overflow-y: auto;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    padding: 20px 16px;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+    animation: sheet-up 0.22s ease-out;
+  }
+  .modal-content.day-modal {
+    max-width: 100%;
+  }
+  @keyframes sheet-up {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+  }
+  /* a grabber bar so it reads as a sheet */
+  .modal-content::before {
+    content: "";
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: -6px auto 12px;
+    border-radius: 2px;
+    background: var(--border-secondary);
+  }
+
+  /* ---------- calendar ---------- */
+  .calendar-cell.mobile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 3px;
+    /* square-ish cells, comfortably tappable */
+    min-height: 48px;
+    padding: 5px 0 4px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+  }
+  .calendar-cell.mobile .calendar-date {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    font-size: 14px;
+    border-radius: 50%;
+  }
+  .calendar-cell.mobile.today .calendar-date {
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+  .calendar-cell.mobile.selected .calendar-date {
+    background: var(--text-primary);
+    color: var(--bg-primary);
+    font-weight: 600;
+  }
+  .calendar-cell.mobile.today.selected .calendar-date {
+    background: var(--accent);
+    color: #fff;
+  }
+  .calendar-cell.mobile.outside {
+    opacity: 0.32;
+  }
+  .cal-dot-row {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+    height: 6px;
+  }
+  .cal-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    display: block;
+  }
+  .cal-dot.more {
+    background: var(--text-tertiary);
+    opacity: 0.6;
+  }
+
+  /* ---------- lists become stacked cards ---------- */
+  .list-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 14px 16px;
+  }
+  .list-item > div:first-child { min-width: 0; }
+  .list-item-name {
+    font-size: 15px;
+  }
+  /* the trailing amount/action cluster drops to its own row */
+  .list-item > div:last-child,
+  .list-item > span:last-child {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .list-item-amount {
+    font-size: 15px;
+  }
+
+  /* ---------- one-column layouts ---------- */
+  .grid-2,
+  .home-chart-row,
+  .home-bottom-row,
+  .trading-metric-grid,
+  .trading-pies {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .home-chart-side,
+  .home-side-cards,
+  .home-chart-main {
+    width: 100%;
+  }
+
+  /* ---------- forms & tap targets ---------- */
+  /* 16px prevents iOS Safari from zooming in when a field is focused */
+  input, select, textarea {
+    font-size: 16px;
+    height: 44px;
+  }
+  input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+  }
+  button {
+    min-height: 40px;
+  }
+  .x-btn, .link-btn {
+    min-height: 32px;
+  }
+  .form-grid-2 {
+    grid-template-columns: 1fr;
+  }
+
+  /* ---------- misc overflow guards ---------- */
+  .card, .metric-card {
+    padding: 14px;
+  }
+  .trade-table-wrap {
+    /* keep wide tables scrolling inside themselves, never the page */
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  svg {
+    max-width: 100%;
+  }
+  h2 {
+    font-size: 20px;
+  }
+  .section-title {
+    font-size: 12px;
+  }
+
+  /* ---------- sub-nav on All bills (mobile only) ---------- */
+  .subnav-chips {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    margin-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .subnav-chips::-webkit-scrollbar { display: none; }
+  .subnav-chip {
+    flex-shrink: 0;
+    min-height: 34px;
+    padding: 0 14px;
+    font-size: 13px;
+    border-radius: 17px;
+    border: 0.5px solid var(--border-tertiary);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+  }
+  .subnav-chip:active {
+    background: var(--bg-tertiary);
+  }
+
+  .mobile-header-back {
+    width: 32px;
+    height: 32px;
+    min-height: 32px;
+    flex-shrink: 0;
+    padding: 0;
+    font-size: 26px;
+    line-height: 1;
+    border: none;
+    background: transparent;
+    color: var(--accent);
+  }
+
+  /* ---------- onboarding wizard ---------- */
+  .wizard-shell {
+    max-width: 100%;
+    margin: 1rem auto;
+    padding: 0 16px calc(24px + env(safe-area-inset-bottom));
+    gap: 1rem;
+  }
+  .wizard-shell .row-between {
+    gap: 10px;
+  }
+  .wizard-shell button {
+    flex: 1;
+  }
+
+  /* ---------- remaining overflow guards ---------- */
+  /* date inputs carry a desktop min-width that can push the page wide */
+  input[type="date"] {
+    min-width: 0;
+    width: 100%;
+  }
+  .swatch-row {
+    flex-wrap: wrap;
+  }
+  .segmented {
+    width: 100%;
+  }
+  .segmented > div {
+    flex: 1;
+    text-align: center;
+  }
+  /* tiles and cards should never force a horizontal scrollbar */
+  .bill-tile-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+}
+
+/* Very narrow phones: shave the calendar down further. */
+@media (max-width: 360px) {
+  .calendar-cell.mobile {
+    min-height: 42px;
+  }
+  .calendar-cell.mobile .calendar-date {
+    width: 24px;
+    height: 24px;
+    font-size: 13px;
+  }
+  .mobile-tab-label {
+    font-size: 9px;
+  }
+}
