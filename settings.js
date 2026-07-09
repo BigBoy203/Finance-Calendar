@@ -64,7 +64,8 @@ function SettingsPage({ data, setData, onRestart }) {
   }
 
   return h('div', null,
-    h('h2', null, 'Settings'),
+    h('h2', { style: { marginBottom: '2px' } }, 'Settings'),
+    h('p', { className: 'version-label' }, `Web version ${WEB_VERSION}`),
     h('div', { className: 'segmented', style: { marginTop: '12px', marginBottom: '16px', maxWidth: '420px' } },
       SETTINGS_TABS.map((t) =>
         h('div', { key: t.id, className: tab === t.id ? 'selected' : '', onClick: () => setTab(t.id) }, t.label)

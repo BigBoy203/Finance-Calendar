@@ -1,6 +1,9 @@
 const { useState, useEffect, useMemo, useCallback } = React;
 const h = React.createElement;
 
+// Shown under the Settings heading. Bump this when the web build changes.
+const WEB_VERSION = '0.5';
+
 /* ---------------- Helpers ---------------- */
 
 function uid() {
@@ -3756,7 +3759,8 @@ function SettingsPage({ data, setData, onRestart }) {
   }
 
   return h('div', null,
-    h('h2', null, 'Settings'),
+    h('h2', { style: { marginBottom: '2px' } }, 'Settings'),
+    h('p', { className: 'version-label' }, `Web version ${WEB_VERSION}`),
     h('div', { className: 'segmented', style: { marginTop: '12px', marginBottom: '16px', maxWidth: '420px' } },
       SETTINGS_TABS.map((t) =>
         h('div', { key: t.id, className: tab === t.id ? 'selected' : '', onClick: () => setTab(t.id) }, t.label)

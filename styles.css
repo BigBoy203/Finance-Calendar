@@ -1175,10 +1175,18 @@ label {
    document. Locking overflow-x here is what stops the "everything drags
    around" behaviour - the page is never wider than the viewport. */
 @media (max-width: 768px) {
+  /* Lock the document to exactly one screen. Nothing outside the app's own
+     panes may scroll - that's what stops the page sliding up past the tab
+     bar and exposing a black strip underneath. */
   html, body {
-    overflow-x: hidden;
-    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
     -webkit-text-size-adjust: 100%;
+  }
+  #root {
+    height: 100%;
+    overflow: hidden;
   }
 
   /* A proper app shell: the container is exactly one screen tall, the header
@@ -1188,8 +1196,16 @@ label {
   .app-shell.mobile {
     display: flex;
     flex-direction: column;
-    height: calc(var(--vh, 1vh) * 100);
+    height: 100%;
     overflow: hidden;
+  }
+
+  /* Screens that render outside the app shell still need to scroll. */
+  .wizard-shell,
+  .main-content:not(.mobile) {
+    height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   /* ---------- top bar ---------- */
@@ -1313,10 +1329,18 @@ label {
     padding: 0;
     /* sit above the keyboard so the sheet's buttons stay reachable */
     inset: 0 0 var(--kb, 0px) 0;
+    overflow: hidden;
   }
   .modal-content {
     width: 100%;
     max-width: 100%;
+    /* Flex items default to min-width:auto, which refuses to shrink below the
+       content's minimum width - and that beats max-width. Without this, a wide
+       child (the type grid, a long <select> option) forces the sheet wider
+       than the screen and you can drag it sideways into empty space. */
+    min-width: 0;
+    /* overflow-y:auto silently promotes overflow-x to auto; pin it shut */
+    overflow-x: hidden;
     /* the overlay is already keyboard-adjusted, so fill what's left of it */
     max-height: 100%;
     overflow-y: auto;
@@ -1326,6 +1350,23 @@ label {
     /* no bottom padding: the pinned action row below supplies it */
     padding: 20px 16px 0;
     animation: sheet-up 0.22s ease-out;
+  }
+  /* every direct child must also be allowed to shrink */
+  .modal-content > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+  /* long option text shouldn't set the sheet's width */
+  .modal-content select,
+  .modal-content input {
+    max-width: 100%;
+  }
+  .type-selector {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .type-option {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   /* sheets with no action row (the day detail sheet) still need clearance,
      and its desktop rule pins a 460px width that would overflow a phone */
@@ -1339,6 +1380,8 @@ label {
   .modal-content > .row-between:last-child {
     position: sticky;
     bottom: 0;
+    /* full-bleed across the sheet's padding; exempt from the max-width above */
+    max-width: none;
     margin: 12px -16px 0;
     padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
     background: var(--bg-primary);
@@ -1577,37 +1620,44 @@ label {
   }
 
   /* ---------- calendar sizing ----------
-     Desktop pins the calendar to the viewport and stretches its rows to
-     fill (grid-auto-rows: 1fr inside an absolutely positioned grid). On a
-     phone that produces enormous cells, so let the grid size to its content
-     and scroll with the page instead. */
+     Desktop pins the calendar to the viewport and stretches its rows to fill.
+     On mobile we keep the stretch (so the grid fills the pane instead of
+     bunching at the top), but drop the absolute positioning that made the
+     rows enormous. */
   .calendar-page {
-    height: auto;
+    height: 100%;
     min-height: 0;
   }
   .calendar-grid-wrap {
     position: static;
-    flex: none;
+    flex: 1 1 auto;
+    min-height: 0;
   }
   .calendar-grid-wrap .calendar-grid.months,
   .calendar-grid.months {
     position: static;
     inset: auto;
-    height: auto;
-    grid-auto-rows: auto;
+    height: 100%;
+    /* equal rows that share the leftover space, never smaller than a thumb */
+    grid-auto-rows: minmax(46px, 1fr);
   }
   .calendar-grid {
     gap: 2px;
   }
-  /* the week-number gutter can't stay aligned once rows size to content */
+  .calendar-cell.mobile {
+    min-height: 0;
+    justify-content: center;
+    gap: 5px;
+  }
+  /* the week-number gutter can't stay aligned once rows are flexible */
   .week-number-col,
   .week-number-gutter {
     display: none;
   }
 
-  /* stop a bounce at the end of a list from dragging the whole page */
-  html, body {
-    overscroll-behavior: none;
+  /* the calendar fills its pane, so it shouldn't scroll the pane too */
+  .main-content.mobile:has(.calendar-page) {
+    overflow-y: hidden;
   }
 }
 
@@ -1624,4 +1674,10 @@ label {
   .mobile-tab-label {
     font-size: 9px;
   }
+}
+
+.version-label {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
