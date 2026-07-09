@@ -47,19 +47,26 @@
       showFallback('The app is taking unusually long to load, or failed to load silently.');
     }, 6000);
   </script>
-  <script src="vendor/react.production.min.js"></script>
-  <script src="vendor/react-dom.production.min.js"></script>
-  <script src="storage.js"></script>
-  <script src="app.js"></script>
   <script>
     // A real viewport-height unit for mobile browsers, where 100vh includes
-    // the collapsing address bar and overshoots the visible area.
+    // the collapsing address bar and overshoots the visible area. This runs
+    // before the app so the very first paint is already correct.
     function setVh() {
-      document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
+      var vv = window.visualViewport;
+      var h = vv ? vv.height : window.innerHeight;
+      document.documentElement.style.setProperty('--vh', (h * 0.01) + 'px');
     }
     setVh();
     window.addEventListener('resize', setVh);
     window.addEventListener('orientationchange', setVh);
+    // the visual viewport shrinks when the on-screen keyboard opens
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', setVh);
+    }
   </script>
+  <script src="vendor/react.production.min.js"></script>
+  <script src="vendor/react-dom.production.min.js"></script>
+  <script src="storage.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
