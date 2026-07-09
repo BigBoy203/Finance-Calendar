@@ -1195,6 +1195,9 @@ label {
   /* ---------- top bar ---------- */
   .mobile-header {
     flex-shrink: 0;
+    /* z-index is ignored on static elements - these must be positioned */
+    position: relative;
+    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1253,11 +1256,13 @@ label {
   /* ---------- bottom tab bar ---------- */
   .mobile-tabbar {
     flex-shrink: 0;
+    /* z-index is ignored on static elements - must be positioned */
+    position: relative;
+    z-index: 2;
     display: flex;
     background: var(--bg-secondary);
     border-top: 0.5px solid var(--border-tertiary);
     padding-bottom: env(safe-area-inset-bottom);
-    z-index: 40;
   }
   .mobile-tab {
     flex: 1;
@@ -1306,19 +1311,43 @@ label {
   .modal-overlay {
     align-items: flex-end;
     padding: 0;
+    /* sit above the keyboard so the sheet's buttons stay reachable */
+    inset: 0 0 var(--kb, 0px) 0;
   }
   .modal-content {
     width: 100%;
     max-width: 100%;
-    /* --vh, not vh: 100vh overshoots while the address bar is showing */
-    max-height: calc(var(--vh, 1vh) * 88);
+    /* the overlay is already keyboard-adjusted, so fill what's left of it */
+    max-height: 100%;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
     border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-    padding: 20px 16px;
-    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+    /* no bottom padding: the pinned action row below supplies it */
+    padding: 20px 16px 0;
     animation: sheet-up 0.22s ease-out;
+  }
+  /* sheets with no action row (the day detail sheet) still need clearance,
+     and its desktop rule pins a 460px width that would overflow a phone */
+  .modal-content.day-modal {
+    width: 100%;
+    max-width: 100%;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+  /* Cancel / Save sit at the bottom of every form sheet. Pinning them means
+     a long form can never scroll them out of reach and strand the user. */
+  .modal-content > .row-between:last-child {
+    position: sticky;
+    bottom: 0;
+    margin: 12px -16px 0;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    background: var(--bg-primary);
+    border-top: 0.5px solid var(--border-tertiary);
+    gap: 10px;
+  }
+  .modal-content > .row-between:last-child button {
+    flex: 1;
+    min-height: 44px;
   }
   .modal-content.day-modal {
     max-width: 100%;
@@ -1545,6 +1574,40 @@ label {
   /* tiles and cards should never force a horizontal scrollbar */
   .bill-tile-grid {
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+
+  /* ---------- calendar sizing ----------
+     Desktop pins the calendar to the viewport and stretches its rows to
+     fill (grid-auto-rows: 1fr inside an absolutely positioned grid). On a
+     phone that produces enormous cells, so let the grid size to its content
+     and scroll with the page instead. */
+  .calendar-page {
+    height: auto;
+    min-height: 0;
+  }
+  .calendar-grid-wrap {
+    position: static;
+    flex: none;
+  }
+  .calendar-grid-wrap .calendar-grid.months,
+  .calendar-grid.months {
+    position: static;
+    inset: auto;
+    height: auto;
+    grid-auto-rows: auto;
+  }
+  .calendar-grid {
+    gap: 2px;
+  }
+  /* the week-number gutter can't stay aligned once rows size to content */
+  .week-number-col,
+  .week-number-gutter {
+    display: none;
+  }
+
+  /* stop a bounce at the end of a list from dragging the whole page */
+  html, body {
+    overscroll-behavior: none;
   }
 }
 

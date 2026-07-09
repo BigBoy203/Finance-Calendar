@@ -48,21 +48,43 @@
     }, 6000);
   </script>
   <script>
-    // A real viewport-height unit for mobile browsers, where 100vh includes
-    // the collapsing address bar and overshoots the visible area. This runs
-    // before the app so the very first paint is already correct.
-    function setVh() {
+    // Two separate measurements, because they answer different questions:
+    //
+    //   --vh  the height of the app shell. Uses innerHeight, which on iOS
+    //         stays put when the keyboard opens - so the bottom tab bar
+    //         doesn't come sliding up into the middle of the page.
+    //   --kb  how much of the screen the on-screen keyboard is covering.
+    //         Bottom sheets sit above this so their buttons stay reachable.
+    function setViewportVars() {
+      var el = document.documentElement;
+      el.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
+
       var vv = window.visualViewport;
-      var h = vv ? vv.height : window.innerHeight;
-      document.documentElement.style.setProperty('--vh', (h * 0.01) + 'px');
+      var kb = 0;
+      if (vv) {
+        kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        // ignore a few px of rounding noise
+        if (kb < 40) kb = 0;
+      }
+      el.style.setProperty('--kb', kb + 'px');
     }
-    setVh();
-    window.addEventListener('resize', setVh);
-    window.addEventListener('orientationchange', setVh);
-    // the visual viewport shrinks when the on-screen keyboard opens
+    setViewportVars();
+    window.addEventListener('resize', setViewportVars);
+    window.addEventListener('orientationchange', setViewportVars);
     if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', setVh);
+      window.visualViewport.addEventListener('resize', setViewportVars);
+      window.visualViewport.addEventListener('scroll', setViewportVars);
     }
+
+    // iOS won't reliably scroll a focused field into view when it sits in a
+    // nested scroll container (which every sheet here does), so do it.
+    document.addEventListener('focusin', function (e) {
+      var t = e.target;
+      if (!t || !/^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
+      setTimeout(function () {
+        if (t.scrollIntoView) t.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }, 300);
+    });
   </script>
   <script src="vendor/react.production.min.js"></script>
   <script src="vendor/react-dom.production.min.js"></script>
