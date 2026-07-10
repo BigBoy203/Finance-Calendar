@@ -2,7 +2,7 @@ const { useState, useEffect, useMemo, useCallback } = React;
 const h = React.createElement;
 
 // Shown under the Settings heading. Bump this when the web build changes.
-const WEB_VERSION = '0.5';
+const WEB_VERSION = '0.6';
 
 /* ---------------- Helpers ---------------- */
 
@@ -759,7 +759,7 @@ function App() {
 
   let pageContent;
   if (page === 'home') {
-    pageContent = h(HomePage, { data, setData: persist });
+    pageContent = h(HomePage, { data, setData: persist, isMobile });
   } else if (page === 'calendar') {
     pageContent = h(CalendarPage, { data, setData: persist, isMobile, onAddEntry: (date) => setQuickAdd({ date }) });
   } else if (page === 'late') {
@@ -1053,18 +1053,25 @@ function MobileTabBar({ page, setPage, lateCount, needsAttentionCount }) {
 }
 
 // Compact top bar shown on mobile in place of the sidebar brand block.
-// Sub-pages (reached from All bills) get a back arrow in place of the logo.
+// A three-column grid keeps the title optically centered no matter how wide
+// the left icon or right button are. Sub-pages get a back arrow.
 function MobileHeader({ title, onQuickAdd, onBack }) {
   return h('header', { className: 'mobile-header' },
-    h('div', { className: 'mobile-header-brand' },
+    h('div', { className: 'mobile-header-left' },
       onBack
         ? h('button', { className: 'mobile-header-back', onClick: onBack, 'aria-label': 'Back' }, '\u2039')
-        : h('img', { src: 'assets/icon.png', alt: '', className: 'mobile-header-logo' }),
-      h('span', null, title || 'Finance Calendar')
+        : h('img', { src: 'assets/icon.png', alt: '', className: 'mobile-header-logo' })
     ),
-    onQuickAdd
-      ? h('button', { className: 'mobile-header-add', onClick: onQuickAdd, 'aria-label': 'Quick add' }, '+')
-      : null
+    h('h1', { className: 'mobile-header-title' }, title || 'Finance Calendar'),
+    h('div', { className: 'mobile-header-right' },
+      onQuickAdd
+        ? h('button', { className: 'mobile-header-add', onClick: onQuickAdd, 'aria-label': 'Quick add' },
+            h('svg', { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.4, strokeLinecap: 'round' },
+              h('path', { d: 'M12 5v14M5 12h14' })
+            )
+          )
+        : null
+    )
   );
 }
 
@@ -1808,7 +1815,7 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
 
 const DONUT_COLORS = ['#D85A5A', '#D8A857', '#8B6FD6', '#4FAE6B', '#D8845A', '#5AA8D8', '#C75AA8', '#7A8C5A'];
 
-function HomePage({ data, setData }) {
+function HomePage({ data, setData, isMobile }) {
   const currency = data.settings.currency;
   const [breakdownGroupBy, setBreakdownGroupBy] = useState('source'); // 'source' | 'category'
   const [breakdownFilter, setBreakdownFilter] = useState('bills'); // 'bills' | 'income' | 'both'
@@ -1817,6 +1824,8 @@ function HomePage({ data, setData }) {
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
   const [priceModal, setPriceModal] = useState(null); // occurrence object or null
+  // mobile only: hides the charts behind a toggle so the page opens compact
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
   const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
@@ -2072,6 +2081,142 @@ function HomePage({ data, setData }) {
 
   const monthLabel = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
+  // --- shared pieces used by both layouts ---
+  const next7List = next7Days.length === 0
+    ? h('p', { className: 'empty-state' }, 'Nothing due in the next 7 days.')
+    : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+        next7Days.map((o, i) => {
+          const dateLabel = formatDate(parseYmd(o.occDate), data.settings);
+          return h('div', { key: `${o.id}-${o.occDate}-${i}`, className: 'list-item clickable', onClick: () => setPriceModal(o) },
+            h('div', null,
+              h('p', { className: 'list-item-name' }, o.name),
+              h('p', { className: 'list-item-sub' }, dateLabel)
+            ),
+            h('span', {
+              className: 'list-item-amount',
+              style: { color: o.kind === 'income' ? 'var(--text-success)' : 'inherit', fontSize: '12px' }
+            }, `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`)
+          );
+        })
+      );
+
+  const netSoFar = incomeReceived - billsPaid;
+  const netProjected = totalProjectedIncome - totalBills;
+
+  if (isMobile) {
+    return h('div', null,
+      h('div', { className: 'home-month-header' },
+        h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
+        h('h1', { className: 'home-month-title' }, monthLabel),
+        h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
+      ),
+
+      // four headline numbers, evenly squared off
+      h('div', { className: 'metric-grid-2x2' },
+        h('div', { className: 'metric-card' },
+          h('p', { className: 'metric-label' }, 'Bills this month'),
+          h('p', { className: 'metric-value' }, fmtCurrency(totalBills, currency))
+        ),
+        h('div', { className: 'metric-card' },
+          h('p', { className: 'metric-label' }, 'Income so far'),
+          h('p', { className: 'metric-value', style: { color: 'var(--text-success)' } }, fmtCurrency(incomeReceived, currency))
+        ),
+        h('div', { className: 'metric-card' },
+          h('p', { className: 'metric-label' }, 'Covered so far'),
+          h('p', { className: 'metric-value', style: { color: 'var(--text-warning)' } }, fmtCurrency(billsPaid, currency)),
+          h('p', { className: 'metric-foot' }, `of ${fmtCurrency(totalBills, currency)} \u00b7 ${fmtCurrency(Math.max(0, totalBills - billsPaid), currency)} left`)
+        ),
+        h('div', { className: 'metric-card' },
+          h('p', { className: 'metric-label' }, 'Projected income'),
+          h('p', { className: 'metric-value' }, fmtCurrency(totalProjectedIncome, currency)),
+          hasIncomeRange
+            ? h('p', { className: 'metric-foot' }, `${fmtCurrency(projectedIncomeRange.min, currency)}\u2013${fmtCurrency(projectedIncomeRange.max, currency)}`)
+            : h('p', { className: 'metric-foot' }, `${fmtCurrency(incomeReceived, currency)} received`)
+        )
+      ),
+
+      // the wide card from the sketch: both net figures side by side
+      h('div', { className: 'metric-card net-card' },
+        h('div', null,
+          h('p', { className: 'metric-label' }, 'Net so far'),
+          h('p', { className: 'metric-value', style: { color: netSoFar >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
+            `${netSoFar >= 0 ? '+' : ''}${fmtCurrency(netSoFar, currency)}`)
+        ),
+        h('div', { className: 'net-card-divider' }),
+        h('div', null,
+          h('p', { className: 'metric-label' }, 'Net projected'),
+          h('p', { className: 'metric-value', style: { color: netProjected >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
+            `${netProjected >= 0 ? '+' : ''}${fmtCurrency(netProjected, currency)}`)
+        )
+      ),
+
+      // bills as a tickable checklist rather than tiles
+      h('p', { className: 'section-title' }, 'Bills this month'),
+      allTiles.length === 0
+        ? h('p', { className: 'empty-state' }, 'Nothing scheduled this month.')
+        : h('div', { className: 'bill-checklist' },
+            allTiles.map((o) => {
+              const paid = isPaid(data, o.id, o.occDate);
+              const late = !paid && (isForcedLate(data, o.id, o.occDate) || (parseYmd(o.occDate) < today && !isDismissedLate(data, o.id, o.occDate)));
+              const dateLabel = formatDate(parseYmd(o.occDate), data.settings);
+              const accentColor = getEntryColor(o, data) || '#D85A5A';
+              return h('div', {
+                key: `${o.id}-${o.occDate}`,
+                className: `bill-check-row${paid ? ' paid' : ''}`,
+                onClick: () => setPriceModal(o)
+              },
+                h('input', {
+                  type: 'checkbox',
+                  checked: paid,
+                  onClick: (e) => e.stopPropagation(),
+                  onChange: () => togglePaid(o),
+                  'aria-label': `Mark ${o.name} paid`
+                }),
+                h('span', { className: 'bill-check-accent', style: { background: accentColor } }),
+                h('div', { className: 'bill-check-text' },
+                  h('p', { className: 'bill-check-name' },
+                    late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
+                    o.name
+                  ),
+                  h('p', { className: 'bill-check-sub' }, `${dateLabel} \u00b7 ${o.category || (FREQ_LABELS[o.freq] || o.freq)}`)
+                ),
+                h('span', { className: 'bill-check-amount' }, occAmountLabel(o, currency))
+              );
+            })
+          ),
+
+      h('p', { className: 'section-title' }, 'Next 7 days'),
+      next7List,
+
+      // everything analytical hides behind this until asked for
+      h('label', { className: 'advanced-toggle' },
+        h('input', {
+          type: 'checkbox',
+          checked: advancedOpen,
+          onChange: (e) => setAdvancedOpen(e.target.checked)
+        }),
+        h('span', null, 'Advanced view'),
+        h('span', { className: 'advanced-toggle-hint' }, advancedOpen ? 'Hide charts' : 'Show charts')
+      ),
+
+      advancedOpen ? h('div', { className: 'advanced-panel' },
+        h(CashFlowChart, { points: cashFlowSeries, currency }),
+        h(CategoryDonut, {
+          data: breakdownData, currency,
+          groupBy: breakdownGroupBy, setGroupBy: setBreakdownGroupBy,
+          filter: breakdownFilter, setFilter: setBreakdownFilter
+        }),
+        h(MonthSummaryCard, { summary: monthSummary, currency }),
+        h(MonthComparisonCard, { lastMonth: lastMonthTotals, thisMonth: { totalBills, totalIncome: totalProjectedIncome }, currency })
+      ) : null,
+
+      priceModal ? h(PriceOverrideModal, {
+        data, setData, occ: priceModal, currency,
+        onClose: () => setPriceModal(null)
+      }) : null
+    );
+  }
+
   return h('div', null,
     h('div', { className: 'home-month-header' },
       h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
@@ -2165,24 +2310,7 @@ function HomePage({ data, setData }) {
       ),
       h('div', { className: 'home-chart-side' },
         h('p', { className: 'section-title', style: { marginTop: '0', marginBottom: '8px' } }, 'Next 7 days'),
-        next7Days.length === 0
-          ? h('p', { className: 'empty-state' }, 'Nothing due in the next 7 days.')
-          : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-              next7Days.map((o, i) => {
-                const d = parseYmd(o.occDate);
-                const dateLabel = formatDate(d, data.settings);
-                return h('div', { key: `${o.id}-${o.occDate}-${i}`, className: 'list-item clickable', onClick: () => setPriceModal(o) },
-                  h('div', null,
-                    h('p', { className: 'list-item-name' }, o.name),
-                    h('p', { className: 'list-item-sub' }, dateLabel)
-                  ),
-                  h('span', {
-                    className: 'list-item-amount',
-                    style: { color: o.kind === 'income' ? 'var(--text-success)' : 'inherit', fontSize: '12px' }
-                  }, `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`)
-                );
-              })
-            )
+        next7List
       )
     ),
 
@@ -2725,6 +2853,28 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
   const rangeSpans = useMemo(() => getDateRangeSpans(data, allBills, gridStart, gridEnd), [data, cursor]);
   const rangeEntryIds = useMemo(() => new Set(rangeSpans.map((s) => s.id)), [rangeSpans]);
 
+  // Mobile can't draw the connector bars, so instead each day inside a span
+  // gets a dashed band. Map every date string to the span covering it.
+  const rangeDayMap = useMemo(() => {
+    const map = {};
+    rangeSpans.forEach((s) => {
+      const cur = new Date(s.startDate);
+      while (cur <= s.endDate) {
+        const key = ymd(cur);
+        if (!map[key]) {
+          map[key] = {
+            color: s.color || (s.kind === 'income' ? '#4FAE6B' : '#D85A5A'),
+            isStart: key === ymd(s.startDate),
+            isEnd: key === ymd(s.endDate),
+            name: s.name
+          };
+        }
+        cur.setDate(cur.getDate() + 1);
+      }
+    });
+    return map;
+  }, [rangeSpans]);
+
   function changeMonth(delta) {
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
     setSelectedDay(null);
@@ -2813,40 +2963,44 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
             week.map((cd) => {
               const dateStr = ymd(cd);
               const inMonth = cd.getMonth() === cursor.getMonth();
-              // Desktop hides range entries from the cells because they're
-              // drawn as bars across the overlay. Mobile has no bars, so they
-              // stay in the cells as ordinary dots.
-              const occs = isMobile
-                ? (occByDate[dateStr] || [])
-                : (occByDate[dateStr] || []).filter((o) => !rangeEntryIds.has(o.id));
+              // Range entries are drawn as bars (desktop) or a dashed band
+              // (mobile), so they're kept out of the per-day list either way.
+              const occs = (occByDate[dateStr] || []).filter((o) => !rangeEntryIds.has(o.id));
               const isToday = dateStr === todayStr;
               const isPast = cd < today;
               const isSelected = selectedDay === dateStr;
 
-              // Phones can't fit named chips in a 7-column grid, so each day
-              // becomes a number with up to three colored dots beneath it -
-              // the same information at a glance, tap to see the detail.
+              // Phones can't fit the desktop chips, but a truncated name is far
+              // more useful than an anonymous dot - so show up to two, then a
+              // count. Days inside a date range get a dashed band beneath.
               if (isMobile) {
-                const dots = occs.slice(0, 3).map((o, i) => {
-                  let bg;
-                  if (o.kind === 'income') {
-                    bg = getEntryColor(o, data) || '#4FAE6B';
-                  } else if (isPaid(data, o.id, o.occDate)) {
-                    bg = 'var(--text-tertiary)';
-                  } else {
-                    bg = getEntryColor(o, data) || '#D85A5A';
-                  }
-                  return h('span', { key: `${o.id}-${o.occDate}-${i}`, className: 'cal-dot', style: { background: bg } });
-                });
+                const band = rangeDayMap[dateStr];
+                const shown = occs.slice(0, 2);
+                const extra = occs.length - shown.length;
                 return h('button', {
                   key: dateStr,
                   className: `calendar-cell mobile${inMonth ? '' : ' outside'}${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}`,
                   onClick: () => setSelectedDay(dateStr)
                 },
                   h('span', { className: 'calendar-date' }, cd.getDate()),
-                  h('span', { className: 'cal-dot-row' },
-                    dots,
-                    occs.length > 3 ? h('span', { className: 'cal-dot more' }) : null
+                  band ? h('span', {
+                    className: `cal-range-band${band.isStart ? ' start' : ''}${band.isEnd ? ' end' : ''}`,
+                    style: { borderColor: band.color },
+                    title: band.name
+                  }) : null,
+                  h('span', { className: 'cal-names' },
+                    shown.map((o, i) => {
+                      const paid = o.kind !== 'income' && isPaid(data, o.id, o.occDate);
+                      const color = o.kind === 'income'
+                        ? (getEntryColor(o, data) || '#4FAE6B')
+                        : (getEntryColor(o, data) || '#D85A5A');
+                      return h('span', {
+                        key: `${o.id}-${o.occDate}-${i}`,
+                        className: `cal-name${paid ? ' paid' : ''}`,
+                        style: { borderLeftColor: paid ? 'var(--text-tertiary)' : color }
+                      }, o.name);
+                    }),
+                    extra > 0 ? h('span', { className: 'cal-name more' }, `+${extra}`) : null
                   )
                 );
               }
@@ -3484,7 +3638,8 @@ function ProjectionModal({ card, data, currency, onClose }) {
 
 function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddEntry }) {
   const currency = data.settings.currency;
-  const [attentionCollapsed, setAttentionCollapsed] = useState(false);
+  // Nothing to act on means nothing worth taking up space - start collapsed.
+  const [attentionCollapsed, setAttentionCollapsed] = useState(() => needsAttention.length === 0);
   const [showInfo, setShowInfo] = useState(false);
   const [editing, setEditing] = useState(null); // { sourceList, entry } or null
   const [categoryFilter, setCategoryFilter] = useState('all');

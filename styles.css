@@ -1214,42 +1214,54 @@ label {
     /* z-index is ignored on static elements - these must be positioned */
     position: relative;
     z-index: 2;
-    display: flex;
+    /* three tracks so the title stays optically centred no matter what
+       sits on either side of it */
+    display: grid;
+    grid-template-columns: 44px 1fr 44px;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 10px 16px;
-    padding-top: calc(10px + env(safe-area-inset-top));
+    padding: 8px 12px;
+    padding-top: calc(8px + env(safe-area-inset-top));
     background: var(--bg-secondary);
     border-bottom: 0.5px solid var(--border-tertiary);
   }
-  .mobile-header-brand {
+  .mobile-header-left {
     display: flex;
     align-items: center;
-    gap: 8px;
+    justify-content: flex-start;
+  }
+  .mobile-header-right {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
+  .mobile-header-title {
+    margin: 0;
+    text-align: center;
     font-size: 17px;
     font-weight: 600;
+    letter-spacing: -0.2px;
     color: var(--text-primary);
-    min-width: 0;
-  }
-  .mobile-header-brand span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .mobile-header-logo {
-    width: 24px;
-    height: 24px;
-    border-radius: 6px;
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
     flex-shrink: 0;
   }
   .mobile-header-add {
-    width: 36px;
-    height: 36px;
+    /* a fixed square with a 50% radius is a true circle; a text "+" with
+       padding never is */
+    width: 34px;
+    height: 34px;
+    min-height: 34px;
     flex-shrink: 0;
     padding: 0;
-    font-size: 22px;
-    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     border-radius: 50%;
     border: none;
     background: var(--accent);
@@ -1424,15 +1436,6 @@ label {
     background: transparent;
     cursor: pointer;
   }
-  .calendar-cell.mobile .calendar-date {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    font-size: 14px;
-    border-radius: 50%;
-  }
   .calendar-cell.mobile.today .calendar-date {
     background: var(--accent);
     color: #fff;
@@ -1450,23 +1453,6 @@ label {
   .calendar-cell.mobile.outside {
     opacity: 0.32;
   }
-  .cal-dot-row {
-    display: flex;
-    gap: 3px;
-    align-items: center;
-    height: 6px;
-  }
-  .cal-dot {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    display: block;
-  }
-  .cal-dot.more {
-    background: var(--text-tertiary);
-    opacity: 0.6;
-  }
-
   /* ---------- lists become stacked cards ---------- */
   .list-item {
     flex-direction: column;
@@ -1639,15 +1625,83 @@ label {
     inset: auto;
     height: 100%;
     /* equal rows that share the leftover space, never smaller than a thumb */
-    grid-auto-rows: minmax(46px, 1fr);
+    grid-auto-rows: minmax(62px, 1fr);
   }
   .calendar-grid {
     gap: 2px;
   }
   .calendar-cell.mobile {
     min-height: 0;
+    justify-content: flex-start;
+    gap: 2px;
+    padding: 4px 2px;
+    overflow: hidden;
+  }
+  .calendar-cell.mobile .calendar-date {
+    display: flex;
+    align-items: center;
     justify-content: center;
-    gap: 5px;
+    width: 22px;
+    height: 22px;
+    font-size: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* a day's entries, named rather than reduced to anonymous dots */
+  .cal-names {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    width: 100%;
+    min-width: 0;
+  }
+  .cal-name {
+    font-size: 8.5px;
+    line-height: 1.25;
+    text-align: left;
+    padding: 1px 2px 1px 3px;
+    border-left: 2px solid var(--text-tertiary);
+    border-radius: 1px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .cal-name.paid {
+    text-decoration: line-through;
+    opacity: 0.55;
+  }
+  .cal-name.more {
+    background: transparent;
+    border-left-color: transparent;
+    color: var(--text-tertiary);
+    padding-left: 3px;
+  }
+
+  /* a date-range entry: a dashed band under the day number, closed off at
+     whichever end the range actually starts or finishes */
+  .cal-range-band {
+    display: block;
+    width: 100%;
+    height: 0;
+    border-top: 1.5px dashed currentColor;
+    opacity: 0.75;
+    margin: 1px 0;
+  }
+  .cal-range-band.start {
+    margin-left: 25%;
+    width: 75%;
+  }
+  .cal-range-band.end {
+    margin-right: 25%;
+    width: 75%;
+  }
+  .cal-range-band.start.end {
+    margin: 1px auto;
+    width: 50%;
   }
   /* the week-number gutter can't stay aligned once rows are flexible */
   .week-number-col,
@@ -1659,17 +1713,152 @@ label {
   .main-content.mobile:has(.calendar-page) {
     overflow-y: hidden;
   }
+
+  /* ---------- home ---------- */
+  .metric-grid-2x2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .metric-grid-2x2 .metric-card {
+    /* equal squares regardless of how long the numbers are */
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 84px;
+    padding: 12px;
+  }
+  .metric-grid-2x2 .metric-value {
+    font-size: 20px;
+    overflow-wrap: anywhere;
+  }
+  .metric-foot {
+    margin: 2px 0 0;
+    font-size: 11px;
+    color: var(--text-tertiary);
+  }
+
+  /* the wide card under the grid */
+  .net-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 10px;
+    padding: 12px 14px;
+  }
+  .net-card > div {
+    flex: 1;
+    min-width: 0;
+  }
+  .net-card .metric-value {
+    font-size: 20px;
+  }
+  .net-card-divider {
+    flex: 0 0 1px;
+    align-self: stretch;
+    background: var(--border-tertiary);
+  }
+
+  /* bills as a checklist rather than a grid of tiles */
+  .bill-checklist {
+    display: flex;
+    flex-direction: column;
+    border: 0.5px solid var(--border-tertiary);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .bill-check-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 12px;
+    background: var(--bg-primary);
+    border-bottom: 0.5px solid var(--border-tertiary);
+    cursor: pointer;
+  }
+  .bill-check-row:last-child {
+    border-bottom: none;
+  }
+  .bill-check-row.paid .bill-check-name,
+  .bill-check-row.paid .bill-check-amount {
+    text-decoration: line-through;
+    color: var(--text-tertiary);
+  }
+  .bill-check-row.paid {
+    background: var(--bg-secondary);
+  }
+  .bill-check-accent {
+    width: 3px;
+    align-self: stretch;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .bill-check-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .bill-check-name {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bill-check-sub {
+    margin: 1px 0 0;
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+  .bill-check-amount {
+    font-size: 15px;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  /* charts stay out of the way until asked for */
+  .advanced-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 18px 0 0;
+    padding: 12px 14px;
+    border: 0.5px solid var(--border-tertiary);
+    border-radius: var(--radius-lg);
+    background: var(--bg-primary);
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+  .advanced-toggle-hint {
+    margin-left: auto;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-tertiary);
+  }
+  .advanced-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-top: 14px;
+  }
 }
 
 /* Very narrow phones: shave the calendar down further. */
 @media (max-width: 360px) {
-  .calendar-cell.mobile {
-    min-height: 42px;
-  }
   .calendar-cell.mobile .calendar-date {
-    width: 24px;
-    height: 24px;
-    font-size: 13px;
+    width: 20px;
+    height: 20px;
+    font-size: 11px;
+  }
+  .cal-name {
+    font-size: 8px;
+    padding-left: 2px;
   }
   .mobile-tab-label {
     font-size: 9px;

@@ -83,18 +83,25 @@ function MobileTabBar({ page, setPage, lateCount, needsAttentionCount }) {
 }
 
 // Compact top bar shown on mobile in place of the sidebar brand block.
-// Sub-pages (reached from All bills) get a back arrow in place of the logo.
+// A three-column grid keeps the title optically centered no matter how wide
+// the left icon or right button are. Sub-pages get a back arrow.
 function MobileHeader({ title, onQuickAdd, onBack }) {
   return h('header', { className: 'mobile-header' },
-    h('div', { className: 'mobile-header-brand' },
+    h('div', { className: 'mobile-header-left' },
       onBack
         ? h('button', { className: 'mobile-header-back', onClick: onBack, 'aria-label': 'Back' }, '\u2039')
-        : h('img', { src: 'assets/icon.png', alt: '', className: 'mobile-header-logo' }),
-      h('span', null, title || 'Finance Calendar')
+        : h('img', { src: 'assets/icon.png', alt: '', className: 'mobile-header-logo' })
     ),
-    onQuickAdd
-      ? h('button', { className: 'mobile-header-add', onClick: onQuickAdd, 'aria-label': 'Quick add' }, '+')
-      : null
+    h('h1', { className: 'mobile-header-title' }, title || 'Finance Calendar'),
+    h('div', { className: 'mobile-header-right' },
+      onQuickAdd
+        ? h('button', { className: 'mobile-header-add', onClick: onQuickAdd, 'aria-label': 'Quick add' },
+            h('svg', { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.4, strokeLinecap: 'round' },
+              h('path', { d: 'M12 5v14M5 12h14' })
+            )
+          )
+        : null
+    )
   );
 }
 

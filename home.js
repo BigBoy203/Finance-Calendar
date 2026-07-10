@@ -2,7 +2,7 @@
 
 const DONUT_COLORS = ['#D85A5A', '#D8A857', '#8B6FD6', '#4FAE6B', '#D8845A', '#5AA8D8', '#C75AA8', '#7A8C5A'];
 
-function HomePage({ data, setData }) {
+function HomePage({ data, setData, isMobile }) {
   const currency = data.settings.currency;
   const [breakdownGroupBy, setBreakdownGroupBy] = useState('source'); // 'source' | 'category'
   const [breakdownFilter, setBreakdownFilter] = useState('bills'); // 'bills' | 'income' | 'both'
@@ -11,6 +11,8 @@ function HomePage({ data, setData }) {
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
   const [priceModal, setPriceModal] = useState(null); // occurrence object or null
+  // mobile only: hides the charts behind a toggle so the page opens compact
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
   const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
@@ -266,6 +268,142 @@ function HomePage({ data, setData }) {
 
   const monthLabel = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
+  // --- shared pieces used by both layouts ---
+  const next7List = next7Days.length === 0
+    ? h('p', { className: 'empty-state' }, 'Nothing due in the next 7 days.')
+    : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+        next7Days.map((o, i) => {
+          const dateLabel = formatDate(parseYmd(o.occDate), data.settings);
+          return h('div', { key: `${o.id}-${o.occDate}-${i}`, className: 'list-item clickable', onClick: () => setPriceModal(o) },
+            h('div', null,
+              h('p', { className: 'list-item-name' }, o.name),
+              h('p', { className: 'list-item-sub' }, dateLabel)
+            ),
+            h('span', {
+              className: 'list-item-amount',
+              style: { color: o.kind === 'income' ? 'var(--text-success)' : 'inherit', fontSize: '12px' }
+            }, `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`)
+          );
+        })
+      );
+
+  const netSoFar = incomeReceived - billsPaid;
+  const netProjected = totalProjectedIncome - totalBills;
+
+  if (isMobile) {
+    return h('div', null,
+      h('div', { className: 'home-month-header' },
+        h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
+        h('h1', { className: 'home-month-title' }, monthLabel),
+        h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
+      ),
+
+      // four headline numbers, evenly squared off
+      h('div', { className: 'metric-grid-2x2' },
+        h('div', { className: 'metric-card' },
+          h('p', { className: 'metric-label' }, 'Bills this month'),
+          h('p', { className: 'metric-value' }, fmtCurrency(totalBills, currency))
+        ),
+        h('div', { className: 'metric-card' },
+          h('p', { className: 'metric-label' }, 'Income so far'),
+          h('p', { className: 'metric-value', style: { color: 'var(--text-success)' } }, fmtCurrency(incomeReceived, currency))
+        ),
+        h('div', { className: 'metric-card' },
+          h('p', { className: 'metric-label' }, 'Covered so far'),
+          h('p', { className: 'metric-value', style: { color: 'var(--text-warning)' } }, fmtCurrency(billsPaid, currency)),
+          h('p', { className: 'metric-foot' }, `of ${fmtCurrency(totalBills, currency)} \u00b7 ${fmtCurrency(Math.max(0, totalBills - billsPaid), currency)} left`)
+        ),
+        h('div', { className: 'metric-card' },
+          h('p', { className: 'metric-label' }, 'Projected income'),
+          h('p', { className: 'metric-value' }, fmtCurrency(totalProjectedIncome, currency)),
+          hasIncomeRange
+            ? h('p', { className: 'metric-foot' }, `${fmtCurrency(projectedIncomeRange.min, currency)}\u2013${fmtCurrency(projectedIncomeRange.max, currency)}`)
+            : h('p', { className: 'metric-foot' }, `${fmtCurrency(incomeReceived, currency)} received`)
+        )
+      ),
+
+      // the wide card from the sketch: both net figures side by side
+      h('div', { className: 'metric-card net-card' },
+        h('div', null,
+          h('p', { className: 'metric-label' }, 'Net so far'),
+          h('p', { className: 'metric-value', style: { color: netSoFar >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
+            `${netSoFar >= 0 ? '+' : ''}${fmtCurrency(netSoFar, currency)}`)
+        ),
+        h('div', { className: 'net-card-divider' }),
+        h('div', null,
+          h('p', { className: 'metric-label' }, 'Net projected'),
+          h('p', { className: 'metric-value', style: { color: netProjected >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
+            `${netProjected >= 0 ? '+' : ''}${fmtCurrency(netProjected, currency)}`)
+        )
+      ),
+
+      // bills as a tickable checklist rather than tiles
+      h('p', { className: 'section-title' }, 'Bills this month'),
+      allTiles.length === 0
+        ? h('p', { className: 'empty-state' }, 'Nothing scheduled this month.')
+        : h('div', { className: 'bill-checklist' },
+            allTiles.map((o) => {
+              const paid = isPaid(data, o.id, o.occDate);
+              const late = !paid && (isForcedLate(data, o.id, o.occDate) || (parseYmd(o.occDate) < today && !isDismissedLate(data, o.id, o.occDate)));
+              const dateLabel = formatDate(parseYmd(o.occDate), data.settings);
+              const accentColor = getEntryColor(o, data) || '#D85A5A';
+              return h('div', {
+                key: `${o.id}-${o.occDate}`,
+                className: `bill-check-row${paid ? ' paid' : ''}`,
+                onClick: () => setPriceModal(o)
+              },
+                h('input', {
+                  type: 'checkbox',
+                  checked: paid,
+                  onClick: (e) => e.stopPropagation(),
+                  onChange: () => togglePaid(o),
+                  'aria-label': `Mark ${o.name} paid`
+                }),
+                h('span', { className: 'bill-check-accent', style: { background: accentColor } }),
+                h('div', { className: 'bill-check-text' },
+                  h('p', { className: 'bill-check-name' },
+                    late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
+                    o.name
+                  ),
+                  h('p', { className: 'bill-check-sub' }, `${dateLabel} \u00b7 ${o.category || (FREQ_LABELS[o.freq] || o.freq)}`)
+                ),
+                h('span', { className: 'bill-check-amount' }, occAmountLabel(o, currency))
+              );
+            })
+          ),
+
+      h('p', { className: 'section-title' }, 'Next 7 days'),
+      next7List,
+
+      // everything analytical hides behind this until asked for
+      h('label', { className: 'advanced-toggle' },
+        h('input', {
+          type: 'checkbox',
+          checked: advancedOpen,
+          onChange: (e) => setAdvancedOpen(e.target.checked)
+        }),
+        h('span', null, 'Advanced view'),
+        h('span', { className: 'advanced-toggle-hint' }, advancedOpen ? 'Hide charts' : 'Show charts')
+      ),
+
+      advancedOpen ? h('div', { className: 'advanced-panel' },
+        h(CashFlowChart, { points: cashFlowSeries, currency }),
+        h(CategoryDonut, {
+          data: breakdownData, currency,
+          groupBy: breakdownGroupBy, setGroupBy: setBreakdownGroupBy,
+          filter: breakdownFilter, setFilter: setBreakdownFilter
+        }),
+        h(MonthSummaryCard, { summary: monthSummary, currency }),
+        h(MonthComparisonCard, { lastMonth: lastMonthTotals, thisMonth: { totalBills, totalIncome: totalProjectedIncome }, currency })
+      ) : null,
+
+      priceModal ? h(PriceOverrideModal, {
+        data, setData, occ: priceModal, currency,
+        onClose: () => setPriceModal(null)
+      }) : null
+    );
+  }
+
   return h('div', null,
     h('div', { className: 'home-month-header' },
       h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
@@ -359,24 +497,7 @@ function HomePage({ data, setData }) {
       ),
       h('div', { className: 'home-chart-side' },
         h('p', { className: 'section-title', style: { marginTop: '0', marginBottom: '8px' } }, 'Next 7 days'),
-        next7Days.length === 0
-          ? h('p', { className: 'empty-state' }, 'Nothing due in the next 7 days.')
-          : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-              next7Days.map((o, i) => {
-                const d = parseYmd(o.occDate);
-                const dateLabel = formatDate(d, data.settings);
-                return h('div', { key: `${o.id}-${o.occDate}-${i}`, className: 'list-item clickable', onClick: () => setPriceModal(o) },
-                  h('div', null,
-                    h('p', { className: 'list-item-name' }, o.name),
-                    h('p', { className: 'list-item-sub' }, dateLabel)
-                  ),
-                  h('span', {
-                    className: 'list-item-amount',
-                    style: { color: o.kind === 'income' ? 'var(--text-success)' : 'inherit', fontSize: '12px' }
-                  }, `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`)
-                );
-              })
-            )
+        next7List
       )
     ),
 

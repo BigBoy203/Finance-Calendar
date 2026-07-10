@@ -2,7 +2,7 @@ const { useState, useEffect, useMemo, useCallback } = React;
 const h = React.createElement;
 
 // Shown under the Settings heading. Bump this when the web build changes.
-const WEB_VERSION = '0.5';
+const WEB_VERSION = '0.6';
 
 /* ---------------- Helpers ---------------- */
 
@@ -759,7 +759,7 @@ function App() {
 
   let pageContent;
   if (page === 'home') {
-    pageContent = h(HomePage, { data, setData: persist });
+    pageContent = h(HomePage, { data, setData: persist, isMobile });
   } else if (page === 'calendar') {
     pageContent = h(CalendarPage, { data, setData: persist, isMobile, onAddEntry: (date) => setQuickAdd({ date }) });
   } else if (page === 'late') {

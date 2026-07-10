@@ -2,7 +2,8 @@
 
 function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddEntry }) {
   const currency = data.settings.currency;
-  const [attentionCollapsed, setAttentionCollapsed] = useState(false);
+  // Nothing to act on means nothing worth taking up space - start collapsed.
+  const [attentionCollapsed, setAttentionCollapsed] = useState(() => needsAttention.length === 0);
   const [showInfo, setShowInfo] = useState(false);
   const [editing, setEditing] = useState(null); // { sourceList, entry } or null
   const [categoryFilter, setCategoryFilter] = useState('all');

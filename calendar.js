@@ -115,6 +115,28 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
   const rangeSpans = useMemo(() => getDateRangeSpans(data, allBills, gridStart, gridEnd), [data, cursor]);
   const rangeEntryIds = useMemo(() => new Set(rangeSpans.map((s) => s.id)), [rangeSpans]);
 
+  // Mobile can't draw the connector bars, so instead each day inside a span
+  // gets a dashed band. Map every date string to the span covering it.
+  const rangeDayMap = useMemo(() => {
+    const map = {};
+    rangeSpans.forEach((s) => {
+      const cur = new Date(s.startDate);
+      while (cur <= s.endDate) {
+        const key = ymd(cur);
+        if (!map[key]) {
+          map[key] = {
+            color: s.color || (s.kind === 'income' ? '#4FAE6B' : '#D85A5A'),
+            isStart: key === ymd(s.startDate),
+            isEnd: key === ymd(s.endDate),
+            name: s.name
+          };
+        }
+        cur.setDate(cur.getDate() + 1);
+      }
+    });
+    return map;
+  }, [rangeSpans]);
+
   function changeMonth(delta) {
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
     setSelectedDay(null);
@@ -203,40 +225,44 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
             week.map((cd) => {
               const dateStr = ymd(cd);
               const inMonth = cd.getMonth() === cursor.getMonth();
-              // Desktop hides range entries from the cells because they're
-              // drawn as bars across the overlay. Mobile has no bars, so they
-              // stay in the cells as ordinary dots.
-              const occs = isMobile
-                ? (occByDate[dateStr] || [])
-                : (occByDate[dateStr] || []).filter((o) => !rangeEntryIds.has(o.id));
+              // Range entries are drawn as bars (desktop) or a dashed band
+              // (mobile), so they're kept out of the per-day list either way.
+              const occs = (occByDate[dateStr] || []).filter((o) => !rangeEntryIds.has(o.id));
               const isToday = dateStr === todayStr;
               const isPast = cd < today;
               const isSelected = selectedDay === dateStr;
 
-              // Phones can't fit named chips in a 7-column grid, so each day
-              // becomes a number with up to three colored dots beneath it -
-              // the same information at a glance, tap to see the detail.
+              // Phones can't fit the desktop chips, but a truncated name is far
+              // more useful than an anonymous dot - so show up to two, then a
+              // count. Days inside a date range get a dashed band beneath.
               if (isMobile) {
-                const dots = occs.slice(0, 3).map((o, i) => {
-                  let bg;
-                  if (o.kind === 'income') {
-                    bg = getEntryColor(o, data) || '#4FAE6B';
-                  } else if (isPaid(data, o.id, o.occDate)) {
-                    bg = 'var(--text-tertiary)';
-                  } else {
-                    bg = getEntryColor(o, data) || '#D85A5A';
-                  }
-                  return h('span', { key: `${o.id}-${o.occDate}-${i}`, className: 'cal-dot', style: { background: bg } });
-                });
+                const band = rangeDayMap[dateStr];
+                const shown = occs.slice(0, 2);
+                const extra = occs.length - shown.length;
                 return h('button', {
                   key: dateStr,
                   className: `calendar-cell mobile${inMonth ? '' : ' outside'}${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}`,
                   onClick: () => setSelectedDay(dateStr)
                 },
                   h('span', { className: 'calendar-date' }, cd.getDate()),
-                  h('span', { className: 'cal-dot-row' },
-                    dots,
-                    occs.length > 3 ? h('span', { className: 'cal-dot more' }) : null
+                  band ? h('span', {
+                    className: `cal-range-band${band.isStart ? ' start' : ''}${band.isEnd ? ' end' : ''}`,
+                    style: { borderColor: band.color },
+                    title: band.name
+                  }) : null,
+                  h('span', { className: 'cal-names' },
+                    shown.map((o, i) => {
+                      const paid = o.kind !== 'income' && isPaid(data, o.id, o.occDate);
+                      const color = o.kind === 'income'
+                        ? (getEntryColor(o, data) || '#4FAE6B')
+                        : (getEntryColor(o, data) || '#D85A5A');
+                      return h('span', {
+                        key: `${o.id}-${o.occDate}-${i}`,
+                        className: `cal-name${paid ? ' paid' : ''}`,
+                        style: { borderLeftColor: paid ? 'var(--text-tertiary)' : color }
+                      }, o.name);
+                    }),
+                    extra > 0 ? h('span', { className: 'cal-name more' }, `+${extra}`) : null
                   )
                 );
               }
