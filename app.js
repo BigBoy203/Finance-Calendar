@@ -2,7 +2,7 @@ const { useState, useEffect, useMemo, useCallback } = React;
 const h = React.createElement;
 
 // Shown under the Settings heading. Bump this when the web build changes.
-const WEB_VERSION = '0.6';
+const WEB_VERSION = '0.7';
 
 /* ---------------- Helpers ---------------- */
 
@@ -2991,12 +2991,14 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
                   h('span', { className: 'cal-names' },
                     shown.map((o, i) => {
                       const paid = o.kind !== 'income' && isPaid(data, o.id, o.occDate);
+                      const late = !paid && o.kind !== 'income' &&
+                        (isForcedLate(data, o.id, o.occDate) || (parseYmd(o.occDate) < today && !isDismissedLate(data, o.id, o.occDate)));
                       const color = o.kind === 'income'
                         ? (getEntryColor(o, data) || '#4FAE6B')
                         : (getEntryColor(o, data) || '#D85A5A');
                       return h('span', {
                         key: `${o.id}-${o.occDate}-${i}`,
-                        className: `cal-name${paid ? ' paid' : ''}`,
+                        className: `cal-name${paid ? ' paid' : ''}${late ? ' late' : ''}`,
                         style: { borderLeftColor: paid ? 'var(--text-tertiary)' : color }
                       }, o.name);
                     }),

@@ -90,5 +90,14 @@
   <script src="vendor/react-dom.production.min.js"></script>
   <script src="storage.js"></script>
   <script src="app.js"></script>
+
+  <!-- Vercel Web Analytics (static-site / script-tag form). The React import
+       from the dashboard is for bundled frameworks and can't run here; this
+       queue shim + hosted script is the no-build equivalent. It only reports
+       once deployed on Vercel; locally the script 404s harmlessly. -->
+  <script>
+    window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+  </script>
+  <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>
