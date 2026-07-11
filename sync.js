@@ -187,9 +187,20 @@ const Sync = (function () {
     return new Promise((resolve) => {
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = 'application/json,.json';
+      // iOS is picky about accept filters and can grey out valid .json files
+      // saved from other apps, so accept broadly and validate after reading.
+      input.accept = '.json,application/json,text/plain,text/json';
+      // iOS Safari will not reliably fire 'change' for a detached input, so it
+      // must live in the DOM. Keep it invisible and off-layout.
+      input.style.position = 'fixed';
+      input.style.left = '-9999px';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
+
       let settled = false;
-      const finish = (r) => { if (!settled) { settled = true; resolve(r); } };
+      const cleanup = () => { if (input.parentNode) input.parentNode.removeChild(input); };
+      const finish = (r) => { if (!settled) { settled = true; cleanup(); resolve(r); } };
+
       input.onchange = () => {
         const file = input.files && input.files[0];
         if (!file) { finish({ ok: false, canceled: true }); return; }
@@ -201,11 +212,10 @@ const Sync = (function () {
         reader.onerror = () => finish({ ok: false, error: 'Could not read the file.' });
         reader.readAsText(file);
       };
-      const onFocus = () => {
-        window.removeEventListener('focus', onFocus);
-        setTimeout(() => { if (!input.files || !input.files.length) finish({ ok: false, canceled: true }); }, 500);
-      };
-      window.addEventListener('focus', onFocus);
+      // No focus-based cancel timeout: on iOS it fires before the file is
+      // handed over and wrongly reports a cancel. If the user backs out, the
+      // promise simply stays pending until the next attempt, which is
+      // harmless. A cancel is only reported when the picker returns no file.
       input.click();
     });
   }

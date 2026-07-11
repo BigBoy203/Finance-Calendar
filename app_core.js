@@ -2,7 +2,7 @@ const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
 // Shown under the Settings heading. Bump this when the web build changes.
-const WEB_VERSION = '1.3';
+const WEB_VERSION = '1.4';
 
 /* ---------------- Helpers ---------------- */
 

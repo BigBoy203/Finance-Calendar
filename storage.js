@@ -166,24 +166,31 @@
     return new Promise((resolve) => {
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = 'application/json,.json';
+      // Broad accept: iOS greys out valid .json saved from other apps otherwise
+      input.accept = '.json,application/json,text/plain,text/json';
+      // iOS Safari won't reliably fire 'change' on a detached input, so it
+      // must be in the DOM. Keep it invisible and off-layout.
+      input.style.position = 'fixed';
+      input.style.left = '-9999px';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
 
       let settled = false;
+      const cleanup = () => { if (input.parentNode) input.parentNode.removeChild(input); };
       const finish = (result) => {
         if (!settled) {
           settled = true;
+          cleanup();
           resolve(result);
         }
       };
 
-      let fileChosen = false;
       input.onchange = () => {
         const file = input.files && input.files[0];
         if (!file) {
           finish({ success: false, canceled: true });
           return;
         }
-        fileChosen = true; // stop the focus-timeout from cancelling mid-read
         const reader = new FileReader();
         reader.onload = async () => {
           try {
@@ -202,21 +209,9 @@
         reader.onerror = () => finish({ success: false, error: 'Could not read the selected file.' });
         reader.readAsText(file);
       };
-
-      // Best-effort cancel detection: if the window regains focus and no file
-      // was chosen after a generous delay, treat it as cancelled. iOS fires
-      // the change event well after focus returns and reads files slowly, so
-      // this delay must be long or a real pick gets mistaken for a cancel.
-      const onFocus = () => {
-        window.removeEventListener('focus', onFocus);
-        setTimeout(() => {
-          if (!settled && !fileChosen && (!input.files || input.files.length === 0)) {
-            finish({ success: false, canceled: true });
-          }
-        }, 2000);
-      };
-      window.addEventListener('focus', onFocus);
-
+      // No focus-based cancel timeout: on iOS it races the file handoff and
+      // wrongly reports a cancel, discarding a real import. A backed-out
+      // picker simply leaves the promise pending, which is harmless.
       input.click();
     });
   }

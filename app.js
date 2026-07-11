@@ -2,7 +2,7 @@ const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
 // Shown under the Settings heading. Bump this when the web build changes.
-const WEB_VERSION = '1.3';
+const WEB_VERSION = '1.4';
 
 /* ---------------- Helpers ---------------- */
 
@@ -4606,11 +4606,15 @@ function SyncCard({ data, setData, embedded }) {
 // A modal wrapper around the sync controls, opened from the sidebar button
 // (desktop) and the header sync icon (mobile) so sync isn't buried in Settings.
 function SyncModal({ data, setData, onClose }) {
-  return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
-    h('div', { className: 'modal-content' },
-      h('div', { className: 'row-between' },
+  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+    h('div', { className: 'modal-content as-window' },
+      h('div', { className: 'modal-window-head' },
         h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, 'Sync'),
-        h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')
+        h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
+          h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
+            h('path', { d: 'M6 6l12 12M18 6L6 18' })
+          )
+        )
       ),
       h(SyncCard, { data, setData, embedded: true })
     )
