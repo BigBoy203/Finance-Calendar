@@ -564,11 +564,14 @@ label {
 }
 
 .home-month-header {
-  display: flex;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
   align-items: center;
-  gap: 1.5rem;
+  gap: 8px;
   margin-bottom: 0.5rem;
+}
+.home-month-header > button {
+  width: 44px;
 }
 
 .home-month-title {
@@ -576,7 +579,7 @@ label {
   font-size: 28px;
   font-weight: 600;
   letter-spacing: -0.01em;
-  min-width: 240px;
+  min-width: 0;
   text-align: center;
 }
 
@@ -1245,9 +1248,9 @@ label {
     position: relative;
     z-index: 2;
     /* three tracks so the title stays optically centred no matter what
-       sits on either side of it */
+       sits on either side of it; right side holds sync + add */
     display: grid;
-    grid-template-columns: 44px 1fr 44px;
+    grid-template-columns: 80px 1fr 80px;
     align-items: center;
     padding: 8px 12px;
     padding-top: calc(8px + env(safe-area-inset-top));
@@ -1263,6 +1266,21 @@ label {
     display: flex;
     align-items: center;
     justify-content: flex-end;
+    gap: 8px;
+  }
+  .mobile-header-sync {
+    width: 34px;
+    height: 34px;
+    min-height: 34px;
+    flex-shrink: 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    border: 0.5px solid var(--border-secondary);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
   }
   .mobile-header-title {
     margin: 0;
@@ -2027,7 +2045,21 @@ label {
   padding-top: 8px;
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
 }
+.sidebar-foot-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.sidebar-foot-btn:hover { filter: brightness(1.05); }
 .desktop-fab {
   width: 40px;
   height: 40px;

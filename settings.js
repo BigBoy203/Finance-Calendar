@@ -345,7 +345,7 @@ function relativeTime(ms) {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
-function SyncCard({ data, setData }) {
+function SyncCard({ data, setData, embedded }) {
   const [linked, setLinked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null); // { ok, text }
@@ -436,8 +436,8 @@ function SyncCard({ data, setData }) {
     flash(true, 'Unlinked. This device no longer auto-syncs to that file.');
   }
 
-  return h('div', { className: 'card', style: { marginTop: '12px' } },
-    h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Sync'),
+  return h('div', { className: embedded ? '' : 'card', style: embedded ? { marginTop: '4px' } : { marginTop: '12px' } },
+    embedded ? null : h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Sync'),
     h('p', { style: { margin: '0 0 10px', fontSize: '13px', color: 'var(--text-secondary)' } },
       supportsFile
         ? 'Keep this device in step with a single data file. Link it once, then Sync writes your latest data to it and Load pulls the newest back in. Your data stays on your device and in your own file \u2014 never on a server.'
@@ -482,6 +482,20 @@ function SyncCard({ data, setData }) {
         )
       )
     ) : null
+  );
+}
+
+// A modal wrapper around the sync controls, opened from the sidebar button
+// (desktop) and the header sync icon (mobile) so sync isn't buried in Settings.
+function SyncModal({ data, setData, onClose }) {
+  return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+    h('div', { className: 'modal-content' },
+      h('div', { className: 'row-between' },
+        h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, 'Sync'),
+        h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')
+      ),
+      h(SyncCard, { data, setData, embedded: true })
+    )
   );
 }
 

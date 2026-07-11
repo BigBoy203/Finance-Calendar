@@ -176,12 +176,14 @@
         }
       };
 
+      let fileChosen = false;
       input.onchange = () => {
         const file = input.files && input.files[0];
         if (!file) {
           finish({ success: false, canceled: true });
           return;
         }
+        fileChosen = true; // stop the focus-timeout from cancelling mid-read
         const reader = new FileReader();
         reader.onload = async () => {
           try {
@@ -202,16 +204,16 @@
       };
 
       // Best-effort cancel detection: if the window regains focus and no file
-      // was chosen shortly after, treat it as cancelled. Not perfectly
-      // reliable across browsers, but only affects whether a "cancelled"
-      // message shows - the import itself is unaffected.
+      // was chosen after a generous delay, treat it as cancelled. iOS fires
+      // the change event well after focus returns and reads files slowly, so
+      // this delay must be long or a real pick gets mistaken for a cancel.
       const onFocus = () => {
         window.removeEventListener('focus', onFocus);
         setTimeout(() => {
-          if (!input.files || input.files.length === 0) {
+          if (!settled && !fileChosen && (!input.files || input.files.length === 0)) {
             finish({ success: false, canceled: true });
           }
-        }, 500);
+        }, 2000);
       };
       window.addEventListener('focus', onFocus);
 

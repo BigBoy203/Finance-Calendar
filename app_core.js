@@ -2,7 +2,7 @@ const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
 // Shown under the Settings heading. Bump this when the web build changes.
-const WEB_VERSION = '1.2';
+const WEB_VERSION = '1.3';
 
 /* ---------------- Helpers ---------------- */
 
@@ -648,6 +648,7 @@ function App() {
 
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
   const [desktopInfo, setDesktopInfo] = useState(false);
+  const [syncModal, setSyncModal] = useState(false);
   const [syncBanner, setSyncBanner] = useState(null); // { incoming } newer file found on open
   const isMobile = useIsMobile();
 
@@ -779,13 +780,18 @@ function App() {
     return h(OnboardingWizard, {
       data,
       isMobile,
-      onComplete: (next) => {
+      onComplete: (next, opts) => {
         persist({
           ...next,
           onboardingComplete: true,
           settings: { ...next.settings, installDate: next.settings.installDate || todayYmd() }
         });
-        setPostSetupPrompt(true);
+        // Importing a backup means the user already has their data - don't
+        // then ask them to add "prior entries". Only the fresh-setup path
+        // opens that prompt.
+        if (!(opts && opts.imported)) {
+          setPostSetupPrompt(true);
+        }
       }
     });
   }
@@ -860,6 +866,7 @@ function App() {
       h(MobileHeader, {
         title: pageTitle,
         onQuickAdd: () => setQuickAdd({ date: todayYmd() }),
+        onSync: () => setSyncModal(true),
         onBack: MOBILE_SUBPAGES.includes(page) ? () => setPage('allbills') : null,
         onHome: () => {
           setPage('home');
@@ -868,6 +875,7 @@ function App() {
         }
       }),
       h('div', { className: 'main-content mobile' }, syncBannerEl, pageContent),
+      syncModal ? h(SyncModal, { data, setData: persist, onClose: () => setSyncModal(false) }) : null,
       h(MobileTabBar, {
         page,
         setPage,
@@ -938,7 +946,13 @@ function App() {
       // desktop-app button pinned to the bottom of the sidebar, right-aligned
       h('div', { className: 'sidebar-foot' },
         h('button', {
-          className: 'desktop-fab',
+          className: 'sidebar-foot-btn',
+          onClick: () => setSyncModal(true),
+          'aria-label': 'Sync data',
+          title: 'Sync your data'
+        }, h(Icon, { name: 'refresh' })),
+        h('button', {
+          className: 'sidebar-foot-btn',
           onClick: () => setDesktopInfo(true),
           'aria-label': 'About the desktop app',
           title: 'Get the desktop app'
@@ -946,6 +960,7 @@ function App() {
       )
     ),
     h('div', { className: 'main-content' }, syncBannerEl, pageContent),
+    syncModal ? h(SyncModal, { data, setData: persist, onClose: () => setSyncModal(false) }) : null,
     desktopInfo ? h(DesktopInfoModal, { onClose: () => setDesktopInfo(false) }) : null,
     quickAdd ? h(QuickAddModal, {
       data,
@@ -1078,7 +1093,8 @@ function Icon({ name }) {
     alert: 'M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z',
     card: 'M2 7h20v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7zM2 10h20M6 15h4',
     allbills: 'M9 2h6l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2zM14 2v6h6M9 13h6M9 17h6',
-    download: 'M12 3v12M7 10l5 5 5-5M5 21h14'
+    download: 'M12 3v12M7 10l5 5 5-5M5 21h14',
+    refresh: 'M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6'
   };
   return h('svg', {
     width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none',

@@ -187,7 +187,7 @@ function OnboardingWizard({ data, isMobile, onComplete }) {
     const result = await window.api.importData();
     setImporting(false);
     if (result.success) {
-      onComplete(result.data);
+      onComplete(result.data, { imported: true });
     } else if (!result.canceled) {
       setImportError(result.error || 'Import failed. Please check the file and try again.');
     }
