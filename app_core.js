@@ -2,7 +2,7 @@ const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
 // Shown under the Settings heading. Bump this when the web build changes.
-const WEB_VERSION = '1.0';
+const WEB_VERSION = '1.2';
 
 /* ---------------- Helpers ---------------- */
 
@@ -638,8 +638,17 @@ function App() {
   const [billsExpanded, setBillsExpanded] = useState(true);
   const [postSetupPrompt, setPostSetupPrompt] = useState(false);
   const [quickAdd, setQuickAdd] = useState(null); // { date } or null
+  // Whenever the active page changes, reset scroll to the top - otherwise a
+  // page opens already scrolled down to wherever the last one was left.
+  useEffect(() => {
+    const panes = document.querySelectorAll('.main-content, .main-content.mobile');
+    panes.forEach((p) => { if (p) p.scrollTop = 0; });
+    window.scrollTo(0, 0);
+  }, [page]);
+
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
   const [desktopInfo, setDesktopInfo] = useState(false);
+  const [syncBanner, setSyncBanner] = useState(null); // { incoming } newer file found on open
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -652,6 +661,20 @@ function App() {
       .then((d) => {
         setData(d);
         setLoading(false);
+        // desktop: if a sync file is linked and already readable, see whether
+        // it holds newer data than what we just loaded. Only offer (never
+        // auto-replace), and only when permission is already granted so we
+        // don't need a user gesture at startup.
+        if (window.Sync && Sync.supportsFileSystem) {
+          Sync.hasLinkedFile().then((linked) => {
+            if (!linked) return;
+            Sync.readLinked().then((res) => {
+              if (res.ok && res.data && (res.data.lastModified || 0) > (d.lastModified || 0)) {
+                setSyncBanner({ incoming: res.data });
+              }
+            }).catch(() => {});
+          });
+        }
       })
       .catch((err) => {
         console.error('Failed to load data:', err);
@@ -722,9 +745,15 @@ function App() {
     styleEl.textContent = data.settings.customCss || '';
   }, [data && data.settings && data.settings.customCss]);
 
-  const persist = useCallback((next) => {
-    setData(next);
-    window.api.saveData(next);
+  const persist = useCallback((next, opts) => {
+    // Every persisted change advances lastModified - that's the clock the
+    // sync layer's "newest wins" rule compares. A caller can pass an explicit
+    // stamp (opts.lastModified) so a written file and the local copy match
+    // exactly instead of drifting by a few milliseconds.
+    const stamped = { ...next, lastModified: (opts && opts.lastModified) || Date.now() };
+    setData(stamped);
+    window.api.saveData(stamped);
+    return stamped;
   }, []);
 
   const lateBills = useMemo(() => (data && data.onboardingComplete ? getLateBills(data) : []), [data]);
@@ -749,6 +778,7 @@ function App() {
   if (!data.onboardingComplete) {
     return h(OnboardingWizard, {
       data,
+      isMobile,
       onComplete: (next) => {
         persist({
           ...next,
@@ -804,6 +834,18 @@ function App() {
     pageContent = h(SettingsPage, { data, setData: persist, onRestart: () => persist({ ...getBlankData(), onboardingComplete: false }) });
   }
 
+  // A newer copy was found in the linked file on open - offer to load it.
+  const syncBannerEl = syncBanner ? h('div', { className: 'sync-banner' },
+    h('span', { style: { fontSize: '13px' } }, 'A newer version of your data is in your synced file.'),
+    h('div', { style: { display: 'flex', gap: '8px', flexShrink: 0 } },
+      h('button', { className: 'sync-banner-dismiss', onClick: () => setSyncBanner(null) }, 'Ignore'),
+      h('button', { className: 'primary', onClick: () => {
+        persist({ ...syncBanner.incoming }, { lastModified: syncBanner.incoming.lastModified || Date.now() });
+        setSyncBanner(null);
+      } }, 'Load it')
+    )
+  ) : null;
+
   // Mobile: a compact top bar + a native-style bottom tab bar replace the
   // sidebar entirely. The page components themselves are unchanged; they
   // adapt through CSS and the isMobile flag they receive via context below.
@@ -825,7 +867,7 @@ function App() {
           if (pane) pane.scrollTo({ top: 0, behavior: 'smooth' });
         }
       }),
-      h('div', { className: 'main-content mobile' }, pageContent),
+      h('div', { className: 'main-content mobile' }, syncBannerEl, pageContent),
       h(MobileTabBar, {
         page,
         setPage,
@@ -903,7 +945,7 @@ function App() {
         }, h(Icon, { name: 'download' }))
       )
     ),
-    h('div', { className: 'main-content' }, pageContent),
+    h('div', { className: 'main-content' }, syncBannerEl, pageContent),
     desktopInfo ? h(DesktopInfoModal, { onClose: () => setDesktopInfo(false) }) : null,
     quickAdd ? h(QuickAddModal, {
       data,
@@ -985,6 +1027,7 @@ function BackupReminderModal({ onDownloadBackup, onDismiss }) {
 function getBlankData() {
   return {
     onboardingComplete: false,
+    lastModified: 0,
     incomeSources: [],
     majorBills: [],
     subscriptions: [],

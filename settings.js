@@ -331,6 +331,160 @@ function ColorsTab({ data, updateSectionColor }) {
 
 /* ---------------- Advanced tab ---------------- */
 
+/* ---------------- Sync card ---------------- */
+
+function relativeTime(ms) {
+  if (!ms) return 'never';
+  const diff = Date.now() - ms;
+  const mins = Math.round(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min${mins === 1 ? '' : 's'} ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+  const days = Math.round(hrs / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+function SyncCard({ data, setData }) {
+  const [linked, setLinked] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null); // { ok, text }
+  const [conflict, setConflict] = useState(null); // { incoming } when file is older
+  const supportsFile = Sync.supportsFileSystem;
+
+  useEffect(() => {
+    Sync.hasLinkedFile().then(setLinked);
+  }, []);
+
+  const lastModified = data.lastModified;
+
+  function flash(ok, text) { setMsg({ ok, text }); }
+
+  // Save / push current data out to the sync file (or share sheet on phone).
+  async function handleSync() {
+    setBusy(true); setMsg(null);
+    // one stamp shared by both the written file and the local copy, so a
+    // later Load doesn't see a millisecond drift and cry "conflict"
+    const stamp = Date.now();
+    const stamped = { ...data, lastModified: stamp };
+    const res = await Sync.writeOut(stamped);
+    setBusy(false);
+    if (res.ok) {
+      setData(stamped, { lastModified: stamp });
+      flash(true, res.mode === 'file'
+        ? 'Synced to your file.'
+        : 'Exported \u2014 choose where to save it (Files, LocalSend, etc.).');
+    } else if (res.canceled) {
+      // no-op
+    } else {
+      flash(false, res.error || 'Could not sync.');
+    }
+  }
+
+  // Pull data in. Desktop reads the linked file; phone opens a picker. Newest
+  // wins: if the incoming copy is older, we ask before replacing.
+  async function handleLoad() {
+    setBusy(true); setMsg(null);
+    const res = (supportsFile && linked) ? await Sync.readLinked() : await Sync.readFromPicker();
+    setBusy(false);
+    if (!res.ok) {
+      if (res.canceled) return;
+      if (res.noFile) { flash(false, 'No sync file linked yet.'); return; }
+      if (res.empty) { flash(false, 'The sync file is empty.'); return; }
+      flash(false, res.error || 'Could not load.');
+      return;
+    }
+    const incoming = res.data;
+    const incomingTime = incoming.lastModified || 0;
+    const localTime = data.lastModified || 0;
+    if (incomingTime < localTime) {
+      // older file - don't clobber newer local data without asking
+      setConflict({ incoming });
+      return;
+    }
+    applyIncoming(incoming);
+    flash(true, 'Loaded the latest data.');
+  }
+
+  function applyIncoming(incoming) {
+    // keep the file's own stamp so local and file stay in agreement
+    setData(incoming, { lastModified: incoming.lastModified || Date.now() });
+    setConflict(null);
+  }
+
+  async function handleLink(existing) {
+    setBusy(true); setMsg(null);
+    const res = existing ? await Sync.linkExistingFile() : await Sync.linkFile();
+    setBusy(false);
+    if (res.ok) {
+      setLinked(true);
+      if (existing) {
+        // linking an existing file - offer to load from it immediately
+        await handleLoad();
+      } else {
+        // brand new file - write current data into it so it's not empty
+        await handleSync();
+      }
+    } else if (!res.canceled) {
+      flash(false, res.error || 'Could not link a file.');
+    }
+  }
+
+  async function handleUnlink() {
+    await Sync.forgetFile();
+    setLinked(false);
+    flash(true, 'Unlinked. This device no longer auto-syncs to that file.');
+  }
+
+  return h('div', { className: 'card', style: { marginTop: '12px' } },
+    h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Sync'),
+    h('p', { style: { margin: '0 0 10px', fontSize: '13px', color: 'var(--text-secondary)' } },
+      supportsFile
+        ? 'Keep this device in step with a single data file. Link it once, then Sync writes your latest data to it and Load pulls the newest back in. Your data stays on your device and in your own file \u2014 never on a server.'
+        : 'Sync exports your data through the share sheet (Save to Files, LocalSend, and so on) and loads it back when you switch devices. Newest data always wins. Nothing is sent to a server.'),
+
+    h('div', { className: 'sync-status' },
+      h('span', { className: 'sync-dot', style: { background: lastModified ? 'var(--text-success)' : 'var(--text-tertiary)' } }),
+      h('span', { style: { fontSize: '13px' } },
+        'Last change: ', h('strong', null, relativeTime(lastModified)))
+    ),
+
+    // desktop: link controls
+    supportsFile ? h('div', { style: { marginTop: '10px' } },
+      linked
+        ? h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+            h('span', { className: 'sync-linked-pill' }, '\u2713 File linked'),
+            h('button', { className: 'link-btn', onClick: handleUnlink }, 'Unlink')
+          )
+        : h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+            h('button', { onClick: () => handleLink(false), disabled: busy }, 'Create sync file'),
+            h('button', { onClick: () => handleLink(true), disabled: busy }, 'Link existing file')
+          )
+    ) : null,
+
+    h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '12px' } },
+      h('button', { className: 'primary', onClick: handleSync, disabled: busy },
+        busy ? 'Working\u2026' : (supportsFile && linked ? 'Sync now' : 'Export / share')),
+      h('button', { onClick: handleLoad, disabled: busy },
+        supportsFile && linked ? 'Load from file' : 'Load from file\u2026')
+    ),
+
+    msg ? h('p', { style: { margin: '10px 0 0', fontSize: '13px', color: msg.ok ? 'var(--text-success)' : 'var(--late-red)' } }, msg.text) : null,
+
+    conflict ? h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) setConflict(null); } },
+      h('div', { className: 'modal-content' },
+        h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, 'That file is older'),
+        h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
+          `The data you're loading was last changed ${relativeTime(conflict.incoming.lastModified)}, but this device has newer changes from ${relativeTime(data.lastModified)}. Loading it will replace your newer data.`),
+        h('div', { className: 'row-between', style: { marginTop: '4px' } },
+          h('button', { onClick: () => setConflict(null) }, 'Keep mine'),
+          h('button', { className: 'danger-text', onClick: () => { applyIncoming(conflict.incoming); flash(true, 'Loaded the older file.'); } }, 'Load it anyway')
+        )
+      )
+    ) : null
+  );
+}
+
 function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setConfirming }) {
   const [importWarning, setImportWarning] = useState(false); // show warning modal before import
   const [importError, setImportError] = useState(null);
@@ -428,6 +582,8 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
             )
           )
     ),
+
+    h(SyncCard, { data, setData }),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
       h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Data portability'),

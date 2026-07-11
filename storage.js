@@ -17,6 +17,7 @@
   function getDefaultData() {
     return {
       onboardingComplete: false,
+      lastModified: 0,
       incomeSources: [],
       majorBills: [],
       subscriptions: [],
@@ -124,8 +125,12 @@
 
   async function saveData(data) {
     try {
-      await dbSet(DATA_KEY, data);
-      return { success: true };
+      // Preserve an explicit lastModified if the caller set one (so a synced
+      // file and the local copy can share the exact same stamp); otherwise
+      // advance it now.
+      const stamped = { ...data, lastModified: data.lastModified || Date.now() };
+      await dbSet(DATA_KEY, stamped);
+      return { success: true, lastModified: stamped.lastModified };
     } catch (err) {
       console.error('Failed to save data to IndexedDB:', err);
       return { success: false, error: String(err) };

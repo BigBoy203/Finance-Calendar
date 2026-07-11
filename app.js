@@ -2,7 +2,7 @@ const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
 // Shown under the Settings heading. Bump this when the web build changes.
-const WEB_VERSION = '1.0';
+const WEB_VERSION = '1.2';
 
 /* ---------------- Helpers ---------------- */
 
@@ -638,8 +638,17 @@ function App() {
   const [billsExpanded, setBillsExpanded] = useState(true);
   const [postSetupPrompt, setPostSetupPrompt] = useState(false);
   const [quickAdd, setQuickAdd] = useState(null); // { date } or null
+  // Whenever the active page changes, reset scroll to the top - otherwise a
+  // page opens already scrolled down to wherever the last one was left.
+  useEffect(() => {
+    const panes = document.querySelectorAll('.main-content, .main-content.mobile');
+    panes.forEach((p) => { if (p) p.scrollTop = 0; });
+    window.scrollTo(0, 0);
+  }, [page]);
+
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
   const [desktopInfo, setDesktopInfo] = useState(false);
+  const [syncBanner, setSyncBanner] = useState(null); // { incoming } newer file found on open
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -652,6 +661,20 @@ function App() {
       .then((d) => {
         setData(d);
         setLoading(false);
+        // desktop: if a sync file is linked and already readable, see whether
+        // it holds newer data than what we just loaded. Only offer (never
+        // auto-replace), and only when permission is already granted so we
+        // don't need a user gesture at startup.
+        if (window.Sync && Sync.supportsFileSystem) {
+          Sync.hasLinkedFile().then((linked) => {
+            if (!linked) return;
+            Sync.readLinked().then((res) => {
+              if (res.ok && res.data && (res.data.lastModified || 0) > (d.lastModified || 0)) {
+                setSyncBanner({ incoming: res.data });
+              }
+            }).catch(() => {});
+          });
+        }
       })
       .catch((err) => {
         console.error('Failed to load data:', err);
@@ -722,9 +745,15 @@ function App() {
     styleEl.textContent = data.settings.customCss || '';
   }, [data && data.settings && data.settings.customCss]);
 
-  const persist = useCallback((next) => {
-    setData(next);
-    window.api.saveData(next);
+  const persist = useCallback((next, opts) => {
+    // Every persisted change advances lastModified - that's the clock the
+    // sync layer's "newest wins" rule compares. A caller can pass an explicit
+    // stamp (opts.lastModified) so a written file and the local copy match
+    // exactly instead of drifting by a few milliseconds.
+    const stamped = { ...next, lastModified: (opts && opts.lastModified) || Date.now() };
+    setData(stamped);
+    window.api.saveData(stamped);
+    return stamped;
   }, []);
 
   const lateBills = useMemo(() => (data && data.onboardingComplete ? getLateBills(data) : []), [data]);
@@ -749,6 +778,7 @@ function App() {
   if (!data.onboardingComplete) {
     return h(OnboardingWizard, {
       data,
+      isMobile,
       onComplete: (next) => {
         persist({
           ...next,
@@ -804,6 +834,18 @@ function App() {
     pageContent = h(SettingsPage, { data, setData: persist, onRestart: () => persist({ ...getBlankData(), onboardingComplete: false }) });
   }
 
+  // A newer copy was found in the linked file on open - offer to load it.
+  const syncBannerEl = syncBanner ? h('div', { className: 'sync-banner' },
+    h('span', { style: { fontSize: '13px' } }, 'A newer version of your data is in your synced file.'),
+    h('div', { style: { display: 'flex', gap: '8px', flexShrink: 0 } },
+      h('button', { className: 'sync-banner-dismiss', onClick: () => setSyncBanner(null) }, 'Ignore'),
+      h('button', { className: 'primary', onClick: () => {
+        persist({ ...syncBanner.incoming }, { lastModified: syncBanner.incoming.lastModified || Date.now() });
+        setSyncBanner(null);
+      } }, 'Load it')
+    )
+  ) : null;
+
   // Mobile: a compact top bar + a native-style bottom tab bar replace the
   // sidebar entirely. The page components themselves are unchanged; they
   // adapt through CSS and the isMobile flag they receive via context below.
@@ -825,7 +867,7 @@ function App() {
           if (pane) pane.scrollTo({ top: 0, behavior: 'smooth' });
         }
       }),
-      h('div', { className: 'main-content mobile' }, pageContent),
+      h('div', { className: 'main-content mobile' }, syncBannerEl, pageContent),
       h(MobileTabBar, {
         page,
         setPage,
@@ -903,7 +945,7 @@ function App() {
         }, h(Icon, { name: 'download' }))
       )
     ),
-    h('div', { className: 'main-content' }, pageContent),
+    h('div', { className: 'main-content' }, syncBannerEl, pageContent),
     desktopInfo ? h(DesktopInfoModal, { onClose: () => setDesktopInfo(false) }) : null,
     quickAdd ? h(QuickAddModal, {
       data,
@@ -985,6 +1027,7 @@ function BackupReminderModal({ onDownloadBackup, onDismiss }) {
 function getBlankData() {
   return {
     onboardingComplete: false,
+    lastModified: 0,
     incomeSources: [],
     majorBills: [],
     subscriptions: [],
@@ -1431,7 +1474,7 @@ function presetEntry(preset, defaults) {
   return blankEntry({ ...preset, amount: '', ...defaults });
 }
 
-function OnboardingWizard({ data, onComplete }) {
+function OnboardingWizard({ data, isMobile, onComplete }) {
   const [phase, setPhase] = useState('import'); // 'import' | 'setup'
   const [step, setStep] = useState(0);
   const [importError, setImportError] = useState(null);
@@ -1577,35 +1620,39 @@ function OnboardingWizard({ data, onComplete }) {
   // No warning needed here since there is no saved data yet at this point.
   if (phase === 'import') {
     return h('div', { className: 'wizard-shell' },
-      h('div', null,
-        h('h2', null, 'Welcome to Finance Calendar'),
-        h('p', { style: { color: 'var(--text-secondary)', marginTop: '4px' } },
-          'Do you have a .json backup from a previous install or the web version that you\u2019d like to restore?')
-      ),
-      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' } },
-        h('button', {
-          className: 'primary',
-          onClick: handleImportFromFile,
-          disabled: importing
-        }, importing ? 'Importing\u2026' : 'Yes \u2014 import my backup file'),
-        h('button', { onClick: () => setPhase('setup') }, 'No \u2014 start fresh'),
-        importError ? h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--late-red)' } }, importError) : null
-      ),
-      h('p', { style: { fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '16px' } },
-        'Choosing "Import" will load your backup file and take you straight into the app with all your existing data. ',
-        'Choosing "Start fresh" takes you through the quick setup wizard.')
+      h('div', { className: 'wizard-scroll' },
+        h('div', null,
+          h('h2', null, 'Welcome to Finance Calendar'),
+          h('p', { style: { color: 'var(--text-secondary)', marginTop: '4px' } },
+            'Do you have a .json backup from a previous install or the web version that you\u2019d like to restore?')
+        ),
+        h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' } },
+          h('button', {
+            className: 'primary',
+            onClick: handleImportFromFile,
+            disabled: importing
+          }, importing ? 'Importing\u2026' : 'Yes \u2014 import my backup file'),
+          h('button', { onClick: () => setPhase('setup') }, 'No \u2014 start fresh'),
+          importError ? h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--late-red)' } }, importError) : null
+        ),
+        h('p', { style: { fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '16px' } },
+          'Choosing "Import" will load your backup file and take you straight into the app with all your existing data. ',
+          'Choosing "Start fresh" takes you through the quick setup wizard.')
+      )
     );
   }
 
   return h('div', { className: 'wizard-shell' },
-    h('div', { className: 'wizard-progress' },
-      steps.map((s, i) => h('div', { key: i, className: `wizard-step-dot${i <= step ? ' active' : ''}` }))
+    h('div', { className: 'wizard-scroll' },
+      h('div', { className: 'wizard-progress' },
+        steps.map((s, i) => h('div', { key: i, className: `wizard-step-dot${i <= step ? ' active' : ''}` }))
+      ),
+      h('div', null,
+        h('h2', null, steps[step].title),
+        h('p', { style: { color: 'var(--text-secondary)', marginTop: '4px' } }, steps[step].subtitle)
+      ),
+      body
     ),
-    h('div', null,
-      h('h2', null, steps[step].title),
-      h('p', { style: { color: 'var(--text-secondary)', marginTop: '4px' } }, steps[step].subtitle)
-    ),
-    body,
     h('div', { className: 'row-between' },
       step > 0
         ? h('button', { onClick: handleBack }, 'Back')
@@ -1699,13 +1746,15 @@ function EntryCard({ row, categories, namePlaceholder, dateLabel, onChange, onRe
 
 function PostSetupPrompt({ onAdd, onSkip }) {
   return h('div', { className: 'wizard-shell' },
-    h('div', { className: 'card', style: { textAlign: 'center', padding: '2rem' } },
-      h('h2', null, 'Setup complete'),
-      h('p', { style: { color: 'var(--text-secondary)' } },
-        'Would you like to add any prior entries - past bills, one-time payments, or one-time income - before getting started?'),
-      h('div', { style: { display: 'flex', gap: '8px', justifyContent: 'center', marginTop: '1rem' } },
-        h('button', { onClick: onSkip }, 'Skip for now'),
-        h('button', { className: 'primary', onClick: onAdd }, 'Add an entry')
+    h('div', { className: 'wizard-scroll', style: { display: 'flex', flexDirection: 'column', justifyContent: 'center' } },
+      h('div', { className: 'card', style: { textAlign: 'center', padding: '2rem' } },
+        h('h2', null, 'Setup complete'),
+        h('p', { style: { color: 'var(--text-secondary)' } },
+          'Would you like to add any prior entries - past bills, one-time payments, or one-time income - before getting started?'),
+        h('div', { style: { display: 'flex', gap: '8px', justifyContent: 'center', marginTop: '1rem' } },
+          h('button', { onClick: onSkip }, 'Skip for now'),
+          h('button', { className: 'primary', onClick: onAdd }, 'Add an entry')
+        )
       )
     )
   );
@@ -4377,6 +4426,160 @@ function ColorsTab({ data, updateSectionColor }) {
 
 /* ---------------- Advanced tab ---------------- */
 
+/* ---------------- Sync card ---------------- */
+
+function relativeTime(ms) {
+  if (!ms) return 'never';
+  const diff = Date.now() - ms;
+  const mins = Math.round(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min${mins === 1 ? '' : 's'} ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+  const days = Math.round(hrs / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+function SyncCard({ data, setData }) {
+  const [linked, setLinked] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null); // { ok, text }
+  const [conflict, setConflict] = useState(null); // { incoming } when file is older
+  const supportsFile = Sync.supportsFileSystem;
+
+  useEffect(() => {
+    Sync.hasLinkedFile().then(setLinked);
+  }, []);
+
+  const lastModified = data.lastModified;
+
+  function flash(ok, text) { setMsg({ ok, text }); }
+
+  // Save / push current data out to the sync file (or share sheet on phone).
+  async function handleSync() {
+    setBusy(true); setMsg(null);
+    // one stamp shared by both the written file and the local copy, so a
+    // later Load doesn't see a millisecond drift and cry "conflict"
+    const stamp = Date.now();
+    const stamped = { ...data, lastModified: stamp };
+    const res = await Sync.writeOut(stamped);
+    setBusy(false);
+    if (res.ok) {
+      setData(stamped, { lastModified: stamp });
+      flash(true, res.mode === 'file'
+        ? 'Synced to your file.'
+        : 'Exported \u2014 choose where to save it (Files, LocalSend, etc.).');
+    } else if (res.canceled) {
+      // no-op
+    } else {
+      flash(false, res.error || 'Could not sync.');
+    }
+  }
+
+  // Pull data in. Desktop reads the linked file; phone opens a picker. Newest
+  // wins: if the incoming copy is older, we ask before replacing.
+  async function handleLoad() {
+    setBusy(true); setMsg(null);
+    const res = (supportsFile && linked) ? await Sync.readLinked() : await Sync.readFromPicker();
+    setBusy(false);
+    if (!res.ok) {
+      if (res.canceled) return;
+      if (res.noFile) { flash(false, 'No sync file linked yet.'); return; }
+      if (res.empty) { flash(false, 'The sync file is empty.'); return; }
+      flash(false, res.error || 'Could not load.');
+      return;
+    }
+    const incoming = res.data;
+    const incomingTime = incoming.lastModified || 0;
+    const localTime = data.lastModified || 0;
+    if (incomingTime < localTime) {
+      // older file - don't clobber newer local data without asking
+      setConflict({ incoming });
+      return;
+    }
+    applyIncoming(incoming);
+    flash(true, 'Loaded the latest data.');
+  }
+
+  function applyIncoming(incoming) {
+    // keep the file's own stamp so local and file stay in agreement
+    setData(incoming, { lastModified: incoming.lastModified || Date.now() });
+    setConflict(null);
+  }
+
+  async function handleLink(existing) {
+    setBusy(true); setMsg(null);
+    const res = existing ? await Sync.linkExistingFile() : await Sync.linkFile();
+    setBusy(false);
+    if (res.ok) {
+      setLinked(true);
+      if (existing) {
+        // linking an existing file - offer to load from it immediately
+        await handleLoad();
+      } else {
+        // brand new file - write current data into it so it's not empty
+        await handleSync();
+      }
+    } else if (!res.canceled) {
+      flash(false, res.error || 'Could not link a file.');
+    }
+  }
+
+  async function handleUnlink() {
+    await Sync.forgetFile();
+    setLinked(false);
+    flash(true, 'Unlinked. This device no longer auto-syncs to that file.');
+  }
+
+  return h('div', { className: 'card', style: { marginTop: '12px' } },
+    h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Sync'),
+    h('p', { style: { margin: '0 0 10px', fontSize: '13px', color: 'var(--text-secondary)' } },
+      supportsFile
+        ? 'Keep this device in step with a single data file. Link it once, then Sync writes your latest data to it and Load pulls the newest back in. Your data stays on your device and in your own file \u2014 never on a server.'
+        : 'Sync exports your data through the share sheet (Save to Files, LocalSend, and so on) and loads it back when you switch devices. Newest data always wins. Nothing is sent to a server.'),
+
+    h('div', { className: 'sync-status' },
+      h('span', { className: 'sync-dot', style: { background: lastModified ? 'var(--text-success)' : 'var(--text-tertiary)' } }),
+      h('span', { style: { fontSize: '13px' } },
+        'Last change: ', h('strong', null, relativeTime(lastModified)))
+    ),
+
+    // desktop: link controls
+    supportsFile ? h('div', { style: { marginTop: '10px' } },
+      linked
+        ? h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+            h('span', { className: 'sync-linked-pill' }, '\u2713 File linked'),
+            h('button', { className: 'link-btn', onClick: handleUnlink }, 'Unlink')
+          )
+        : h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+            h('button', { onClick: () => handleLink(false), disabled: busy }, 'Create sync file'),
+            h('button', { onClick: () => handleLink(true), disabled: busy }, 'Link existing file')
+          )
+    ) : null,
+
+    h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '12px' } },
+      h('button', { className: 'primary', onClick: handleSync, disabled: busy },
+        busy ? 'Working\u2026' : (supportsFile && linked ? 'Sync now' : 'Export / share')),
+      h('button', { onClick: handleLoad, disabled: busy },
+        supportsFile && linked ? 'Load from file' : 'Load from file\u2026')
+    ),
+
+    msg ? h('p', { style: { margin: '10px 0 0', fontSize: '13px', color: msg.ok ? 'var(--text-success)' : 'var(--late-red)' } }, msg.text) : null,
+
+    conflict ? h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) setConflict(null); } },
+      h('div', { className: 'modal-content' },
+        h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, 'That file is older'),
+        h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
+          `The data you're loading was last changed ${relativeTime(conflict.incoming.lastModified)}, but this device has newer changes from ${relativeTime(data.lastModified)}. Loading it will replace your newer data.`),
+        h('div', { className: 'row-between', style: { marginTop: '4px' } },
+          h('button', { onClick: () => setConflict(null) }, 'Keep mine'),
+          h('button', { className: 'danger-text', onClick: () => { applyIncoming(conflict.incoming); flash(true, 'Loaded the older file.'); } }, 'Load it anyway')
+        )
+      )
+    ) : null
+  );
+}
+
 function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setConfirming }) {
   const [importWarning, setImportWarning] = useState(false); // show warning modal before import
   const [importError, setImportError] = useState(null);
@@ -4474,6 +4677,8 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
             )
           )
     ),
+
+    h(SyncCard, { data, setData }),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
       h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Data portability'),

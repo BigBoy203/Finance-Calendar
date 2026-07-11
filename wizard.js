@@ -51,7 +51,7 @@ function presetEntry(preset, defaults) {
   return blankEntry({ ...preset, amount: '', ...defaults });
 }
 
-function OnboardingWizard({ data, onComplete }) {
+function OnboardingWizard({ data, isMobile, onComplete }) {
   const [phase, setPhase] = useState('import'); // 'import' | 'setup'
   const [step, setStep] = useState(0);
   const [importError, setImportError] = useState(null);
@@ -197,35 +197,39 @@ function OnboardingWizard({ data, onComplete }) {
   // No warning needed here since there is no saved data yet at this point.
   if (phase === 'import') {
     return h('div', { className: 'wizard-shell' },
-      h('div', null,
-        h('h2', null, 'Welcome to Finance Calendar'),
-        h('p', { style: { color: 'var(--text-secondary)', marginTop: '4px' } },
-          'Do you have a .json backup from a previous install or the web version that you\u2019d like to restore?')
-      ),
-      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' } },
-        h('button', {
-          className: 'primary',
-          onClick: handleImportFromFile,
-          disabled: importing
-        }, importing ? 'Importing\u2026' : 'Yes \u2014 import my backup file'),
-        h('button', { onClick: () => setPhase('setup') }, 'No \u2014 start fresh'),
-        importError ? h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--late-red)' } }, importError) : null
-      ),
-      h('p', { style: { fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '16px' } },
-        'Choosing "Import" will load your backup file and take you straight into the app with all your existing data. ',
-        'Choosing "Start fresh" takes you through the quick setup wizard.')
+      h('div', { className: 'wizard-scroll' },
+        h('div', null,
+          h('h2', null, 'Welcome to Finance Calendar'),
+          h('p', { style: { color: 'var(--text-secondary)', marginTop: '4px' } },
+            'Do you have a .json backup from a previous install or the web version that you\u2019d like to restore?')
+        ),
+        h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' } },
+          h('button', {
+            className: 'primary',
+            onClick: handleImportFromFile,
+            disabled: importing
+          }, importing ? 'Importing\u2026' : 'Yes \u2014 import my backup file'),
+          h('button', { onClick: () => setPhase('setup') }, 'No \u2014 start fresh'),
+          importError ? h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--late-red)' } }, importError) : null
+        ),
+        h('p', { style: { fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '16px' } },
+          'Choosing "Import" will load your backup file and take you straight into the app with all your existing data. ',
+          'Choosing "Start fresh" takes you through the quick setup wizard.')
+      )
     );
   }
 
   return h('div', { className: 'wizard-shell' },
-    h('div', { className: 'wizard-progress' },
-      steps.map((s, i) => h('div', { key: i, className: `wizard-step-dot${i <= step ? ' active' : ''}` }))
+    h('div', { className: 'wizard-scroll' },
+      h('div', { className: 'wizard-progress' },
+        steps.map((s, i) => h('div', { key: i, className: `wizard-step-dot${i <= step ? ' active' : ''}` }))
+      ),
+      h('div', null,
+        h('h2', null, steps[step].title),
+        h('p', { style: { color: 'var(--text-secondary)', marginTop: '4px' } }, steps[step].subtitle)
+      ),
+      body
     ),
-    h('div', null,
-      h('h2', null, steps[step].title),
-      h('p', { style: { color: 'var(--text-secondary)', marginTop: '4px' } }, steps[step].subtitle)
-    ),
-    body,
     h('div', { className: 'row-between' },
       step > 0
         ? h('button', { onClick: handleBack }, 'Back')
@@ -319,13 +323,15 @@ function EntryCard({ row, categories, namePlaceholder, dateLabel, onChange, onRe
 
 function PostSetupPrompt({ onAdd, onSkip }) {
   return h('div', { className: 'wizard-shell' },
-    h('div', { className: 'card', style: { textAlign: 'center', padding: '2rem' } },
-      h('h2', null, 'Setup complete'),
-      h('p', { style: { color: 'var(--text-secondary)' } },
-        'Would you like to add any prior entries - past bills, one-time payments, or one-time income - before getting started?'),
-      h('div', { style: { display: 'flex', gap: '8px', justifyContent: 'center', marginTop: '1rem' } },
-        h('button', { onClick: onSkip }, 'Skip for now'),
-        h('button', { className: 'primary', onClick: onAdd }, 'Add an entry')
+    h('div', { className: 'wizard-scroll', style: { display: 'flex', flexDirection: 'column', justifyContent: 'center' } },
+      h('div', { className: 'card', style: { textAlign: 'center', padding: '2rem' } },
+        h('h2', null, 'Setup complete'),
+        h('p', { style: { color: 'var(--text-secondary)' } },
+          'Would you like to add any prior entries - past bills, one-time payments, or one-time income - before getting started?'),
+        h('div', { style: { display: 'flex', gap: '8px', justifyContent: 'center', marginTop: '1rem' } },
+          h('button', { onClick: onSkip }, 'Skip for now'),
+          h('button', { className: 'primary', onClick: onAdd }, 'Add an entry')
+        )
       )
     )
   );
