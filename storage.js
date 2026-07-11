@@ -31,6 +31,7 @@
       settings: {
         theme: 'system',
         accent: 'blue',
+        accentCustom: '#378ADD',
         currency: 'USD',
         firstDayOfWeek: 0,
         lateGraceDays: 0,

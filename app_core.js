@@ -2,7 +2,7 @@ const { useState, useEffect, useMemo, useCallback } = React;
 const h = React.createElement;
 
 // Shown under the Settings heading. Bump this when the web build changes.
-const WEB_VERSION = '0.7';
+const WEB_VERSION = '0.8';
 
 /* ---------------- Helpers ---------------- */
 
@@ -119,6 +119,16 @@ function addIntervals(anchor, freq, count) {
 }
 
 // Returns the display amount for an entry (midpoint if range, otherwise fixed amount)
+// Converts a #rrggbb hex to an rgba() string with the given alpha, used to
+// derive a soft accent-background tint from a custom accent color.
+function hexWithAlpha(hex, alpha) {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
+  if (!m) return hex;
+  const int = parseInt(m[1], 16);
+  const r = (int >> 16) & 255, g = (int >> 8) & 255, b = int & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function entryAmount(entry) {
   if (entry.useAmountRange) {
     const min = Number(entry.amountMin) || 0;
@@ -629,6 +639,7 @@ function App() {
   const [postSetupPrompt, setPostSetupPrompt] = useState(false);
   const [quickAdd, setQuickAdd] = useState(null); // { date } or null
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
+  const [desktopInfo, setDesktopInfo] = useState(false);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -674,11 +685,28 @@ function App() {
   useEffect(() => {
     if (!data) return;
     document.documentElement.setAttribute('data-theme', data.settings.theme || 'system');
-    document.documentElement.setAttribute('data-accent', data.settings.accent || 'blue');
     document.documentElement.setAttribute('data-density', data.settings.density || 'comfortable');
+
+    const root = document.documentElement;
+    if (data.settings.accent === 'custom' && data.settings.accentCustom) {
+      // a custom hex drives all three accent variables; the bg/text tints are
+      // derived from it so contrast stays reasonable in both themes
+      root.setAttribute('data-accent', 'custom');
+      const hex = data.settings.accentCustom;
+      root.style.setProperty('--accent', hex);
+      root.style.setProperty('--accent-bg', hexWithAlpha(hex, 0.14));
+      root.style.setProperty('--accent-text', hex);
+    } else {
+      root.setAttribute('data-accent', data.settings.accent || 'blue');
+      // clear any inline custom values so the preset stylesheet wins
+      root.style.removeProperty('--accent');
+      root.style.removeProperty('--accent-bg');
+      root.style.removeProperty('--accent-text');
+    }
   }, [
     data && data.settings && data.settings.theme,
     data && data.settings && data.settings.accent,
+    data && data.settings && data.settings.accentCustom,
     data && data.settings && data.settings.density
   ]);
 
@@ -790,7 +818,8 @@ function App() {
       h(MobileHeader, {
         title: pageTitle,
         onQuickAdd: () => setQuickAdd({ date: todayYmd() }),
-        onBack: MOBILE_SUBPAGES.includes(page) ? () => setPage('allbills') : null
+        onBack: MOBILE_SUBPAGES.includes(page) ? () => setPage('allbills') : null,
+        onHome: () => setPage('home')
       }),
       h('div', { className: 'main-content mobile' }, pageContent),
       h(MobileTabBar, {
@@ -815,7 +844,7 @@ function App() {
   return h('div', { className: 'app-shell' },
     h('div', { className: 'sidebar' },
       h('div', { className: 'sidebar-brand' },
-        h('img', { src: 'assets/icon.png', alt: '', className: 'sidebar-logo' }),
+        h('img', { src: 'assets/icon.svg', alt: '', className: 'sidebar-logo' }),
         h('h1', null, 'Finance Calendar')
       ),
       NAV_ITEMS.map((item) => {
@@ -859,17 +888,17 @@ function App() {
             ))
           ) : null
         );
-      }),
-      h('a', {
-        className: 'sidebar-link sidebar-download',
-        href: 'downloads/FinanceCalendar.exe',
-        download: 'FinanceCalendar.exe'
-      },
-        h(Icon, { name: 'download' }),
-        'Get desktop app'
-      )
+      })
     ),
+    // floating circular button, bottom-right, opens the desktop-vs-web pitch
+    h('button', {
+      className: 'desktop-fab',
+      onClick: () => setDesktopInfo(true),
+      'aria-label': 'About the desktop app',
+      title: 'Get the desktop app'
+    }, h(Icon, { name: 'download' })),
     h('div', { className: 'main-content' }, pageContent),
+    desktopInfo ? h(DesktopInfoModal, { onClose: () => setDesktopInfo(false) }) : null,
     quickAdd ? h(QuickAddModal, {
       data,
       setData: persist,
@@ -880,6 +909,44 @@ function App() {
       onDownloadBackup: downloadBackupNow,
       onDismiss: dismissBackupPrompt
     }) : null
+  );
+}
+
+/* ---------------- Desktop app info modal (web only) ---------------- */
+
+function DesktopInfoModal({ onClose }) {
+  const benefits = [
+    ['Saves to a real file', 'Your data lives in a file on your computer, not just this browser\u2019s storage - nothing to accidentally clear.'],
+    ['Trade mode', 'A full Trading tab with live prices, holdings, watchlist, and charts. Web-only for now, desktop-exclusive. (WIP)'],
+    ['Works offline', 'No internet needed once installed - it\u2019s a real app, not a website.'],
+    ['No backup nagging', 'Because it autosaves to disk, there\u2019s no weekly \u201cdownload a backup\u201d reminder.']
+  ];
+  return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+    h('div', { className: 'modal-content' },
+      h('div', { className: 'row-between' },
+        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Desktop app'),
+        h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')
+      ),
+      h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } },
+        'The Windows desktop version does everything the web version does, plus:'),
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+        benefits.map(([title, body], i) =>
+          h('div', { key: i, className: 'desktop-benefit' },
+            h('p', { style: { margin: 0, fontSize: '14px', fontWeight: 500 } }, title),
+            h('p', { style: { margin: '2px 0 0', fontSize: '12px', color: 'var(--text-secondary)' } }, body)
+          )
+        )
+      ),
+      h('div', { className: 'row-between', style: { marginTop: '4px' } },
+        h('button', { onClick: onClose }, 'Maybe later'),
+        h('a', {
+          className: 'primary',
+          href: 'downloads/FinanceCalendar.exe',
+          download: 'FinanceCalendar.exe',
+          style: { textDecoration: 'none' }
+        }, 'Download for Windows')
+      )
+    )
   );
 }
 
@@ -926,6 +993,7 @@ function getBlankData() {
     settings: {
       theme: 'system',
       accent: 'blue',
+      accentCustom: '#378ADD',
       currency: 'USD',
       firstDayOfWeek: 0,
       lateGraceDays: 0,

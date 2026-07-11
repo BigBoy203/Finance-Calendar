@@ -582,7 +582,19 @@ label {
 
 .home-month-header button {
   font-size: 16px;
-  padding: 8px 16px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0.5px solid var(--border-secondary);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+.home-month-header button:hover {
+  border-color: var(--border-strong, var(--accent));
 }
 
 .calendar-week-row {
@@ -1041,6 +1053,24 @@ label {
 .swatch.selected {
   border-color: var(--text-primary);
 }
+/* the custom-color well: a rainbow ring until a color is chosen */
+.swatch-custom {
+  background: conic-gradient(from 0deg, #ff5252, #ffb142, #fdd835, #66bb6a, #29b6f6, #7e57c2, #ff5252);
+  overflow: hidden;
+  position: relative;
+}
+.swatch-custom input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+[data-accent="custom"] { }
 
 .segmented {
   display: flex;
@@ -1407,19 +1437,82 @@ label {
   .modal-content.day-modal {
     max-width: 100%;
   }
+
+  /* a draggable-looking handle at the top of a sheet; swipe it down to close */
+  .sheet-grabber {
+    align-self: center;
+    width: 40px;
+    height: 5px;
+    margin: -8px 0 6px;
+    border-radius: 3px;
+    background: var(--border-secondary);
+    cursor: grab;
+    flex-shrink: 0;
+    touch-action: none;
+  }
+  /* windows use an X, not a grabber */
+  .modal-content.as-window .sheet-grabber {
+    display: none;
+  }
+
+  /* ---------- window-variant modals (Add entry, Bills editing) ----------
+     These pop from the centre with an X, rather than sliding up as a sheet.
+     Overrides the sheet rules above. */
+  .modal-overlay.as-window {
+    align-items: center;
+    justify-content: center;
+    inset: 0 0 var(--kb, 0px) 0;
+    padding: 16px;
+  }
+  .modal-content.as-window {
+    width: 100%;
+    max-width: 440px;
+    max-height: calc(100% - 24px);
+    border-radius: 16px;
+    padding: 0 16px 16px;
+    animation: window-in 0.16s ease-out;
+  }
+  /* sticky title bar with the close button */
+  .modal-window-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 -16px 4px;
+    padding: 16px 16px 10px;
+    background: var(--bg-primary);
+    border-bottom: 0.5px solid var(--border-tertiary);
+    border-radius: 16px 16px 0 0;
+  }
+  .modal-x {
+    width: 30px;
+    height: 30px;
+    min-height: 30px;
+    flex-shrink: 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    border: none;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+  }
+  /* windows keep the pinned action row, but not the full-bleed sheet look */
+  .modal-content.as-window > .row-between:last-child {
+    margin-top: 12px;
+    padding: 12px 0 0;
+  }
+  @keyframes window-in {
+    from { opacity: 0; transform: scale(0.96); }
+    to   { opacity: 1; transform: scale(1); }
+  }
   @keyframes sheet-up {
     from { transform: translateY(100%); }
     to   { transform: translateY(0); }
-  }
-  /* a grabber bar so it reads as a sheet */
-  .modal-content::before {
-    content: "";
-    display: block;
-    width: 36px;
-    height: 4px;
-    margin: -6px auto 12px;
-    border-radius: 2px;
-    background: var(--border-secondary);
   }
 
   /* ---------- calendar ---------- */
@@ -1752,20 +1845,16 @@ label {
     margin-top: 10px;
     padding: 14px 4px;
   }
-  .net-card > div {
+  .net-card-half {
     flex: 1;
     min-width: 0;
     padding: 0 14px;
   }
+  .net-card-half-right {
+    border-left: 1px solid var(--border-tertiary);
+  }
   .net-card .metric-value {
     font-size: 20px;
-  }
-  .net-card-divider {
-    flex: none;
-    width: 1px;
-    background: var(--border-tertiary);
-    /* inset top and bottom so it reads as a rule, not a filled box */
-    margin: 2px 0;
   }
 
   /* bills as a checklist rather than a grid of tiles */
@@ -1888,3 +1977,92 @@ label {
     flex-shrink: 0;
   }
 }
+
+.mobile-header-logo-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  min-height: 0;
+  cursor: pointer;
+}
+
+/* floating desktop-app button (web, desktop viewport only) */
+.desktop-fab {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+  z-index: 50;
+}
+.desktop-fab:hover { filter: brightness(1.05); }
+.desktop-benefit {
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--accent);
+}
+/* hide the desktop FAB on mobile - it has no desktop use there */
+@media (max-width: 768px) {
+  .desktop-fab { display: none; }
+}
+
+/* Bills tab: category filter chips, each showing that group's monthly total */
+.bill-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.bill-filter-chip {
+  flex: 1 1 auto;
+  min-width: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 9px 12px;
+  border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  position: relative;
+}
+.bill-filter-chip.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.bill-filter-chip.active .bill-filter-total { color: #fff; }
+.bill-filter-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+.bill-filter-total {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.bill-filter-edit {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-tertiary);
+  padding: 2px 4px;
+}
+.bill-filter-chip.active .bill-filter-edit { color: rgba(255,255,255,0.85); }

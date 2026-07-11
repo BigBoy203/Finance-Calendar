@@ -142,8 +142,43 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
             title: a.label,
             onClick: () => updateSetting('accent', a.id)
           })
+        ),
+        // custom: a color well that doubles as the swatch
+        h('label', {
+          className: `swatch swatch-custom${data.settings.accent === 'custom' ? ' selected' : ''}`,
+          title: 'Custom color',
+          style: data.settings.accent === 'custom' && data.settings.accentCustom
+            ? { background: data.settings.accentCustom }
+            : undefined
+        },
+          h('input', {
+            type: 'color',
+            value: data.settings.accentCustom || '#378ADD',
+            onChange: (e) => {
+              updateSetting('accentCustom', e.target.value);
+              updateSetting('accent', 'custom');
+            },
+            'aria-label': 'Custom accent color'
+          })
         )
       ),
+      data.settings.accent === 'custom'
+        ? h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '-4px', marginBottom: '12px' } },
+            h('span', { style: { fontSize: '13px', color: 'var(--text-secondary)' } }, 'Custom hex'),
+            h('input', {
+              type: 'text',
+              value: data.settings.accentCustom || '#378ADD',
+              onChange: (e) => {
+                let v = e.target.value.trim();
+                if (v && v[0] !== '#') v = '#' + v;
+                updateSetting('accentCustom', v);
+              },
+              placeholder: '#378ADD',
+              style: { width: '120px', fontFamily: 'monospace' },
+              maxLength: 7
+            })
+          )
+        : null,
       h('label', null, 'First day of week'),
       h('div', { className: 'segmented' },
         [{ id: 0, label: 'Sunday' }, { id: 1, label: 'Monday' }].map((o) =>
@@ -356,17 +391,6 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
           onChange: (e) => updateSetting('backupReminderEnabled', e.target.checked)
         }),
         h('label', { htmlFor: 'backup-reminder', style: { margin: 0 } }, 'Remind me to download a backup every Monday')
-      ),
-      // The sidebar isn't rendered on mobile, so the desktop download lives
-      // here too - it's the only place a phone user would find it.
-      h('div', { style: { marginTop: '12px', paddingTop: '12px', borderTop: '0.5px solid var(--border-tertiary)' } },
-        h('a', {
-          href: 'downloads/FinanceCalendar.exe',
-          download: 'FinanceCalendar.exe',
-          style: { fontSize: '13px', color: 'var(--accent-text)' }
-        }, 'Download the Windows desktop app'),
-        h('p', { style: { margin: '4px 0 0', fontSize: '12px', color: 'var(--text-tertiary)' } },
-          'The desktop app saves to a file on your computer instead of browser storage.')
       )
     ),
 
@@ -397,7 +421,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
     ),
 
     h('div', { className: 'card about-card', style: { marginTop: '12px' } },
-      h('img', { src: 'assets/icon.png', alt: '', className: 'about-logo' }),
+      h('img', { src: 'assets/icon.svg', alt: '', className: 'about-logo' }),
       h('div', null,
         h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Finance Calendar'),
         h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },

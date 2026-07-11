@@ -2,7 +2,7 @@ const { useState, useEffect, useMemo, useCallback } = React;
 const h = React.createElement;
 
 // Shown under the Settings heading. Bump this when the web build changes.
-const WEB_VERSION = '0.7';
+const WEB_VERSION = '0.8';
 
 /* ---------------- Helpers ---------------- */
 
@@ -119,6 +119,16 @@ function addIntervals(anchor, freq, count) {
 }
 
 // Returns the display amount for an entry (midpoint if range, otherwise fixed amount)
+// Converts a #rrggbb hex to an rgba() string with the given alpha, used to
+// derive a soft accent-background tint from a custom accent color.
+function hexWithAlpha(hex, alpha) {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
+  if (!m) return hex;
+  const int = parseInt(m[1], 16);
+  const r = (int >> 16) & 255, g = (int >> 8) & 255, b = int & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function entryAmount(entry) {
   if (entry.useAmountRange) {
     const min = Number(entry.amountMin) || 0;
@@ -629,6 +639,7 @@ function App() {
   const [postSetupPrompt, setPostSetupPrompt] = useState(false);
   const [quickAdd, setQuickAdd] = useState(null); // { date } or null
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
+  const [desktopInfo, setDesktopInfo] = useState(false);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -674,11 +685,28 @@ function App() {
   useEffect(() => {
     if (!data) return;
     document.documentElement.setAttribute('data-theme', data.settings.theme || 'system');
-    document.documentElement.setAttribute('data-accent', data.settings.accent || 'blue');
     document.documentElement.setAttribute('data-density', data.settings.density || 'comfortable');
+
+    const root = document.documentElement;
+    if (data.settings.accent === 'custom' && data.settings.accentCustom) {
+      // a custom hex drives all three accent variables; the bg/text tints are
+      // derived from it so contrast stays reasonable in both themes
+      root.setAttribute('data-accent', 'custom');
+      const hex = data.settings.accentCustom;
+      root.style.setProperty('--accent', hex);
+      root.style.setProperty('--accent-bg', hexWithAlpha(hex, 0.14));
+      root.style.setProperty('--accent-text', hex);
+    } else {
+      root.setAttribute('data-accent', data.settings.accent || 'blue');
+      // clear any inline custom values so the preset stylesheet wins
+      root.style.removeProperty('--accent');
+      root.style.removeProperty('--accent-bg');
+      root.style.removeProperty('--accent-text');
+    }
   }, [
     data && data.settings && data.settings.theme,
     data && data.settings && data.settings.accent,
+    data && data.settings && data.settings.accentCustom,
     data && data.settings && data.settings.density
   ]);
 
@@ -790,7 +818,8 @@ function App() {
       h(MobileHeader, {
         title: pageTitle,
         onQuickAdd: () => setQuickAdd({ date: todayYmd() }),
-        onBack: MOBILE_SUBPAGES.includes(page) ? () => setPage('allbills') : null
+        onBack: MOBILE_SUBPAGES.includes(page) ? () => setPage('allbills') : null,
+        onHome: () => setPage('home')
       }),
       h('div', { className: 'main-content mobile' }, pageContent),
       h(MobileTabBar, {
@@ -815,7 +844,7 @@ function App() {
   return h('div', { className: 'app-shell' },
     h('div', { className: 'sidebar' },
       h('div', { className: 'sidebar-brand' },
-        h('img', { src: 'assets/icon.png', alt: '', className: 'sidebar-logo' }),
+        h('img', { src: 'assets/icon.svg', alt: '', className: 'sidebar-logo' }),
         h('h1', null, 'Finance Calendar')
       ),
       NAV_ITEMS.map((item) => {
@@ -859,17 +888,17 @@ function App() {
             ))
           ) : null
         );
-      }),
-      h('a', {
-        className: 'sidebar-link sidebar-download',
-        href: 'downloads/FinanceCalendar.exe',
-        download: 'FinanceCalendar.exe'
-      },
-        h(Icon, { name: 'download' }),
-        'Get desktop app'
-      )
+      })
     ),
+    // floating circular button, bottom-right, opens the desktop-vs-web pitch
+    h('button', {
+      className: 'desktop-fab',
+      onClick: () => setDesktopInfo(true),
+      'aria-label': 'About the desktop app',
+      title: 'Get the desktop app'
+    }, h(Icon, { name: 'download' })),
     h('div', { className: 'main-content' }, pageContent),
+    desktopInfo ? h(DesktopInfoModal, { onClose: () => setDesktopInfo(false) }) : null,
     quickAdd ? h(QuickAddModal, {
       data,
       setData: persist,
@@ -880,6 +909,44 @@ function App() {
       onDownloadBackup: downloadBackupNow,
       onDismiss: dismissBackupPrompt
     }) : null
+  );
+}
+
+/* ---------------- Desktop app info modal (web only) ---------------- */
+
+function DesktopInfoModal({ onClose }) {
+  const benefits = [
+    ['Saves to a real file', 'Your data lives in a file on your computer, not just this browser\u2019s storage - nothing to accidentally clear.'],
+    ['Trade mode', 'A full Trading tab with live prices, holdings, watchlist, and charts. Web-only for now, desktop-exclusive. (WIP)'],
+    ['Works offline', 'No internet needed once installed - it\u2019s a real app, not a website.'],
+    ['No backup nagging', 'Because it autosaves to disk, there\u2019s no weekly \u201cdownload a backup\u201d reminder.']
+  ];
+  return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+    h('div', { className: 'modal-content' },
+      h('div', { className: 'row-between' },
+        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Desktop app'),
+        h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')
+      ),
+      h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } },
+        'The Windows desktop version does everything the web version does, plus:'),
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+        benefits.map(([title, body], i) =>
+          h('div', { key: i, className: 'desktop-benefit' },
+            h('p', { style: { margin: 0, fontSize: '14px', fontWeight: 500 } }, title),
+            h('p', { style: { margin: '2px 0 0', fontSize: '12px', color: 'var(--text-secondary)' } }, body)
+          )
+        )
+      ),
+      h('div', { className: 'row-between', style: { marginTop: '4px' } },
+        h('button', { onClick: onClose }, 'Maybe later'),
+        h('a', {
+          className: 'primary',
+          href: 'downloads/FinanceCalendar.exe',
+          download: 'FinanceCalendar.exe',
+          style: { textDecoration: 'none' }
+        }, 'Download for Windows')
+      )
+    )
   );
 }
 
@@ -926,6 +993,7 @@ function getBlankData() {
     settings: {
       theme: 'system',
       accent: 'blue',
+      accentCustom: '#378ADD',
       currency: 'USD',
       firstDayOfWeek: 0,
       lateGraceDays: 0,
@@ -1055,12 +1123,14 @@ function MobileTabBar({ page, setPage, lateCount, needsAttentionCount }) {
 // Compact top bar shown on mobile in place of the sidebar brand block.
 // A three-column grid keeps the title optically centered no matter how wide
 // the left icon or right button are. Sub-pages get a back arrow.
-function MobileHeader({ title, onQuickAdd, onBack }) {
+function MobileHeader({ title, onQuickAdd, onBack, onHome }) {
   return h('header', { className: 'mobile-header' },
     h('div', { className: 'mobile-header-left' },
       onBack
         ? h('button', { className: 'mobile-header-back', onClick: onBack, 'aria-label': 'Back' }, '\u2039')
-        : h('img', { src: 'assets/icon.png', alt: '', className: 'mobile-header-logo' })
+        : h('button', { className: 'mobile-header-logo-btn', onClick: onHome, 'aria-label': 'Home' },
+            h('img', { src: 'assets/icon.svg', alt: '', className: 'mobile-header-logo' })
+          )
     ),
     h('h1', { className: 'mobile-header-title' }, title || 'Finance Calendar'),
     h('div', { className: 'mobile-header-right' },
@@ -1081,6 +1151,41 @@ const MOBILE_SUBPAGES = ['essentials', 'creditcards', 'subscriptions'];
 // Existing modals become bottom sheets on mobile purely through CSS
 // (see the .modal-overlay / .modal-content rules in the mobile block), so
 // there's no separate sheet component to keep in sync.
+
+// Adds swipe-down-to-dismiss to a sheet. Attach the returned handlers to the
+// grabber element; dragging it down past a threshold calls onClose.
+function useSheetDismiss(onClose) {
+  const startY = useRef(null);
+  const dragY = useRef(0);
+  const sheetRef = useRef(null);
+
+  function findSheet(el) {
+    while (el && !(el.classList && el.classList.contains('modal-content'))) el = el.parentElement;
+    return el;
+  }
+  function onTouchStart(e) {
+    startY.current = e.touches[0].clientY;
+    sheetRef.current = findSheet(e.currentTarget);
+  }
+  function onTouchMove(e) {
+    if (startY.current == null) return;
+    const dy = e.touches[0].clientY - startY.current;
+    dragY.current = Math.max(0, dy);
+    if (sheetRef.current) sheetRef.current.style.transform = `translateY(${dragY.current}px)`;
+  }
+  function onTouchEnd() {
+    if (sheetRef.current) {
+      sheetRef.current.style.transition = 'transform 0.18s ease';
+      sheetRef.current.style.transform = '';
+      const el = sheetRef.current;
+      setTimeout(() => { if (el) el.style.transition = ''; }, 200);
+    }
+    if (dragY.current > 90) onClose();
+    startY.current = null;
+    dragY.current = 0;
+  }
+  return { onTouchStart, onTouchMove, onTouchEnd, onClick: onClose };
+}
 /* ---------------- Shared Entry Form Modal (add/edit) ---------------- */
 
 // A reusable modal for adding or editing a bill-like entry (name, amount or
@@ -1115,9 +1220,16 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
 
   const useFreq = showFreq !== false;
 
-  return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
-    h('div', { className: 'modal-content' },
-      h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, title),
+  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+    h('div', { className: 'modal-content as-window' },
+      h('div', { className: 'modal-window-head' },
+        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, title),
+        h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
+          h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
+            h('path', { d: 'M6 6l12 12M18 6L6 18' })
+          )
+        )
+      ),
       h('div', null,
         h('label', null, 'Name'),
         h('input', { type: 'text', value: form.name, onChange: (e) => update('name', e.target.value), style: { width: '100%' } })
@@ -1728,9 +1840,16 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
   const showFreq = type === 'bill' || type === 'subscription';
   const dateLabel = type === 'oneTimeIncome' ? 'Date received' : (type === 'oneTimePayment' ? 'Date paid' : 'Due date');
 
-  return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
-    h('div', { className: 'modal-content' },
-      h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Add entry'),
+  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+    h('div', { className: 'modal-content as-window' },
+      h('div', { className: 'modal-window-head' },
+        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Add entry'),
+        h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
+          h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
+            h('path', { d: 'M6 6l12 12M18 6L6 18' })
+          )
+        )
+      ),
 
       h('div', null,
         h('label', null, 'Type'),
@@ -2137,13 +2256,12 @@ function HomePage({ data, setData, isMobile }) {
 
       // the wide card from the sketch: both net figures side by side
       h('div', { className: 'metric-card net-card' },
-        h('div', null,
+        h('div', { className: 'net-card-half' },
           h('p', { className: 'metric-label' }, 'Net so far'),
           h('p', { className: 'metric-value', style: { color: netSoFar >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
             `${netSoFar >= 0 ? '+' : ''}${fmtCurrency(netSoFar, currency)}`)
         ),
-        h('div', { className: 'net-card-divider' }),
-        h('div', null,
+        h('div', { className: 'net-card-half net-card-half-right' },
           h('p', { className: 'metric-label' }, 'Net projected'),
           h('p', { className: 'metric-value', style: { color: netProjected >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
             `${netProjected >= 0 ? '+' : ''}${fmtCurrency(netProjected, currency)}`)
@@ -2554,6 +2672,7 @@ function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setF
 /* ---------------- Price Override Modal ---------------- */
 
 function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
+  const sheet = useSheetDismiss(onClose);
   const existing = getOverride(data, occ.id, occ.occDate);
   const [price, setPrice] = useState(existing && existing.amount !== undefined ? String(existing.amount) : '');
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -2612,6 +2731,7 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
 
   return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
     h('div', { className: 'modal-content' },
+      h('div', { className: 'sheet-grabber', ...sheet, 'aria-label': 'Close' }),
       h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, occ.name),
       h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } }, dateLabel),
       h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } },
@@ -3089,6 +3209,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
 /* ---------------- Day Detail Modal ---------------- */
 
 function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAddEntry }) {
+  const sheet = useSheetDismiss(onClose);
   const [priceModal, setPriceModal] = useState(null);
   const [editing, setEditing] = useState(null); // { sourceList, form } or null
   const [confirmRemove, setConfirmRemove] = useState(null); // `${id}|${occDate}` or null
@@ -3137,6 +3258,7 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
 
   return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
     h('div', { className: 'modal-content day-modal' },
+      h('div', { className: 'sheet-grabber', ...sheet, 'aria-label': 'Close' }),
       h('div', { className: 'row-between' },
         h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, dateLabel),
         h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')
@@ -3700,6 +3822,12 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     creditCards: 'Credit cards',
     oneTimeEntries: 'One-time entries'
   };
+  // which editor page each group's edit arrow opens (mobile only)
+  const SUBPAGE_FOR_GROUP = {
+    majorBills: 'essentials',
+    subscriptions: 'subscriptions',
+    creditCards: 'creditcards'
+  };
   const grouped = useMemo(() => {
     const map = {};
     unified.forEach((e) => {
@@ -3708,19 +3836,53 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     return SOURCE_GROUP_ORDER.filter((key) => map[key] && map[key].length > 0).map((key) => [key, map[key]]);
   }, [unified]);
 
-  const categoryOptions = ['all', ...SOURCE_GROUP_ORDER.filter((key) => grouped.some(([k]) => k === key))];
   const visibleGroups = categoryFilter === 'all' ? grouped : grouped.filter(([key]) => key === categoryFilter);
+
+  // monthly total per group, for the little summary cards on the filter chips
+  const groupMonthlyTotals = useMemo(() => {
+    const totals = {};
+    grouped.forEach(([key, rows]) => {
+      totals[key] = rows.reduce((sum, e) => {
+        if (e.kind === 'income') return sum;
+        return sum + (entryAmount(e) || 0);
+      }, 0);
+    });
+    return totals;
+  }, [grouped]);
 
   return h('div', null,
     isMobile ? null : h('h2', null, 'All bills'),
 
-    // On mobile the sidebar's sub-links are gone, so the editors for each
-    // group are reached from here instead.
-    isMobile && setPage ? h('div', { className: 'subnav-chips' },
-      h('button', { className: 'subnav-chip', onClick: () => setPage('essentials') }, 'Essentials'),
-      h('button', { className: 'subnav-chip', onClick: () => setPage('creditcards') }, 'Credit cards'),
-      h('button', { className: 'subnav-chip', onClick: () => setPage('subscriptions') }, 'Subscriptions')
-    ) : null,
+    // Category filter chips, each showing that group's monthly total. Tapping
+    // filters the list below; the arrow on each opens that group's editor page
+    // (mobile only, since the sidebar sub-links aren't there).
+    h('div', { className: 'bill-filter-row' },
+      h('button', {
+        className: `bill-filter-chip${categoryFilter === 'all' ? ' active' : ''}`,
+        onClick: () => setCategoryFilter('all')
+      },
+        h('span', { className: 'bill-filter-label' }, 'All'),
+        h('span', { className: 'bill-filter-total' }, fmtCurrency(
+          Object.values(groupMonthlyTotals).reduce((a, b) => a + b, 0), currency))
+      ),
+      SOURCE_GROUP_ORDER.filter((key) => grouped.some(([k]) => k === key)).map((key) =>
+        h('button', {
+          key,
+          className: `bill-filter-chip${categoryFilter === key ? ' active' : ''}`,
+          onClick: () => setCategoryFilter(key)
+        },
+          h('span', { className: 'bill-filter-label' }, SOURCE_GROUP_LABELS[key]),
+          h('span', { className: 'bill-filter-total' }, fmtCurrency(groupMonthlyTotals[key] || 0, currency)),
+          (isMobile && setPage && SUBPAGE_FOR_GROUP[key])
+            ? h('span', {
+                className: 'bill-filter-edit',
+                onClick: (e) => { e.stopPropagation(); setPage(SUBPAGE_FOR_GROUP[key]); },
+                'aria-label': `Edit ${SOURCE_GROUP_LABELS[key]}`
+              }, '\u203a')
+            : null
+        )
+      )
+    ),
 
     h('div', { className: 'attention-section' },
       h('div', { className: 'row-between attention-header', onClick: () => setAttentionCollapsed(!attentionCollapsed) },
@@ -3752,15 +3914,6 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
               upcomingAttention.map((o) => h(AttentionRow, { key: `${o.id}-${o.occDate}`, o, data, setData, currency }))
             )
       ) : null
-    ),
-
-    h('div', { className: 'row-between' },
-      h('p', { className: 'section-title', style: { margin: 0 } }, 'Everything'),
-      h('select', {
-        value: categoryFilter,
-        onChange: (e) => setCategoryFilter(e.target.value),
-        style: { width: '200px' }
-      }, categoryOptions.map((key) => h('option', { key, value: key }, key === 'all' ? 'All' : SOURCE_GROUP_LABELS[key])))
     ),
 
     unified.length === 0
@@ -3994,8 +4147,43 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
             title: a.label,
             onClick: () => updateSetting('accent', a.id)
           })
+        ),
+        // custom: a color well that doubles as the swatch
+        h('label', {
+          className: `swatch swatch-custom${data.settings.accent === 'custom' ? ' selected' : ''}`,
+          title: 'Custom color',
+          style: data.settings.accent === 'custom' && data.settings.accentCustom
+            ? { background: data.settings.accentCustom }
+            : undefined
+        },
+          h('input', {
+            type: 'color',
+            value: data.settings.accentCustom || '#378ADD',
+            onChange: (e) => {
+              updateSetting('accentCustom', e.target.value);
+              updateSetting('accent', 'custom');
+            },
+            'aria-label': 'Custom accent color'
+          })
         )
       ),
+      data.settings.accent === 'custom'
+        ? h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '-4px', marginBottom: '12px' } },
+            h('span', { style: { fontSize: '13px', color: 'var(--text-secondary)' } }, 'Custom hex'),
+            h('input', {
+              type: 'text',
+              value: data.settings.accentCustom || '#378ADD',
+              onChange: (e) => {
+                let v = e.target.value.trim();
+                if (v && v[0] !== '#') v = '#' + v;
+                updateSetting('accentCustom', v);
+              },
+              placeholder: '#378ADD',
+              style: { width: '120px', fontFamily: 'monospace' },
+              maxLength: 7
+            })
+          )
+        : null,
       h('label', null, 'First day of week'),
       h('div', { className: 'segmented' },
         [{ id: 0, label: 'Sunday' }, { id: 1, label: 'Monday' }].map((o) =>
@@ -4208,17 +4396,6 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
           onChange: (e) => updateSetting('backupReminderEnabled', e.target.checked)
         }),
         h('label', { htmlFor: 'backup-reminder', style: { margin: 0 } }, 'Remind me to download a backup every Monday')
-      ),
-      // The sidebar isn't rendered on mobile, so the desktop download lives
-      // here too - it's the only place a phone user would find it.
-      h('div', { style: { marginTop: '12px', paddingTop: '12px', borderTop: '0.5px solid var(--border-tertiary)' } },
-        h('a', {
-          href: 'downloads/FinanceCalendar.exe',
-          download: 'FinanceCalendar.exe',
-          style: { fontSize: '13px', color: 'var(--accent-text)' }
-        }, 'Download the Windows desktop app'),
-        h('p', { style: { margin: '4px 0 0', fontSize: '12px', color: 'var(--text-tertiary)' } },
-          'The desktop app saves to a file on your computer instead of browser storage.')
       )
     ),
 
@@ -4249,7 +4426,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
     ),
 
     h('div', { className: 'card about-card', style: { marginTop: '12px' } },
-      h('img', { src: 'assets/icon.png', alt: '', className: 'about-logo' }),
+      h('img', { src: 'assets/icon.svg', alt: '', className: 'about-logo' }),
       h('div', null,
         h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Finance Calendar'),
         h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },

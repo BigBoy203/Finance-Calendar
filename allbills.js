@@ -62,6 +62,12 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     creditCards: 'Credit cards',
     oneTimeEntries: 'One-time entries'
   };
+  // which editor page each group's edit arrow opens (mobile only)
+  const SUBPAGE_FOR_GROUP = {
+    majorBills: 'essentials',
+    subscriptions: 'subscriptions',
+    creditCards: 'creditcards'
+  };
   const grouped = useMemo(() => {
     const map = {};
     unified.forEach((e) => {
@@ -70,19 +76,53 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     return SOURCE_GROUP_ORDER.filter((key) => map[key] && map[key].length > 0).map((key) => [key, map[key]]);
   }, [unified]);
 
-  const categoryOptions = ['all', ...SOURCE_GROUP_ORDER.filter((key) => grouped.some(([k]) => k === key))];
   const visibleGroups = categoryFilter === 'all' ? grouped : grouped.filter(([key]) => key === categoryFilter);
+
+  // monthly total per group, for the little summary cards on the filter chips
+  const groupMonthlyTotals = useMemo(() => {
+    const totals = {};
+    grouped.forEach(([key, rows]) => {
+      totals[key] = rows.reduce((sum, e) => {
+        if (e.kind === 'income') return sum;
+        return sum + (entryAmount(e) || 0);
+      }, 0);
+    });
+    return totals;
+  }, [grouped]);
 
   return h('div', null,
     isMobile ? null : h('h2', null, 'All bills'),
 
-    // On mobile the sidebar's sub-links are gone, so the editors for each
-    // group are reached from here instead.
-    isMobile && setPage ? h('div', { className: 'subnav-chips' },
-      h('button', { className: 'subnav-chip', onClick: () => setPage('essentials') }, 'Essentials'),
-      h('button', { className: 'subnav-chip', onClick: () => setPage('creditcards') }, 'Credit cards'),
-      h('button', { className: 'subnav-chip', onClick: () => setPage('subscriptions') }, 'Subscriptions')
-    ) : null,
+    // Category filter chips, each showing that group's monthly total. Tapping
+    // filters the list below; the arrow on each opens that group's editor page
+    // (mobile only, since the sidebar sub-links aren't there).
+    h('div', { className: 'bill-filter-row' },
+      h('button', {
+        className: `bill-filter-chip${categoryFilter === 'all' ? ' active' : ''}`,
+        onClick: () => setCategoryFilter('all')
+      },
+        h('span', { className: 'bill-filter-label' }, 'All'),
+        h('span', { className: 'bill-filter-total' }, fmtCurrency(
+          Object.values(groupMonthlyTotals).reduce((a, b) => a + b, 0), currency))
+      ),
+      SOURCE_GROUP_ORDER.filter((key) => grouped.some(([k]) => k === key)).map((key) =>
+        h('button', {
+          key,
+          className: `bill-filter-chip${categoryFilter === key ? ' active' : ''}`,
+          onClick: () => setCategoryFilter(key)
+        },
+          h('span', { className: 'bill-filter-label' }, SOURCE_GROUP_LABELS[key]),
+          h('span', { className: 'bill-filter-total' }, fmtCurrency(groupMonthlyTotals[key] || 0, currency)),
+          (isMobile && setPage && SUBPAGE_FOR_GROUP[key])
+            ? h('span', {
+                className: 'bill-filter-edit',
+                onClick: (e) => { e.stopPropagation(); setPage(SUBPAGE_FOR_GROUP[key]); },
+                'aria-label': `Edit ${SOURCE_GROUP_LABELS[key]}`
+              }, '\u203a')
+            : null
+        )
+      )
+    ),
 
     h('div', { className: 'attention-section' },
       h('div', { className: 'row-between attention-header', onClick: () => setAttentionCollapsed(!attentionCollapsed) },
@@ -114,15 +154,6 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
               upcomingAttention.map((o) => h(AttentionRow, { key: `${o.id}-${o.occDate}`, o, data, setData, currency }))
             )
       ) : null
-    ),
-
-    h('div', { className: 'row-between' },
-      h('p', { className: 'section-title', style: { margin: 0 } }, 'Everything'),
-      h('select', {
-        value: categoryFilter,
-        onChange: (e) => setCategoryFilter(e.target.value),
-        style: { width: '200px' }
-      }, categoryOptions.map((key) => h('option', { key, value: key }, key === 'all' ? 'All' : SOURCE_GROUP_LABELS[key])))
     ),
 
     unified.length === 0

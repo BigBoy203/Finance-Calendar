@@ -351,6 +351,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
 /* ---------------- Day Detail Modal ---------------- */
 
 function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAddEntry }) {
+  const sheet = useSheetDismiss(onClose);
   const [priceModal, setPriceModal] = useState(null);
   const [editing, setEditing] = useState(null); // { sourceList, form } or null
   const [confirmRemove, setConfirmRemove] = useState(null); // `${id}|${occDate}` or null
@@ -399,6 +400,7 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
 
   return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
     h('div', { className: 'modal-content day-modal' },
+      h('div', { className: 'sheet-grabber', ...sheet, 'aria-label': 'Close' }),
       h('div', { className: 'row-between' },
         h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, dateLabel),
         h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')

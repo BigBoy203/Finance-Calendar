@@ -324,13 +324,12 @@ function HomePage({ data, setData, isMobile }) {
 
       // the wide card from the sketch: both net figures side by side
       h('div', { className: 'metric-card net-card' },
-        h('div', null,
+        h('div', { className: 'net-card-half' },
           h('p', { className: 'metric-label' }, 'Net so far'),
           h('p', { className: 'metric-value', style: { color: netSoFar >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
             `${netSoFar >= 0 ? '+' : ''}${fmtCurrency(netSoFar, currency)}`)
         ),
-        h('div', { className: 'net-card-divider' }),
-        h('div', null,
+        h('div', { className: 'net-card-half net-card-half-right' },
           h('p', { className: 'metric-label' }, 'Net projected'),
           h('p', { className: 'metric-value', style: { color: netProjected >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
             `${netProjected >= 0 ? '+' : ''}${fmtCurrency(netProjected, currency)}`)
@@ -741,6 +740,7 @@ function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setF
 /* ---------------- Price Override Modal ---------------- */
 
 function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
+  const sheet = useSheetDismiss(onClose);
   const existing = getOverride(data, occ.id, occ.occDate);
   const [price, setPrice] = useState(existing && existing.amount !== undefined ? String(existing.amount) : '');
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -799,6 +799,7 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
 
   return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
     h('div', { className: 'modal-content' },
+      h('div', { className: 'sheet-grabber', ...sheet, 'aria-label': 'Close' }),
       h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, occ.name),
       h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } }, dateLabel),
       h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } },

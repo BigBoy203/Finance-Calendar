@@ -85,12 +85,14 @@ function MobileTabBar({ page, setPage, lateCount, needsAttentionCount }) {
 // Compact top bar shown on mobile in place of the sidebar brand block.
 // A three-column grid keeps the title optically centered no matter how wide
 // the left icon or right button are. Sub-pages get a back arrow.
-function MobileHeader({ title, onQuickAdd, onBack }) {
+function MobileHeader({ title, onQuickAdd, onBack, onHome }) {
   return h('header', { className: 'mobile-header' },
     h('div', { className: 'mobile-header-left' },
       onBack
         ? h('button', { className: 'mobile-header-back', onClick: onBack, 'aria-label': 'Back' }, '\u2039')
-        : h('img', { src: 'assets/icon.png', alt: '', className: 'mobile-header-logo' })
+        : h('button', { className: 'mobile-header-logo-btn', onClick: onHome, 'aria-label': 'Home' },
+            h('img', { src: 'assets/icon.svg', alt: '', className: 'mobile-header-logo' })
+          )
     ),
     h('h1', { className: 'mobile-header-title' }, title || 'Finance Calendar'),
     h('div', { className: 'mobile-header-right' },
@@ -111,3 +113,38 @@ const MOBILE_SUBPAGES = ['essentials', 'creditcards', 'subscriptions'];
 // Existing modals become bottom sheets on mobile purely through CSS
 // (see the .modal-overlay / .modal-content rules in the mobile block), so
 // there's no separate sheet component to keep in sync.
+
+// Adds swipe-down-to-dismiss to a sheet. Attach the returned handlers to the
+// grabber element; dragging it down past a threshold calls onClose.
+function useSheetDismiss(onClose) {
+  const startY = useRef(null);
+  const dragY = useRef(0);
+  const sheetRef = useRef(null);
+
+  function findSheet(el) {
+    while (el && !(el.classList && el.classList.contains('modal-content'))) el = el.parentElement;
+    return el;
+  }
+  function onTouchStart(e) {
+    startY.current = e.touches[0].clientY;
+    sheetRef.current = findSheet(e.currentTarget);
+  }
+  function onTouchMove(e) {
+    if (startY.current == null) return;
+    const dy = e.touches[0].clientY - startY.current;
+    dragY.current = Math.max(0, dy);
+    if (sheetRef.current) sheetRef.current.style.transform = `translateY(${dragY.current}px)`;
+  }
+  function onTouchEnd() {
+    if (sheetRef.current) {
+      sheetRef.current.style.transition = 'transform 0.18s ease';
+      sheetRef.current.style.transform = '';
+      const el = sheetRef.current;
+      setTimeout(() => { if (el) el.style.transition = ''; }, 200);
+    }
+    if (dragY.current > 90) onClose();
+    startY.current = null;
+    dragY.current = 0;
+  }
+  return { onTouchStart, onTouchMove, onTouchEnd, onClick: onClose };
+}

@@ -32,9 +32,16 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
 
   const useFreq = showFreq !== false;
 
-  return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
-    h('div', { className: 'modal-content' },
-      h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, title),
+  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+    h('div', { className: 'modal-content as-window' },
+      h('div', { className: 'modal-window-head' },
+        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, title),
+        h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
+          h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
+            h('path', { d: 'M6 6l12 12M18 6L6 18' })
+          )
+        )
+      ),
       h('div', null,
         h('label', null, 'Name'),
         h('input', { type: 'text', value: form.name, onChange: (e) => update('name', e.target.value), style: { width: '100%' } })
