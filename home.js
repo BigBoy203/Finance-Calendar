@@ -800,7 +800,10 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
   return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
     h('div', { className: 'modal-content' },
       h('div', { className: 'sheet-grabber', ...sheet, 'aria-label': 'Close' }),
-      h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, occ.name),
+      h('div', { className: 'row-between' },
+        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, occ.name),
+        h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')
+      ),
       h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } }, dateLabel),
       h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } },
         `Usual amount: ${templateLabel}`),

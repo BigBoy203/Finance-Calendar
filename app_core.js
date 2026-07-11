@@ -1,8 +1,8 @@
-const { useState, useEffect, useMemo, useCallback } = React;
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
 // Shown under the Settings heading. Bump this when the web build changes.
-const WEB_VERSION = '0.8';
+const WEB_VERSION = '0.9';
 
 /* ---------------- Helpers ---------------- */
 
@@ -819,7 +819,11 @@ function App() {
         title: pageTitle,
         onQuickAdd: () => setQuickAdd({ date: todayYmd() }),
         onBack: MOBILE_SUBPAGES.includes(page) ? () => setPage('allbills') : null,
-        onHome: () => setPage('home')
+        onHome: () => {
+          setPage('home');
+          const pane = document.querySelector('.main-content.mobile');
+          if (pane) pane.scrollTo({ top: 0, behavior: 'smooth' });
+        }
       }),
       h('div', { className: 'main-content mobile' }, pageContent),
       h(MobileTabBar, {
@@ -888,15 +892,17 @@ function App() {
             ))
           ) : null
         );
-      })
+      }),
+      // desktop-app button pinned to the bottom of the sidebar, right-aligned
+      h('div', { className: 'sidebar-foot' },
+        h('button', {
+          className: 'desktop-fab',
+          onClick: () => setDesktopInfo(true),
+          'aria-label': 'About the desktop app',
+          title: 'Get the desktop app'
+        }, h(Icon, { name: 'download' }))
+      )
     ),
-    // floating circular button, bottom-right, opens the desktop-vs-web pitch
-    h('button', {
-      className: 'desktop-fab',
-      onClick: () => setDesktopInfo(true),
-      'aria-label': 'About the desktop app',
-      title: 'Get the desktop app'
-    }, h(Icon, { name: 'download' })),
     h('div', { className: 'main-content' }, pageContent),
     desktopInfo ? h(DesktopInfoModal, { onClose: () => setDesktopInfo(false) }) : null,
     quickAdd ? h(QuickAddModal, {

@@ -90,41 +90,7 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     return totals;
   }, [grouped]);
 
-  return h('div', null,
-    isMobile ? null : h('h2', null, 'All bills'),
-
-    // Category filter chips, each showing that group's monthly total. Tapping
-    // filters the list below; the arrow on each opens that group's editor page
-    // (mobile only, since the sidebar sub-links aren't there).
-    h('div', { className: 'bill-filter-row' },
-      h('button', {
-        className: `bill-filter-chip${categoryFilter === 'all' ? ' active' : ''}`,
-        onClick: () => setCategoryFilter('all')
-      },
-        h('span', { className: 'bill-filter-label' }, 'All'),
-        h('span', { className: 'bill-filter-total' }, fmtCurrency(
-          Object.values(groupMonthlyTotals).reduce((a, b) => a + b, 0), currency))
-      ),
-      SOURCE_GROUP_ORDER.filter((key) => grouped.some(([k]) => k === key)).map((key) =>
-        h('button', {
-          key,
-          className: `bill-filter-chip${categoryFilter === key ? ' active' : ''}`,
-          onClick: () => setCategoryFilter(key)
-        },
-          h('span', { className: 'bill-filter-label' }, SOURCE_GROUP_LABELS[key]),
-          h('span', { className: 'bill-filter-total' }, fmtCurrency(groupMonthlyTotals[key] || 0, currency)),
-          (isMobile && setPage && SUBPAGE_FOR_GROUP[key])
-            ? h('span', {
-                className: 'bill-filter-edit',
-                onClick: (e) => { e.stopPropagation(); setPage(SUBPAGE_FOR_GROUP[key]); },
-                'aria-label': `Edit ${SOURCE_GROUP_LABELS[key]}`
-              }, '\u203a')
-            : null
-        )
-      )
-    ),
-
-    h('div', { className: 'attention-section' },
+  const attentionBlock = h('div', { className: 'attention-section' },
       h('div', { className: 'row-between attention-header', onClick: () => setAttentionCollapsed(!attentionCollapsed) },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
           h(Icon, { name: 'alert' }),
@@ -154,7 +120,43 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
               upcomingAttention.map((o) => h(AttentionRow, { key: `${o.id}-${o.occDate}`, o, data, setData, currency }))
             )
       ) : null
-    ),
+    );
+
+  const filterBlock = h('div', { className: 'bill-filter-row' },
+      h('button', {
+        className: `bill-filter-chip${categoryFilter === 'all' ? ' active' : ''}`,
+        onClick: () => setCategoryFilter('all')
+      },
+        h('span', { className: 'bill-filter-label' }, 'All'),
+        h('span', { className: 'bill-filter-total' }, fmtCurrency(
+          Object.values(groupMonthlyTotals).reduce((a, b) => a + b, 0), currency))
+      ),
+      SOURCE_GROUP_ORDER.filter((key) => grouped.some(([k]) => k === key)).map((key) =>
+        h('button', {
+          key,
+          className: `bill-filter-chip${categoryFilter === key ? ' active' : ''}`,
+          onClick: () => setCategoryFilter(key)
+        },
+          h('span', { className: 'bill-filter-label' }, SOURCE_GROUP_LABELS[key]),
+          h('span', { className: 'bill-filter-total' }, fmtCurrency(groupMonthlyTotals[key] || 0, currency)),
+          (isMobile && setPage && SUBPAGE_FOR_GROUP[key])
+            ? h('span', {
+                className: 'bill-filter-edit',
+                onClick: (e) => { e.stopPropagation(); setPage(SUBPAGE_FOR_GROUP[key]); },
+                'aria-label': `Edit ${SOURCE_GROUP_LABELS[key]}`
+              }, '\u203a')
+            : null
+        )
+      )
+    );
+
+  return h('div', null,
+    isMobile ? null : h('h2', null, 'All bills'),
+
+    // Needs attention sits at the very top so anything requiring a real price
+    // is the first thing seen; the category filter chips follow.
+    attentionBlock,
+    filterBlock,
 
     unified.length === 0
       ? h('p', { className: 'empty-state' }, 'Nothing added yet.')
