@@ -141,6 +141,13 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
     setSelectedDay(null);
   }
+  function goToday() {
+    const n = new Date();
+    setCursor(new Date(n.getFullYear(), n.getMonth(), 1));
+    setSelectedDay(null);
+  }
+  const _now = new Date();
+  const isCurrentMonth = cursor.getFullYear() === _now.getFullYear() && cursor.getMonth() === _now.getMonth();
 
   const cells = [];
   let d = new Date(gridStart);
@@ -201,12 +208,38 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return segments;
   }, [weeks, rangeSpans, data]);
 
+  // swipe left/right on the grid to change months (mobile)
+  const swipeStart = useRef(null);
+  function onTouchStart(e) {
+    if (e.touches.length !== 1) { swipeStart.current = null; return; }
+    swipeStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }
+  function onTouchEnd(e) {
+    if (!swipeStart.current) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - swipeStart.current.x;
+    const dy = t.clientY - swipeStart.current.y;
+    swipeStart.current = null;
+    // horizontal, decisive, and not mostly-vertical scroll
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+      changeMonth(dx < 0 ? 1 : -1);
+    }
+  }
+
   return h('div', { className: 'calendar-page' },
     h('div', { className: 'calendar-header' },
       h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
-      h('h2', { style: { margin: 0 } }, `${MONTH_NAMES[cursor.getMonth()]} ${cursor.getFullYear()}`),
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
+        h('h2', { style: { margin: 0 } }, `${MONTH_NAMES[cursor.getMonth()]} ${cursor.getFullYear()}`),
+        !isCurrentMonth ? h('button', { className: 'today-btn', onClick: goToday }, 'Today') : null
+      ),
       h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
     ),
+    h('div', {
+      className: 'calendar-swipe-area',
+      onTouchStart: isMobile ? onTouchStart : undefined,
+      onTouchEnd: isMobile ? onTouchEnd : undefined
+    },
     h('div', { className: 'calendar-week-row dow-row' },
       showWeekNumbers ? h('div', { className: 'week-number-gutter' }) : null,
       h('div', { className: 'calendar-grid dow-grid' },
@@ -336,6 +369,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
           })
         )
       )
+    )
     ),
 
     selectedDay ? h(DayDetailModal, {

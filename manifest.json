@@ -1,0 +1,31 @@
+{
+  "name": "Finance Calendar",
+  "short_name": "Finance",
+  "description": "A private, local-first calendar for tracking bills, income, and cash flow.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1f2a37",
+  "theme_color": "#1f2a37",
+  "icons": [
+    {
+      "src": "assets/icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

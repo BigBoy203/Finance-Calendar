@@ -1813,6 +1813,11 @@ label {
   }
 
   /* ---------- home ---------- */
+  .mobile-home {
+    max-width: 480px;
+    margin: 0 auto;
+    width: 100%;
+  }
   .metric-grid-2x2 {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -2067,3 +2072,72 @@ label {
   padding: 2px 4px;
 }
 .bill-filter-chip.active .bill-filter-edit { color: rgba(255,255,255,0.85); }
+
+/* late payment rows: a clear full red border that never sub-pixel-clips */
+.late-list-item {
+  border: 1px solid var(--late-red);
+}
+@media (max-width: 768px) {
+  /* ensure the last card's bottom border clears the scroll edge */
+  .late-list-item:last-child {
+    margin-bottom: 2px;
+  }
+}
+
+/* custom accent picker */
+.custom-accent-picker {
+  margin: 4px 0 14px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+}
+.accent-preview {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: inline-block;
+  border: 0.5px solid var(--border-secondary);
+  flex-shrink: 0;
+}
+.accent-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 14px;
+  border-radius: 7px;
+  outline: none;
+  border: 0.5px solid var(--border-tertiary);
+}
+.accent-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid rgba(0,0,0,0.35);
+  cursor: pointer;
+}
+.accent-slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid rgba(0,0,0,0.35);
+  cursor: pointer;
+}
+
+/* Today jump button in the calendar header */
+.today-btn {
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 14px;
+  border: 0.5px solid var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent-text);
+}
+.calendar-swipe-area {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}

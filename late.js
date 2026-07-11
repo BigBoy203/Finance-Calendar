@@ -56,7 +56,7 @@ function LatePage({ data, setData, lateBills }) {
           lateBills.map((o) => {
             const d = parseYmd(o.occDate);
             const dateLabel = formatDate(d, data.settings, { year: true });
-            return h('div', { key: `${o.id}-${o.occDate}`, className: 'list-item', style: { borderColor: 'var(--late-red)' } },
+            return h('div', { key: `${o.id}-${o.occDate}`, className: 'list-item late-list-item' },
               h('div', null,
                 h('p', { className: 'list-item-name' }, o.name),
                 h('p', { className: 'list-item-sub' }, `Was due ${dateLabel} - ${occAmountLabel(o, currency)}${o.category ? ' - ' + o.category : ''}`),

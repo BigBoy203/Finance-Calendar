@@ -15,6 +15,85 @@ const SETTINGS_TABS = [
   { id: 'advanced', label: 'Advanced' }
 ];
 
+// --- custom accent picker ------------------------------------------------
+// Native <input type="color"> gives a cramped picker on iOS, so we roll our
+// own from range sliders (which behave identically everywhere) plus a hex
+// field. Hue/saturation/lightness cover the full spectrum with real control.
+
+function hexToHsl(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
+  if (!m) return { h: 210, s: 70, l: 54 };
+  const int = parseInt(m[1], 16);
+  let r = ((int >> 16) & 255) / 255, g = ((int >> 8) & 255) / 255, b = (int & 255) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0; const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+  }
+  return { h: Math.round(h), s: Math.round(s * 100), l: Math.round(l * 100) };
+}
+
+function hslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) [r, g, b] = [c, x, 0];
+  else if (h < 120) [r, g, b] = [x, c, 0];
+  else if (h < 180) [r, g, b] = [0, c, x];
+  else if (h < 240) [r, g, b] = [0, x, c];
+  else if (h < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  const to = (v) => Math.round((v + m) * 255).toString(16).padStart(2, '0');
+  return `#${to(r)}${to(g)}${to(b)}`;
+}
+
+function CustomAccentPicker({ hex, onChange }) {
+  const { h: hue, s: sat, l: lig } = hexToHsl(hex);
+  const setHsl = (nh, ns, nl) => onChange(hslToHex(nh, ns, nl));
+
+  const row = (label, value, min, max, onInput, trackBg) =>
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' } },
+      h('span', { style: { fontSize: '12px', color: 'var(--text-secondary)', width: '68px', flexShrink: 0 } }, label),
+      h('input', {
+        type: 'range', min, max, value,
+        onChange: (e) => onInput(Number(e.target.value)),
+        className: 'accent-slider',
+        style: { flex: 1, background: trackBg }
+      })
+    );
+
+  return h('div', { className: 'custom-accent-picker' },
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' } },
+      h('span', { className: 'accent-preview', style: { background: hex } }),
+      h('input', {
+        type: 'text',
+        value: hex,
+        onChange: (e) => {
+          let v = e.target.value.trim();
+          if (v && v[0] !== '#') v = '#' + v;
+          onChange(v);
+        },
+        placeholder: '#378ADD',
+        style: { width: '120px', fontFamily: 'monospace' },
+        maxLength: 7
+      })
+    ),
+    row('Hue', hue, 0, 360, (v) => setHsl(v, sat, lig),
+      'linear-gradient(to right,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)'),
+    row('Saturation', sat, 0, 100, (v) => setHsl(hue, v, lig),
+      `linear-gradient(to right,${hslToHex(hue, 0, lig)},${hslToHex(hue, 100, lig)})`),
+    row('Lightness', lig, 0, 100, (v) => setHsl(hue, sat, v),
+      `linear-gradient(to right,#000,${hslToHex(hue, sat, 50)},#fff)`)
+  );
+}
+
 function SettingsPage({ data, setData, onRestart }) {
   const [tab, setTab] = useState('general');
   const [confirming, setConfirming] = useState(false);
@@ -143,41 +222,21 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
             onClick: () => updateSetting('accent', a.id)
           })
         ),
-        // custom: a color well that doubles as the swatch
+        // custom: a color well that opens the slider picker below
         h('label', {
           className: `swatch swatch-custom${data.settings.accent === 'custom' ? ' selected' : ''}`,
           title: 'Custom color',
+          onClick: () => updateSetting('accent', 'custom'),
           style: data.settings.accent === 'custom' && data.settings.accentCustom
             ? { background: data.settings.accentCustom }
             : undefined
-        },
-          h('input', {
-            type: 'color',
-            value: data.settings.accentCustom || '#378ADD',
-            onChange: (e) => {
-              updateSetting('accentCustom', e.target.value);
-              updateSetting('accent', 'custom');
-            },
-            'aria-label': 'Custom accent color'
-          })
-        )
+        })
       ),
       data.settings.accent === 'custom'
-        ? h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '-4px', marginBottom: '12px' } },
-            h('span', { style: { fontSize: '13px', color: 'var(--text-secondary)' } }, 'Custom hex'),
-            h('input', {
-              type: 'text',
-              value: data.settings.accentCustom || '#378ADD',
-              onChange: (e) => {
-                let v = e.target.value.trim();
-                if (v && v[0] !== '#') v = '#' + v;
-                updateSetting('accentCustom', v);
-              },
-              placeholder: '#378ADD',
-              style: { width: '120px', fontFamily: 'monospace' },
-              maxLength: 7
-            })
-          )
+        ? h(CustomAccentPicker, {
+            hex: data.settings.accentCustom || '#378ADD',
+            onChange: (hex) => updateSetting('accentCustom', hex)
+          })
         : null,
       h('label', null, 'First day of week'),
       h('div', { className: 'segmented' },

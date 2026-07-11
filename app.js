@@ -2,7 +2,7 @@ const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
 // Shown under the Settings heading. Bump this when the web build changes.
-const WEB_VERSION = '0.9';
+const WEB_VERSION = '1.0';
 
 /* ---------------- Helpers ---------------- */
 
@@ -2229,7 +2229,7 @@ function HomePage({ data, setData, isMobile }) {
   const netProjected = totalProjectedIncome - totalBills;
 
   if (isMobile) {
-    return h('div', null,
+    return h('div', { className: 'mobile-home' },
       h('div', { className: 'home-month-header' },
         h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
         h('h1', { className: 'home-month-title' }, monthLabel),
@@ -2843,7 +2843,7 @@ function LatePage({ data, setData, lateBills }) {
           lateBills.map((o) => {
             const d = parseYmd(o.occDate);
             const dateLabel = formatDate(d, data.settings, { year: true });
-            return h('div', { key: `${o.id}-${o.occDate}`, className: 'list-item', style: { borderColor: 'var(--late-red)' } },
+            return h('div', { key: `${o.id}-${o.occDate}`, className: 'list-item late-list-item' },
               h('div', null,
                 h('p', { className: 'list-item-name' }, o.name),
                 h('p', { className: 'list-item-sub' }, `Was due ${dateLabel} - ${occAmountLabel(o, currency)}${o.category ? ' - ' + o.category : ''}`),
@@ -3008,6 +3008,13 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
     setSelectedDay(null);
   }
+  function goToday() {
+    const n = new Date();
+    setCursor(new Date(n.getFullYear(), n.getMonth(), 1));
+    setSelectedDay(null);
+  }
+  const _now = new Date();
+  const isCurrentMonth = cursor.getFullYear() === _now.getFullYear() && cursor.getMonth() === _now.getMonth();
 
   const cells = [];
   let d = new Date(gridStart);
@@ -3068,12 +3075,38 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return segments;
   }, [weeks, rangeSpans, data]);
 
+  // swipe left/right on the grid to change months (mobile)
+  const swipeStart = useRef(null);
+  function onTouchStart(e) {
+    if (e.touches.length !== 1) { swipeStart.current = null; return; }
+    swipeStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }
+  function onTouchEnd(e) {
+    if (!swipeStart.current) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - swipeStart.current.x;
+    const dy = t.clientY - swipeStart.current.y;
+    swipeStart.current = null;
+    // horizontal, decisive, and not mostly-vertical scroll
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+      changeMonth(dx < 0 ? 1 : -1);
+    }
+  }
+
   return h('div', { className: 'calendar-page' },
     h('div', { className: 'calendar-header' },
       h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
-      h('h2', { style: { margin: 0 } }, `${MONTH_NAMES[cursor.getMonth()]} ${cursor.getFullYear()}`),
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
+        h('h2', { style: { margin: 0 } }, `${MONTH_NAMES[cursor.getMonth()]} ${cursor.getFullYear()}`),
+        !isCurrentMonth ? h('button', { className: 'today-btn', onClick: goToday }, 'Today') : null
+      ),
       h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
     ),
+    h('div', {
+      className: 'calendar-swipe-area',
+      onTouchStart: isMobile ? onTouchStart : undefined,
+      onTouchEnd: isMobile ? onTouchEnd : undefined
+    },
     h('div', { className: 'calendar-week-row dow-row' },
       showWeekNumbers ? h('div', { className: 'week-number-gutter' }) : null,
       h('div', { className: 'calendar-grid dow-grid' },
@@ -3203,6 +3236,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
           })
         )
       )
+    )
     ),
 
     selectedDay ? h(DayDetailModal, {
@@ -3813,18 +3847,14 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     data.majorBills.forEach((e) => rows.push({ ...e, sourceList: 'majorBills', sourceLabel: 'Essential', kind: 'bill' }));
     data.subscriptions.forEach((e) => rows.push({ ...e, sourceList: 'subscriptions', sourceLabel: 'Subscription', kind: 'bill' }));
     getCreditCardPaymentEntries(data).forEach((e) => rows.push({ ...e, sourceList: 'creditCards', sourceLabel: 'Credit card', kind: 'bill' }));
-    data.oneTimeEntries.forEach((e) => rows.push({
-      ...e,
-      sourceList: 'oneTimeEntries',
-      sourceLabel: e.oneTimeKind === 'income' ? 'One-time income' : 'One-time payment',
-      kind: e.oneTimeKind === 'income' ? 'income' : 'bill'
-    }));
+    // One-time entries are intentionally excluded from the Bills page - they
+    // live on Home / the calendar, not in this recurring-bill overview.
 
     return rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   }, [data]);
 
   // group rows by source type (Essentials / Subscriptions / Credit cards / One-time)
-  const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards', 'oneTimeEntries'];
+  const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards'];
   const SOURCE_GROUP_LABELS = {
     majorBills: 'Essentials',
     subscriptions: 'Subscriptions',
@@ -4031,6 +4061,85 @@ const SETTINGS_TABS = [
   { id: 'advanced', label: 'Advanced' }
 ];
 
+// --- custom accent picker ------------------------------------------------
+// Native <input type="color"> gives a cramped picker on iOS, so we roll our
+// own from range sliders (which behave identically everywhere) plus a hex
+// field. Hue/saturation/lightness cover the full spectrum with real control.
+
+function hexToHsl(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
+  if (!m) return { h: 210, s: 70, l: 54 };
+  const int = parseInt(m[1], 16);
+  let r = ((int >> 16) & 255) / 255, g = ((int >> 8) & 255) / 255, b = (int & 255) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0; const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+  }
+  return { h: Math.round(h), s: Math.round(s * 100), l: Math.round(l * 100) };
+}
+
+function hslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) [r, g, b] = [c, x, 0];
+  else if (h < 120) [r, g, b] = [x, c, 0];
+  else if (h < 180) [r, g, b] = [0, c, x];
+  else if (h < 240) [r, g, b] = [0, x, c];
+  else if (h < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  const to = (v) => Math.round((v + m) * 255).toString(16).padStart(2, '0');
+  return `#${to(r)}${to(g)}${to(b)}`;
+}
+
+function CustomAccentPicker({ hex, onChange }) {
+  const { h: hue, s: sat, l: lig } = hexToHsl(hex);
+  const setHsl = (nh, ns, nl) => onChange(hslToHex(nh, ns, nl));
+
+  const row = (label, value, min, max, onInput, trackBg) =>
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' } },
+      h('span', { style: { fontSize: '12px', color: 'var(--text-secondary)', width: '68px', flexShrink: 0 } }, label),
+      h('input', {
+        type: 'range', min, max, value,
+        onChange: (e) => onInput(Number(e.target.value)),
+        className: 'accent-slider',
+        style: { flex: 1, background: trackBg }
+      })
+    );
+
+  return h('div', { className: 'custom-accent-picker' },
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' } },
+      h('span', { className: 'accent-preview', style: { background: hex } }),
+      h('input', {
+        type: 'text',
+        value: hex,
+        onChange: (e) => {
+          let v = e.target.value.trim();
+          if (v && v[0] !== '#') v = '#' + v;
+          onChange(v);
+        },
+        placeholder: '#378ADD',
+        style: { width: '120px', fontFamily: 'monospace' },
+        maxLength: 7
+      })
+    ),
+    row('Hue', hue, 0, 360, (v) => setHsl(v, sat, lig),
+      'linear-gradient(to right,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)'),
+    row('Saturation', sat, 0, 100, (v) => setHsl(hue, v, lig),
+      `linear-gradient(to right,${hslToHex(hue, 0, lig)},${hslToHex(hue, 100, lig)})`),
+    row('Lightness', lig, 0, 100, (v) => setHsl(hue, sat, v),
+      `linear-gradient(to right,#000,${hslToHex(hue, sat, 50)},#fff)`)
+  );
+}
+
 function SettingsPage({ data, setData, onRestart }) {
   const [tab, setTab] = useState('general');
   const [confirming, setConfirming] = useState(false);
@@ -4159,41 +4268,21 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
             onClick: () => updateSetting('accent', a.id)
           })
         ),
-        // custom: a color well that doubles as the swatch
+        // custom: a color well that opens the slider picker below
         h('label', {
           className: `swatch swatch-custom${data.settings.accent === 'custom' ? ' selected' : ''}`,
           title: 'Custom color',
+          onClick: () => updateSetting('accent', 'custom'),
           style: data.settings.accent === 'custom' && data.settings.accentCustom
             ? { background: data.settings.accentCustom }
             : undefined
-        },
-          h('input', {
-            type: 'color',
-            value: data.settings.accentCustom || '#378ADD',
-            onChange: (e) => {
-              updateSetting('accentCustom', e.target.value);
-              updateSetting('accent', 'custom');
-            },
-            'aria-label': 'Custom accent color'
-          })
-        )
+        })
       ),
       data.settings.accent === 'custom'
-        ? h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '-4px', marginBottom: '12px' } },
-            h('span', { style: { fontSize: '13px', color: 'var(--text-secondary)' } }, 'Custom hex'),
-            h('input', {
-              type: 'text',
-              value: data.settings.accentCustom || '#378ADD',
-              onChange: (e) => {
-                let v = e.target.value.trim();
-                if (v && v[0] !== '#') v = '#' + v;
-                updateSetting('accentCustom', v);
-              },
-              placeholder: '#378ADD',
-              style: { width: '120px', fontFamily: 'monospace' },
-              maxLength: 7
-            })
-          )
+        ? h(CustomAccentPicker, {
+            hex: data.settings.accentCustom || '#378ADD',
+            onChange: (hex) => updateSetting('accentCustom', hex)
+          })
         : null,
       h('label', null, 'First day of week'),
       h('div', { className: 'segmented' },

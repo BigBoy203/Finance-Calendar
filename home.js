@@ -291,7 +291,7 @@ function HomePage({ data, setData, isMobile }) {
   const netProjected = totalProjectedIncome - totalBills;
 
   if (isMobile) {
-    return h('div', null,
+    return h('div', { className: 'mobile-home' },
       h('div', { className: 'home-month-header' },
         h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
         h('h1', { className: 'home-month-title' }, monthLabel),
