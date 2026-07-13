@@ -1,4 +1,3 @@
-/* ---------------- Credit Cards Page ---------------- */
 
 function blankCreditCard() {
   return {
@@ -210,8 +209,6 @@ function CreditCardsPage({ data, setData }) {
   );
 }
 
-/* ---------------- Projection Modal ---------------- */
-
 function ProjectionModal({ card, data, currency, onClose }) {
   const points = useMemo(() => getCardProjection(card, data, 12), [card, data]);
   const late = isCardPaymentLate(card, data);
@@ -219,7 +216,6 @@ function ProjectionModal({ card, data, currency, onClose }) {
   const maxBalance = Math.max(...points.map((p) => p.balance), 1);
   const willPayOff = points[points.length - 1].balance <= 0 && points.length <= 12;
 
-  // line chart geometry
   const W = 360, H = 160, PAD = 28;
   const stepX = (W - PAD * 2) / Math.max(1, points.length - 1);
   const scaleY = (v) => H - PAD - (v / maxBalance) * (H - PAD * 2);
@@ -228,7 +224,6 @@ function ProjectionModal({ card, data, currency, onClose }) {
     .map((p, i) => `${i === 0 ? 'M' : 'L'} ${PAD + i * stepX} ${scaleY(p.balance)}`)
     .join(' ');
 
-  // bar chart: skip month 0 (it has no interest/principal split)
   const barPoints = points.slice(1);
   const maxBar = Math.max(...barPoints.map((p) => p.interest + p.principalPaid), 1);
   const barW = (W - PAD * 2) / Math.max(1, barPoints.length) - 4;
@@ -247,7 +242,7 @@ function ProjectionModal({ card, data, currency, onClose }) {
 
       h('p', { className: 'list-item-sub', style: { margin: 0 } }, 'Projected balance over the next 12 months'),
       h('svg', { viewBox: `0 0 ${W} ${H}`, className: 'projection-chart' },
-        // baseline
+
         h('line', { x1: PAD, y1: H - PAD, x2: W - PAD, y2: H - PAD, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
         h('path', { d: linePath, fill: 'none', stroke: 'var(--accent)', strokeWidth: 2 }),
         points.map((p, i) =>

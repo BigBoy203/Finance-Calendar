@@ -1,11 +1,10 @@
-/* ---------------- All Bills Page ---------------- */
 
 function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddEntry }) {
   const currency = data.settings.currency;
-  // Nothing to act on means nothing worth taking up space - start collapsed.
+
   const [attentionCollapsed, setAttentionCollapsed] = useState(() => needsAttention.length === 0);
   const [showInfo, setShowInfo] = useState(false);
-  const [editing, setEditing] = useState(null); // { sourceList, entry } or null
+  const [editing, setEditing] = useState(null);
   const [categoryFilter, setCategoryFilter] = useState('all');
 
   const lateAttention = needsAttention.filter((o) => o.late);
@@ -21,12 +20,12 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     } else if (o.sourceList === 'oneTimeEntries') {
       next = { ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== o.id) };
     }
-    // credit card payments are managed from the Credit Cards page
+
     if (next) setData(logActivity(next, `Deleted "${o.name}"`));
   }
 
   function openEdit(e) {
-    if (e.sourceList === 'creditCards') return; // managed on Credit cards page
+    if (e.sourceList === 'creditCards') return;
     setEditing({ sourceList: e.sourceList, form: { ...entryToFormShape(e), _isNew: false } });
   }
 
@@ -37,15 +36,13 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     setEditing(null);
   }
 
-  // build the unified list - one row per template entry (not per occurrence)
   const unified = useMemo(() => {
     const rows = [];
 
     data.majorBills.forEach((e) => rows.push({ ...e, sourceList: 'majorBills', sourceLabel: 'Essential', kind: 'bill' }));
     data.subscriptions.forEach((e) => rows.push({ ...e, sourceList: 'subscriptions', sourceLabel: 'Subscription', kind: 'bill' }));
     getCreditCardPaymentEntries(data).forEach((e) => rows.push({ ...e, sourceList: 'creditCards', sourceLabel: 'Credit card', kind: 'bill' }));
-    // Day to day = one-time payments (groceries, gas, coffee...). Income-type
-    // one-time entries stay out; this page is expenses.
+
     (data.oneTimeEntries || []).forEach((e) => {
       if (e.oneTimeKind === 'income') return;
       rows.push({ ...e, sourceList: 'oneTimeEntries', sourceLabel: 'Day to day', kind: 'bill' });
@@ -54,7 +51,6 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     return rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   }, [data]);
 
-  // group rows by source type
   const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards', 'oneTimeEntries'];
   const SOURCE_GROUP_LABELS = {
     majorBills: 'Essentials',
@@ -62,7 +58,7 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     creditCards: 'Credit cards',
     oneTimeEntries: 'Day to day'
   };
-  // which editor page each group's edit arrow opens (mobile only)
+
   const SUBPAGE_FOR_GROUP = {
     majorBills: 'essentials',
     subscriptions: 'subscriptions',
@@ -78,7 +74,6 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
 
   const visibleGroups = categoryFilter === 'all' ? grouped : grouped.filter(([key]) => key === categoryFilter);
 
-  // monthly total per group, for the little summary cards on the filter chips
   const groupMonthlyTotals = useMemo(() => {
     const totals = {};
     grouped.forEach(([key, rows]) => {
@@ -153,8 +148,6 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
   return h('div', null,
     isMobile ? null : h('h2', null, 'All bills'),
 
-    // Needs attention sits at the very top so anything requiring a real price
-    // is the first thing seen; the category filter chips follow.
     attentionBlock,
     filterBlock,
 
@@ -207,7 +200,6 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
   );
 }
 
-/* A single row in the "needs attention" list with an inline price input */
 function AttentionRow({ o, data, setData, currency }) {
   const [price, setPrice] = useState('');
 

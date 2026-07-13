@@ -1,8 +1,7 @@
-/* ---------------- Essentials Page ---------------- */
 
 function BillsPage({ data, setData, onAddEntry }) {
   const currency = data.settings.currency;
-  const [editing, setEditing] = useState(null); // form-shape object while a bill is being added/edited, else null
+  const [editing, setEditing] = useState(null);
 
   function openAdd() {
     setEditing({ ...blankEntry({ freq: 'monthly', category: 'Other' }), _isNew: true });

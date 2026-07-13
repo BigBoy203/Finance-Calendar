@@ -1,4 +1,3 @@
-/* ---------------- Onboarding Wizard ---------------- */
 
 const MAJOR_CATEGORIES = ['Rent/mortgage', 'Power', 'Water', 'Gas', 'Insurance', 'Car payment', 'Phone', 'Internet', 'Credit card', 'Other'];
 const MINOR_CATEGORIES = ['Streaming', 'Gaming', 'Cloud storage', 'Memberships', 'Other'];
@@ -52,7 +51,7 @@ function presetEntry(preset, defaults) {
 }
 
 function OnboardingWizard({ data, isMobile, onComplete }) {
-  const [phase, setPhase] = useState('import'); // 'import' | 'setup'
+  const [phase, setPhase] = useState('import');
   const [step, setStep] = useState(0);
   const [importError, setImportError] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -193,8 +192,6 @@ function OnboardingWizard({ data, isMobile, onComplete }) {
     }
   }
 
-  // Step 0 of onboarding: ask if the user has an existing backup to import.
-  // No warning needed here since there is no saved data yet at this point.
   if (phase === 'import') {
     return h('div', { className: 'wizard-shell' },
       h('div', { className: 'wizard-scroll' },
@@ -239,7 +236,6 @@ function OnboardingWizard({ data, isMobile, onComplete }) {
   );
 }
 
-/* A single entry as a card row, with optional amount/date range toggles */
 function EntryList({ rows, categories, namePlaceholder, onChange, onAdd, onRemove, addLabel, dateLabel }) {
   return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
     rows.map((row) =>
@@ -319,8 +315,6 @@ function EntryCard({ row, categories, namePlaceholder, dateLabel, onChange, onRe
   );
 }
 
-/* ---------------- Post-setup prompt ---------------- */
-
 function PostSetupPrompt({ onAdd, onSkip }) {
   return h('div', { className: 'wizard-shell' },
     h('div', { className: 'wizard-scroll', style: { display: 'flex', flexDirection: 'column', justifyContent: 'center' } },
@@ -336,8 +330,6 @@ function PostSetupPrompt({ onAdd, onSkip }) {
     )
   );
 }
-
-/* ---------------- Credit card entry list (setup step) ---------------- */
 
 function CreditCardEntryList({ cards, onChange, onAdd, onRemove }) {
   return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
@@ -408,4 +400,3 @@ function CreditCardEntryList({ cards, onChange, onAdd, onRemove }) {
     h('button', { onClick: onAdd }, '+ Add a credit card')
   );
 }
-

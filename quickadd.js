@@ -1,4 +1,3 @@
-/* ---------------- Quick Add Modal ---------------- */
 
 const ENTRY_TYPES = [
   { id: 'oneTimePayment', label: 'One-time payment', icon: '\u{1F4B3}', desc: 'A single expense' },
@@ -20,7 +19,7 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
   }
 
   useEffect(() => {
-    // adjust sensible defaults when type changes
+
     if (type === 'oneTimePayment') {
       setForm((f) => ({ ...f, freq: 'none', category: ONE_TIME_PAYMENT_CATEGORIES.includes(f.category) ? f.category : 'Other' }));
     } else if (type === 'oneTimeIncome') {

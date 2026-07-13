@@ -1,18 +1,4 @@
-/* ---------------- Shared Entry Form Modal (add/edit) ---------------- */
 
-// A reusable modal for adding or editing a bill-like entry (name, amount or
-// amount range, date or date range, frequency, category). Used by Essentials,
-// Subscriptions, and one-time entries on All Bills.
-//
-// Props:
-//   title       - modal heading, e.g. "Edit bill"
-//   entry       - the entry object to edit (already in form-shape: strings for numbers)
-//   categories  - array of category options, or null to hide the category field
-//   dateLabel   - label for the date field when not using a date range
-//   showFreq    - whether to show the frequency selector (default true)
-//   submitLabel - label for the save/add button
-//   onSubmit    - called with the cleaned entry (numbers parsed) on save
-//   onClose     - called to dismiss the modal
 function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitLabel, onSubmit, onClose }) {
   const [form, setForm] = useState(() => ({ ...entry }));
 
@@ -119,8 +105,6 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
   );
 }
 
-// Converts a stored entry (numbers) into form-shape (strings) for editing,
-// filling in any fields that might be missing from older saved data.
 function entryToFormShape(entry) {
   return {
     id: entry.id,
@@ -139,8 +123,6 @@ function entryToFormShape(entry) {
   };
 }
 
-// Returns { title, categories, dateLabel, showFreq } for the edit modal based
-// on which list the entry being edited lives in.
 function getEditModalConfig(sourceList, entry) {
   if (sourceList === 'majorBills') {
     return { title: 'Edit bill', categories: MAJOR_CATEGORIES, dateLabel: 'Due date', showFreq: true };
@@ -151,7 +133,7 @@ function getEditModalConfig(sourceList, entry) {
   if (sourceList === 'incomeSources') {
     return { title: 'Edit income source', categories: null, dateLabel: 'Next pay date', showFreq: true };
   }
-  // one-time entries - no frequency, but category is editable
+
   const isIncome = entry && entry.oneTimeKind === 'income';
   return {
     title: isIncome ? 'Edit one-time income' : 'Edit one-time payment',
@@ -161,9 +143,6 @@ function getEditModalConfig(sourceList, entry) {
   };
 }
 
-// Applies an edited entry back to the right list in `data` and returns the
-// updated data object. `sourceList` of 'creditCards' is a no-op (managed on
-// the Credit cards page).
 function applyEditedEntry(data, sourceList, cleaned) {
   const { _isNew, ...entry } = cleaned;
   if (sourceList === 'majorBills') {
@@ -183,4 +162,3 @@ function applyEditedEntry(data, sourceList, cleaned) {
   }
   return data;
 }
-

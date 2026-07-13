@@ -1,4 +1,3 @@
-/* ---------------- Subscriptions Page ---------------- */
 
 function SubscriptionsPage({ data, setData, onAddEntry }) {
   const currency = data.settings.currency;

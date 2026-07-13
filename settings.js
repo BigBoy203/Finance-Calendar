@@ -1,4 +1,3 @@
-/* ---------------- Settings Page ---------------- */
 
 const SECTION_COLOR_LABELS = [
   { key: 'majorBills', label: 'Essentials' },
@@ -14,11 +13,6 @@ const SETTINGS_TABS = [
   { id: 'colors', label: 'Calendar colors' },
   { id: 'advanced', label: 'Advanced' }
 ];
-
-// --- custom accent picker ------------------------------------------------
-// Native <input type="color"> gives a cramped picker on iOS, so we roll our
-// own from range sliders (which behave identically everywhere) plus a hex
-// field. Hue/saturation/lightness cover the full spectrum with real control.
 
 function hexToHsl(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
@@ -164,11 +158,9 @@ function SettingsPage({ data, setData, onRestart }) {
   );
 }
 
-/* ---------------- General tab ---------------- */
-
 function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEditIncome, onDeleteIncome }) {
   return h('div', null,
-    // Income sources
+
     h('div', { className: 'card' },
       h('div', { className: 'row-between' },
         h('p', { style: { margin: 0, fontWeight: 500 } }, 'Income sources'),
@@ -198,7 +190,6 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
           )
     ),
 
-    // Appearance
     h('div', { className: 'card', style: { marginTop: '12px' } },
       h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Appearance'),
       h('label', null, 'Theme'),
@@ -222,7 +213,7 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
             onClick: () => updateSetting('accent', a.id)
           })
         ),
-        // custom: a color well that opens the slider picker below
+
         h('label', {
           className: `swatch swatch-custom${data.settings.accent === 'custom' ? ' selected' : ''}`,
           title: 'Custom color',
@@ -250,7 +241,6 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
       )
     ),
 
-    // Currency & late bills
     h('div', { className: 'card', style: { marginTop: '12px' } },
       h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Currency & bills'),
       h('label', null, 'Currency'),
@@ -299,8 +289,6 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
   );
 }
 
-/* ---------------- Calendar colors tab ---------------- */
-
 function ColorsTab({ data, updateSectionColor }) {
   return h('div', null,
     h('div', { className: 'card' },
@@ -329,10 +317,6 @@ function ColorsTab({ data, updateSectionColor }) {
   );
 }
 
-/* ---------------- Advanced tab ---------------- */
-
-/* ---------------- Sync card ---------------- */
-
 function relativeTime(ms) {
   if (!ms) return 'never';
   const diff = Date.now() - ms;
@@ -348,8 +332,8 @@ function relativeTime(ms) {
 function SyncCard({ data, setData, embedded }) {
   const [linked, setLinked] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState(null); // { ok, text }
-  const [conflict, setConflict] = useState(null); // { incoming } when file is older
+  const [msg, setMsg] = useState(null);
+  const [conflict, setConflict] = useState(null);
   const supportsFile = Sync.supportsFileSystem;
 
   useEffect(() => {
@@ -360,11 +344,9 @@ function SyncCard({ data, setData, embedded }) {
 
   function flash(ok, text) { setMsg({ ok, text }); }
 
-  // Save / push current data out to the sync file (or share sheet on phone).
   async function handleSync() {
     setBusy(true); setMsg(null);
-    // one stamp shared by both the written file and the local copy, so a
-    // later Load doesn't see a millisecond drift and cry "conflict"
+
     const stamp = Date.now();
     const stamped = { ...data, lastModified: stamp };
     const res = await Sync.writeOut(stamped);
@@ -376,14 +358,12 @@ function SyncCard({ data, setData, embedded }) {
         ? 'Synced to your file.'
         : 'Exported \u2014 choose where to save it (Files, LocalSend, etc.).');
     } else if (res.canceled) {
-      // no-op
+
     } else {
       flash(false, res.error || 'Could not sync.');
     }
   }
 
-  // Pull data in. Desktop reads the linked file; phone opens a picker. Newest
-  // wins: if the incoming copy is older, we ask before replacing.
   async function handleLoad() {
     setBusy(true); setMsg(null);
     const res = (supportsFile && linked) ? await Sync.readLinked() : await Sync.readFromPicker();
@@ -399,7 +379,7 @@ function SyncCard({ data, setData, embedded }) {
     const incomingTime = incoming.lastModified || 0;
     const localTime = data.lastModified || 0;
     if (incomingTime < localTime) {
-      // older file - don't clobber newer local data without asking
+
       setConflict({ incoming });
       return;
     }
@@ -408,7 +388,7 @@ function SyncCard({ data, setData, embedded }) {
   }
 
   function applyIncoming(incoming) {
-    // keep the file's own stamp so local and file stay in agreement
+
     setData(incoming, { lastModified: incoming.lastModified || Date.now() });
     setConflict(null);
   }
@@ -420,10 +400,10 @@ function SyncCard({ data, setData, embedded }) {
     if (res.ok) {
       setLinked(true);
       if (existing) {
-        // linking an existing file - offer to load from it immediately
+
         await handleLoad();
       } else {
-        // brand new file - write current data into it so it's not empty
+
         await handleSync();
       }
     } else if (!res.canceled) {
@@ -450,7 +430,6 @@ function SyncCard({ data, setData, embedded }) {
         'Last change: ', h('strong', null, relativeTime(lastModified)))
     ),
 
-    // desktop: link controls
     supportsFile ? h('div', { style: { marginTop: '10px' } },
       linked
         ? h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
@@ -486,8 +465,6 @@ function SyncCard({ data, setData, embedded }) {
   );
 }
 
-// A modal wrapper around the sync controls, opened from the sidebar button
-// (desktop) and the header sync icon (mobile) so sync isn't buried in Settings.
 function SyncModal({ data, setData, onClose }) {
   return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
     h('div', { className: 'modal-content as-window' },
@@ -505,7 +482,7 @@ function SyncModal({ data, setData, onClose }) {
 }
 
 function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setConfirming }) {
-  const [importWarning, setImportWarning] = useState(false); // show warning modal before import
+  const [importWarning, setImportWarning] = useState(false);
   const [importError, setImportError] = useState(null);
   const [importSuccess, setImportSuccess] = useState(false);
   const [exportError, setExportError] = useState(null);

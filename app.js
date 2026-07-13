@@ -1,10 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-// Shown under the Settings heading. Bump this when the web build changes.
-const WEB_VERSION = '1.9';
-
-/* ---------------- Helpers ---------------- */
+const WEB_VERSION = '2.0';
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -35,8 +32,6 @@ function todayYmd() {
   return ymd(new Date());
 }
 
-// Formats a Date according to the user's dateFormat setting.
-// 'short' -> "Jun 15", 'long' -> "June 15, 2026", 'iso' -> "2026-06-15"
 function formatDate(date, settings, opts) {
   const fmt = (settings && settings.dateFormat) || 'short';
   const includeWeekday = opts && opts.weekday;
@@ -51,7 +46,7 @@ function formatDate(date, settings, opts) {
       month: 'long', day: 'numeric', year: 'numeric'
     });
   }
-  // short
+
   return date.toLocaleDateString('en-US', {
     weekday: includeWeekday ? 'long' : undefined,
     month: 'short', day: 'numeric',
@@ -59,8 +54,6 @@ function formatDate(date, settings, opts) {
   });
 }
 
-// Formats an ISO timestamp for the activity log - relative for anything
-// from today, otherwise a short date + time.
 function formatLogTimestamp(isoString) {
   const d = new Date(isoString);
   const now = new Date();
@@ -79,17 +72,10 @@ const FREQ_LABELS = {
   yearly: 'yearly'
 };
 
-// Days in a given month. monthIndex is 0-based (0 = January).
 function daysInMonth(year, monthIndex) {
   return new Date(year, monthIndex + 1, 0).getDate();
 }
 
-// Computes the Nth occurrence after `anchor` for a given frequency, always
-// measuring from the original anchor date rather than chaining from a
-// previous (possibly clamped) occurrence. This matters for monthly/yearly
-// frequencies: a bill due on the 30th should land on Feb 28/29 in February,
-// then go right back to the 30th in March - not stay stuck at 28 forever,
-// which is what would happen if each step clamped relative to the last one.
 function addIntervals(anchor, freq, count) {
   const d = new Date(anchor);
   if (freq === 'weekly') {
@@ -111,16 +97,13 @@ function addIntervals(anchor, freq, count) {
   if (freq === 'yearly') {
     const anchorDay = anchor.getDate();
     const targetYear = anchor.getFullYear() + count;
-    // handles Feb 29 on a leap year rolling into a non-leap year
+
     const clampedDay = Math.min(anchorDay, daysInMonth(targetYear, anchor.getMonth()));
     return new Date(targetYear, anchor.getMonth(), clampedDay);
   }
   return d;
 }
 
-// Returns the display amount for an entry (midpoint if range, otherwise fixed amount)
-// Converts a #rrggbb hex to an rgba() string with the given alpha, used to
-// derive a soft accent-background tint from a custom accent color.
 function hexWithAlpha(hex, alpha) {
   const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
   if (!m) return hex;
@@ -147,7 +130,6 @@ function entryAmountLabel(entry, currency) {
   return fmtCurrency(entry.amount, currency);
 }
 
-// Expand a single entry into occurrences within [rangeStart, rangeEnd] (inclusive, Date objects)
 function expandEntry(entry, rangeStart, rangeEnd) {
   const occurrences = [];
   if (!entry.date) return occurrences;
@@ -156,18 +138,13 @@ function expandEntry(entry, rangeStart, rangeEnd) {
   const freq = entry.freq || 'none';
 
   if (freq === 'none') {
-    // If a date range is used, treat every day in the range as relevant only for display,
-    // but for bill/income purposes we anchor on the start date.
+
     if (cur >= rangeStart && cur <= end) {
       occurrences.push({ ...entry, occDate: ymd(cur) });
     }
     return occurrences;
   }
 
-  // Always measure occurrences as "N intervals from the original anchor
-  // date" rather than repeatedly stepping from the previous occurrence -
-  // this prevents short-month clamping (e.g. the 30th landing on Feb 28)
-  // from permanently drifting the day-of-month in later months.
   const anchor = parseYmd(entry.date);
   let count = 0;
   let safety = 0;
@@ -187,14 +164,12 @@ function expandEntry(entry, rangeStart, rangeEnd) {
   return occurrences;
 }
 
-// Expand a list of entries (with a "kind" tag) within a date range.
-// Applies per-occurrence price overrides from data.overrides when present.
 function expandAll(entries, kind, rangeStart, rangeEnd, data) {
   const all = [];
   const removed = (data && data.removedOccurrences) || {};
   entries.forEach((entry) => {
     expandEntry(entry, rangeStart, rangeEnd).forEach((occ) => {
-      if (removed[`${entry.id}|${occ.occDate}`]) return; // this single date was removed; rule untouched
+      if (removed[`${entry.id}|${occ.occDate}`]) return;
       const override = data ? getOverride(data, entry.id, occ.occDate) : null;
       const hasOverride = hasAmountOverride(override);
       all.push({
@@ -209,15 +184,11 @@ function expandAll(entries, kind, rangeStart, rangeEnd, data) {
   return all;
 }
 
-// Removes a single occurrence of a recurring entry without touching the
-// recurring rule, so past and future occurrences are unaffected.
 function removeOccurrence(data, entryId, occDate) {
   const key = `${entryId}|${occDate}`;
   return { ...data, removedOccurrences: { ...(data.removedOccurrences || {}), [key]: true } };
 }
 
-// Appends a message to the activity log shown in Settings. Newest first,
-// capped at 50 entries.
 function logActivity(data, message) {
   const entry = { id: uid(), timestamp: new Date().toISOString(), message };
   return { ...data, activityLog: [entry, ...(data.activityLog || [])].slice(0, 50) };
@@ -227,20 +198,15 @@ function getOverride(data, entryId, occDate) {
   return data.overrides ? data.overrides[`${entryId}|${occDate}`] : null;
 }
 
-// True when an override actually sets a price (vs. being absent or blank).
 function hasAmountOverride(override) {
   return !!(override && override.amount !== undefined && override.amount !== null);
 }
 
-// Effective amount for one occurrence of an entry on a given date: the
-// per-occurrence override if one is set, otherwise the entry's own amount.
 function resolvedAmount(data, entry, occDate) {
   const override = getOverride(data, entry.id, occDate);
   return hasAmountOverride(override) ? Number(override.amount) || 0 : entryAmount(entry);
 }
 
-// Turns a one-time entry into the occurrence shape the UI works with
-// (occDate, resolved amount, range/override flags, bill-or-income kind).
 function oneTimeOccurrence(data, entry) {
   const override = getOverride(data, entry.id, entry.date);
   const hasOverride = hasAmountOverride(override);
@@ -254,8 +220,6 @@ function oneTimeOccurrence(data, entry) {
   };
 }
 
-// Display label for an occurrence: shows the actual price if an override is set,
-// otherwise the range or fixed amount from the template.
 function occAmountLabel(occ, currency) {
   if (occ.hasOverride) {
     return fmtCurrency(occ.amount, currency);
@@ -280,9 +244,6 @@ function isForcedLate(data, entryId, occDate) {
   return !!(data.forcedLate && data.forcedLate[`${entryId}|${occDate}`]);
 }
 
-// Toggles a manual "mark as late" override for a specific occurrence and
-// returns the updated data object. Clears any dismissal so the override
-// actually shows up.
 function toggleForcedLate(data, entryId, occDate) {
   const key = `${entryId}|${occDate}`;
   const nextForced = { ...(data.forcedLate || {}) };
@@ -293,16 +254,11 @@ function toggleForcedLate(data, entryId, occDate) {
   } else {
     nextForced[key] = true;
     delete nextDismissed[key];
-    delete nextPaid[key]; // can't be marked late and paid at the same time
+    delete nextPaid[key];
   }
   return { ...data, forcedLate: nextForced, dismissedLate: nextDismissed, paidHistory: nextPaid };
 }
 
-// Toggles paid status for an occurrence, clearing any manual "late" flag at
-// the same time since a bill can't be both paid and marked late. If the
-// occurrence is a credit card's recurring payment (synthetic "cc-{cardId}"
-// id) and auto-deduct is on, the card's amountPaid moves by the payment
-// amount in the same direction.
 function togglePaidStatus(data, entryId, occDate) {
   const key = `${entryId}|${occDate}`;
   const nextPaid = { ...data.paidHistory };
@@ -322,7 +278,7 @@ function togglePaidStatus(data, entryId, occDate) {
     const card = (data.creditCards || []).find((c) => c.id === cardId);
     if (card && card.hasRecurringPayment) {
       const amount = Number(card.paymentAmount) || 0;
-      const delta = wasPaid ? -amount : amount; // unmarking paid reverses the deduction
+      const delta = wasPaid ? -amount : amount;
       nextCreditCards = data.creditCards.map((c) =>
         c.id === cardId ? { ...c, amountPaid: Math.max(0, (Number(c.amountPaid) || 0) + delta) } : c
       );
@@ -337,8 +293,6 @@ function daysBetween(a, b) {
   return Math.floor(ms / (1000 * 60 * 60 * 24));
 }
 
-// A fresh install should start with zero past-due items. Late/needs-attention
-// lookups never look further back than the date setup was completed.
 function getEarliestTrackedDate(data) {
   if (data.settings && data.settings.installDate) {
     return parseYmd(data.settings.installDate);
@@ -346,8 +300,6 @@ function getEarliestTrackedDate(data) {
   return new Date(2000, 0, 1);
 }
 
-// Picks black or white text for a given background color using a simple
-// luminance check, so chips stay readable whatever color is chosen.
 function readableTextOn(hex) {
   let c = (hex || '#888888').replace('#', '');
   if (c.length === 3) c = c.split('').map((ch) => ch + ch).join('');
@@ -359,8 +311,6 @@ function readableTextOn(hex) {
   return luminance > 0.62 ? '#1a1a1a' : '#ffffff';
 }
 
-// Returns the effective base color for an occurrence: its own override if
-// set, otherwise the section default for its sourceList/kind.
 function getEntryColor(o, data) {
   if (o.color) return o.color;
   const sc = (data.settings && data.settings.sectionColors) || {};
@@ -374,9 +324,6 @@ function getEntryColor(o, data) {
   return o.kind === 'income' ? sc.incomeSources : sc.majorBills;
 }
 
-// Returns the current outstanding balance for a card, applying simple
-// monthly interest (APR / 12) prorated daily since balanceDate, on the
-// principal as of balanceDate (totalDebt - amountPaid at that time).
 function getCurrentCardBalance(card) {
   const principal = Math.max(0, (Number(card.totalDebt) || 0) - (Number(card.amountPaid) || 0));
   if (!card.useApr || !card.apr || principal <= 0) return principal;
@@ -393,19 +340,12 @@ function getCurrentCardBalance(card) {
   return principal * (1 + dailyRate * days);
 }
 
-// Checks whether this card's recurring payment is currently late (overdue,
-// unpaid, not dismissed) using the same logic as the late payments page.
 function isCardPaymentLate(card, data) {
   if (!card.hasRecurringPayment || !card.paymentAmount || !card.paymentDate) return false;
   const lateBills = getLateBills(data);
   return lateBills.some((o) => o.id === `cc-${card.id}`);
 }
 
-// Builds a month-by-month projection of a card's balance for `months` months
-// ahead. Each entry: { month index (0 = current), label, balance, interest, principalPaid }.
-// If the card has a recurring payment, it's subtracted each period (split
-// into interest vs principal) unless that period's payment would be the
-// currently-late one, which is skipped.
 function getCardProjection(card, data, months) {
   months = months || 12;
   const apr = card.useApr && card.apr ? Number(card.apr) || 0 : 0;
@@ -420,8 +360,7 @@ function getCardProjection(card, data, months) {
   for (let m = 1; m <= months; m++) {
     const interest = balance * monthlyRate;
     let principalPaid = 0;
-    // skip the very first period's payment if it's currently late - that
-    // payment hasn't actually reduced the balance yet
+
     const skipThisPayment = late && m === 1;
     if (hasPayment && !skipThisPayment && balance > 0) {
       const towardPrincipal = Math.max(0, payment - interest);
@@ -435,9 +374,6 @@ function getCardProjection(card, data, months) {
   return points;
 }
 
-// Builds a lookup of id -> which list/category an entry's template lives in
-// (majorBills, subscriptions, creditCards, incomeSources). Used to resolve
-// an occurrence's color and category consistently across pages.
 function buildSourceListLookup(data) {
   const map = {};
   data.majorBills.forEach((e) => { map[e.id] = 'majorBills'; });
@@ -451,8 +387,6 @@ function getAllBillLikeEntries(data) {
   return [...data.majorBills, ...data.subscriptions, ...getCreditCardPaymentEntries(data)];
 }
 
-// Converts credit cards with a recurring required payment into bill-like
-// entries so they show up on the calendar, home, and late payments pages.
 function getCreditCardPaymentEntries(data) {
   if (!data.creditCards) return [];
   return data.creditCards
@@ -472,8 +406,6 @@ function getCreditCardPaymentEntries(data) {
     }));
 }
 
-// Returns overdue, unpaid, non-dismissed occurrences (recurring + one-time payments),
-// sorted oldest-first, each annotated with daysLate.
 function getLateBills(data) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -500,14 +432,11 @@ function getLateBills(data) {
 
   const autoLateKeys = new Set(autoLate.map((o) => `${o.id}|${o.occDate}`));
 
-  // manually forced-late occurrences - can be any date, including the future,
-  // and aren't limited by the install-date cutoff since the user is
-  // deliberately flagging them
   const forcedKeys = Object.keys(data.forcedLate || {}).filter((k) => data.forcedLate[k]);
   const entryById = buildEntryLookup(data);
   const forced = [];
   forcedKeys.forEach((key) => {
-    if (autoLateKeys.has(key)) return; // already counted, avoid duplicates
+    if (autoLateKeys.has(key)) return;
     const sep = key.lastIndexOf('|');
     const entryId = key.slice(0, sep);
     const occDate = key.slice(sep + 1);
@@ -530,9 +459,6 @@ function getLateBills(data) {
   return [...autoLate, ...forced].sort((a, b) => b.daysLate - a.daysLate);
 }
 
-// Builds a lookup of id -> entry across every bill-like source (essentials,
-// subscriptions, credit card payments, one-time entries), used to resolve a
-// manually forced-late key back to its full entry details.
 function buildEntryLookup(data) {
   const map = {};
   data.majorBills.forEach((e) => { map[e.id] = e; });
@@ -542,9 +468,6 @@ function buildEntryLookup(data) {
   return map;
 }
 
-// Returns occurrences that use an amount range (and not a date range), have
-// no price override yet, and are due within the lookahead window or are
-// already overdue+unpaid. Each is annotated with `late` (bool) and `daysLate`.
 function getNeedsAttention(data) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -554,7 +477,6 @@ function getNeedsAttention(data) {
 
   const rangeStart = getEarliestTrackedDate(data);
 
-  // bills and income each get their own "days before due" lookahead window
   const lookaheadEnd = (days) => {
     const end = new Date(today);
     end.setDate(end.getDate() + days);
@@ -585,9 +507,6 @@ function getNeedsAttention(data) {
     o.isRange && !o.useDateRange && !o.hasOverride
   );
 
-  // also pull in any manually forced-late range-priced occurrences that fall
-  // outside the normal lookback/lookahead window (e.g. flagged far in the past).
-  // this only applies to bills - income is never forced-late.
   const candidateKeys = new Set(candidates.map((o) => `${o.id}|${o.occDate}`));
   const entryById = buildEntryLookup(data);
   const extraForced = Object.keys(data.forcedLate || {})
@@ -606,8 +525,7 @@ function getNeedsAttention(data) {
   return [...candidates, ...extraForced]
     .map((o) => {
       const occDate = parseYmd(o.occDate);
-      // income is never flagged late - it just keeps showing as "needs
-      // attention" (not yet priced) until a real amount is entered
+
       const late = o.kind === 'income' ? false : (isForcedLate(data, o.id, o.occDate) || (occDate < cutoff && !isPaid(data, o.id, o.occDate)));
       return { ...o, late, daysLate: late ? daysBetween(occDate, today) : 0 };
     })
@@ -628,8 +546,6 @@ const ACCENTS = [
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY'];
 
-/* ---------------- Top-level App ---------------- */
-
 function App() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -637,9 +553,8 @@ function App() {
   const [page, setPage] = useState('home');
   const [billsExpanded, setBillsExpanded] = useState(true);
   const [postSetupPrompt, setPostSetupPrompt] = useState(false);
-  const [quickAdd, setQuickAdd] = useState(null); // { date } or null
-  // Whenever the active page changes, reset scroll to the top - otherwise a
-  // page opens already scrolled down to wherever the last one was left.
+  const [quickAdd, setQuickAdd] = useState(null);
+
   useEffect(() => {
     const panes = document.querySelectorAll('.main-content, .main-content.mobile');
     panes.forEach((p) => { if (p) p.scrollTop = 0; });
@@ -649,7 +564,7 @@ function App() {
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
   const [desktopInfo, setDesktopInfo] = useState(false);
   const [syncModal, setSyncModal] = useState(false);
-  const [syncBanner, setSyncBanner] = useState(null); // { incoming } newer file found on open
+  const [syncBanner, setSyncBanner] = useState(null);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -662,10 +577,7 @@ function App() {
       .then((d) => {
         setData(d);
         setLoading(false);
-        // desktop: if a sync file is linked and already readable, see whether
-        // it holds newer data than what we just loaded. Only offer (never
-        // auto-replace), and only when permission is already granted so we
-        // don't need a user gesture at startup.
+
         if (window.Sync && Sync.supportsFileSystem) {
           Sync.hasLinkedFile().then((linked) => {
             if (!linked) return;
@@ -684,13 +596,10 @@ function App() {
       });
   }, []);
 
-  // Monday backup reminder - browser data can be cleared, so nudge the user
-  // to download a backup. Shows at most once per day, only on Mondays, only
-  // if they haven't turned it off in Settings.
   useEffect(() => {
     if (!data || !data.onboardingComplete) return;
     if (data.settings.backupReminderEnabled === false) return;
-    if (new Date().getDay() !== 1) return; // 1 = Monday
+    if (new Date().getDay() !== 1) return;
     if (data.settings.lastBackupReminderShown === todayYmd()) return;
     setShowBackupPrompt(true);
   }, [data && data.onboardingComplete, data && data.settings && data.settings.backupReminderEnabled]);
@@ -705,7 +614,6 @@ function App() {
     dismissBackupPrompt();
   }
 
-  // apply theme/accent/density to <html>
   useEffect(() => {
     if (!data) return;
     document.documentElement.setAttribute('data-theme', data.settings.theme || 'system');
@@ -713,8 +621,7 @@ function App() {
 
     const root = document.documentElement;
     if (data.settings.accent === 'custom' && data.settings.accentCustom) {
-      // a custom hex drives all three accent variables; the bg/text tints are
-      // derived from it so contrast stays reasonable in both themes
+
       root.setAttribute('data-accent', 'custom');
       const hex = data.settings.accentCustom;
       root.style.setProperty('--accent', hex);
@@ -722,7 +629,7 @@ function App() {
       root.style.setProperty('--accent-text', hex);
     } else {
       root.setAttribute('data-accent', data.settings.accent || 'blue');
-      // clear any inline custom values so the preset stylesheet wins
+
       root.style.removeProperty('--accent');
       root.style.removeProperty('--accent-bg');
       root.style.removeProperty('--accent-text');
@@ -734,7 +641,6 @@ function App() {
     data && data.settings && data.settings.density
   ]);
 
-  // inject user-provided custom CSS
   useEffect(() => {
     if (!data) return;
     let styleEl = document.getElementById('custom-css');
@@ -747,10 +653,7 @@ function App() {
   }, [data && data.settings && data.settings.customCss]);
 
   const persist = useCallback((next, opts) => {
-    // Every persisted change advances lastModified - that's the clock the
-    // sync layer's "newest wins" rule compares. A caller can pass an explicit
-    // stamp (opts.lastModified) so a written file and the local copy match
-    // exactly instead of drifting by a few milliseconds.
+
     const stamped = { ...next, lastModified: (opts && opts.lastModified) || Date.now() };
     setData(stamped);
     window.api.saveData(stamped);
@@ -786,9 +689,7 @@ function App() {
           onboardingComplete: true,
           settings: { ...next.settings, installDate: next.settings.installDate || todayYmd() }
         });
-        // Importing a backup means the user already has their data - don't
-        // then ask them to add "prior entries". Only the fresh-setup path
-        // opens that prompt.
+
         if (!(opts && opts.imported)) {
           setPostSetupPrompt(true);
         }
@@ -840,7 +741,6 @@ function App() {
     pageContent = h(SettingsPage, { data, setData: persist, onRestart: () => persist({ ...getBlankData(), onboardingComplete: false }) });
   }
 
-  // A newer copy was found in the linked file on open - offer to load it.
   const syncBannerEl = syncBanner ? h('div', { className: 'sync-banner' },
     h('span', { style: { fontSize: '13px' } }, 'A newer version of your data is in your synced file.'),
     h('div', { style: { display: 'flex', gap: '8px', flexShrink: 0 } },
@@ -852,9 +752,6 @@ function App() {
     )
   ) : null;
 
-  // Mobile: a compact top bar + a native-style bottom tab bar replace the
-  // sidebar entirely. The page components themselves are unchanged; they
-  // adapt through CSS and the isMobile flag they receive via context below.
   if (isMobile) {
     const pageTitle = ({
       home: 'Home', calendar: 'Calendar', late: 'Late payments',
@@ -915,8 +812,6 @@ function App() {
           );
         }
 
-        // "All bills" is both a page and a dropdown: clicking it (or its
-        // caret) navigates to the page and toggles the child links.
         const openBills = () => { setPage(item.id); setBillsExpanded((v) => !v); };
         return h('div', { key: item.id },
           h('div', {
@@ -942,7 +837,7 @@ function App() {
           ) : null
         );
       }),
-      // desktop-app button pinned to the bottom of the sidebar, right-aligned
+
       h('div', { className: 'sidebar-foot' },
         h('button', {
           className: 'sidebar-foot-btn',
@@ -973,8 +868,6 @@ function App() {
     }) : null
   );
 }
-
-/* ---------------- Desktop app info modal (web only) ---------------- */
 
 function DesktopInfoModal({ onClose }) {
   const benefits = [
@@ -1011,8 +904,6 @@ function DesktopInfoModal({ onClose }) {
     )
   );
 }
-
-/* ---------------- Weekly Backup Reminder Modal (web only) ---------------- */
 
 function BackupReminderModal({ onDownloadBackup, onDismiss }) {
   return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onDismiss(); } },
@@ -1100,16 +991,9 @@ function Icon({ name }) {
     stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round'
   }, h('path', { d: paths[name] || '' }));
 }
-/* ---------------- Mobile support ----------------
- * Layout switching is driven by a media query rather than user-agent
- * sniffing, so it reacts correctly to rotation, split-screen, and a desktop
- * browser window simply being made narrow. The breakpoint here must match
- * the one in styles.css.
- */
 
 const MOBILE_BREAKPOINT = 768;
 
-// True while the viewport is phone-sized. Re-renders on resize/rotate.
 function useIsMobile() {
   const query = `(max-width: ${MOBILE_BREAKPOINT}px)`;
   const [isMobile, setIsMobile] = useState(
@@ -1122,7 +1006,7 @@ function useIsMobile() {
     if (!window.matchMedia) return;
     const mql = window.matchMedia(query);
     const onChange = (e) => setIsMobile(e.matches);
-    // addEventListener on MediaQueryList isn't in older Safari; fall back
+
     if (mql.addEventListener) mql.addEventListener('change', onChange);
     else mql.addListener(onChange);
     setIsMobile(mql.matches);
@@ -1135,9 +1019,6 @@ function useIsMobile() {
   return isMobile;
 }
 
-// The five destinations that get a slot in the bottom bar. Everything else
-// (Essentials / Credit cards / Subscriptions) lives behind the "Bills" tab,
-// which opens All Bills - that page already links onward to each of them.
 const MOBILE_TABS = [
   { id: 'home', label: 'Home', icon: 'home' },
   { id: 'calendar', label: 'Calendar', icon: 'calendar' },
@@ -1146,8 +1027,6 @@ const MOBILE_TABS = [
   { id: 'allbills', label: 'Expenses', icon: 'allbills' }
 ];
 
-// Which bottom tab should light up for a given page. Sub-pages of All Bills
-// keep the Bills tab active so the user never sees "no tab selected".
 const TAB_FOR_PAGE = {
   home: 'home',
   calendar: 'calendar',
@@ -1163,7 +1042,7 @@ function MobileTabBar({ page, setPage, onAdd, lateCount, needsAttentionCount }) 
   const activeTab = TAB_FOR_PAGE[page] || page;
   return h('nav', { className: 'mobile-tabbar' },
     MOBILE_TABS.map((tab) => {
-      // the centre "add" tab is a raised circular button, not a normal tab
+
       if (tab.isAdd) {
         return h('button', {
           key: tab.id,
@@ -1197,9 +1076,6 @@ function MobileTabBar({ page, setPage, onAdd, lateCount, needsAttentionCount }) 
   );
 }
 
-// Compact top bar shown on mobile in place of the sidebar brand block.
-// A three-column grid keeps the title optically centered no matter how wide
-// the left icon or right button are. Sub-pages get a back arrow.
 function MobileHeader({ title, onSettings, onBack, onSync, lastExported }) {
   return h('header', { className: 'mobile-header' },
     h('div', { className: 'mobile-header-left' },
@@ -1230,15 +1106,8 @@ function MobileHeader({ title, onSettings, onBack, onSync, lastExported }) {
   );
 }
 
-// Pages that live under All bills on mobile and therefore need a back arrow.
 const MOBILE_SUBPAGES = ['essentials', 'creditcards', 'subscriptions'];
 
-// Existing modals become bottom sheets on mobile purely through CSS
-// (see the .modal-overlay / .modal-content rules in the mobile block), so
-// there's no separate sheet component to keep in sync.
-
-// Adds swipe-down-to-dismiss to a sheet. Attach the returned handlers to the
-// grabber element; dragging it down past a threshold calls onClose.
 function useSheetDismiss(onClose) {
   const startY = useRef(null);
   const dragY = useRef(0);
@@ -1271,21 +1140,7 @@ function useSheetDismiss(onClose) {
   }
   return { onTouchStart, onTouchMove, onTouchEnd, onClick: onClose };
 }
-/* ---------------- Shared Entry Form Modal (add/edit) ---------------- */
 
-// A reusable modal for adding or editing a bill-like entry (name, amount or
-// amount range, date or date range, frequency, category). Used by Essentials,
-// Subscriptions, and one-time entries on All Bills.
-//
-// Props:
-//   title       - modal heading, e.g. "Edit bill"
-//   entry       - the entry object to edit (already in form-shape: strings for numbers)
-//   categories  - array of category options, or null to hide the category field
-//   dateLabel   - label for the date field when not using a date range
-//   showFreq    - whether to show the frequency selector (default true)
-//   submitLabel - label for the save/add button
-//   onSubmit    - called with the cleaned entry (numbers parsed) on save
-//   onClose     - called to dismiss the modal
 function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitLabel, onSubmit, onClose }) {
   const [form, setForm] = useState(() => ({ ...entry }));
 
@@ -1392,8 +1247,6 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
   );
 }
 
-// Converts a stored entry (numbers) into form-shape (strings) for editing,
-// filling in any fields that might be missing from older saved data.
 function entryToFormShape(entry) {
   return {
     id: entry.id,
@@ -1412,8 +1265,6 @@ function entryToFormShape(entry) {
   };
 }
 
-// Returns { title, categories, dateLabel, showFreq } for the edit modal based
-// on which list the entry being edited lives in.
 function getEditModalConfig(sourceList, entry) {
   if (sourceList === 'majorBills') {
     return { title: 'Edit bill', categories: MAJOR_CATEGORIES, dateLabel: 'Due date', showFreq: true };
@@ -1424,7 +1275,7 @@ function getEditModalConfig(sourceList, entry) {
   if (sourceList === 'incomeSources') {
     return { title: 'Edit income source', categories: null, dateLabel: 'Next pay date', showFreq: true };
   }
-  // one-time entries - no frequency, but category is editable
+
   const isIncome = entry && entry.oneTimeKind === 'income';
   return {
     title: isIncome ? 'Edit one-time income' : 'Edit one-time payment',
@@ -1434,9 +1285,6 @@ function getEditModalConfig(sourceList, entry) {
   };
 }
 
-// Applies an edited entry back to the right list in `data` and returns the
-// updated data object. `sourceList` of 'creditCards' is a no-op (managed on
-// the Credit cards page).
 function applyEditedEntry(data, sourceList, cleaned) {
   const { _isNew, ...entry } = cleaned;
   if (sourceList === 'majorBills') {
@@ -1456,8 +1304,6 @@ function applyEditedEntry(data, sourceList, cleaned) {
   }
   return data;
 }
-
-/* ---------------- Onboarding Wizard ---------------- */
 
 const MAJOR_CATEGORIES = ['Rent/mortgage', 'Power', 'Water', 'Gas', 'Insurance', 'Car payment', 'Phone', 'Internet', 'Credit card', 'Other'];
 const MINOR_CATEGORIES = ['Streaming', 'Gaming', 'Cloud storage', 'Memberships', 'Other'];
@@ -1511,7 +1357,7 @@ function presetEntry(preset, defaults) {
 }
 
 function OnboardingWizard({ data, isMobile, onComplete }) {
-  const [phase, setPhase] = useState('import'); // 'import' | 'setup'
+  const [phase, setPhase] = useState('import');
   const [step, setStep] = useState(0);
   const [importError, setImportError] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -1652,8 +1498,6 @@ function OnboardingWizard({ data, isMobile, onComplete }) {
     }
   }
 
-  // Step 0 of onboarding: ask if the user has an existing backup to import.
-  // No warning needed here since there is no saved data yet at this point.
   if (phase === 'import') {
     return h('div', { className: 'wizard-shell' },
       h('div', { className: 'wizard-scroll' },
@@ -1698,7 +1542,6 @@ function OnboardingWizard({ data, isMobile, onComplete }) {
   );
 }
 
-/* A single entry as a card row, with optional amount/date range toggles */
 function EntryList({ rows, categories, namePlaceholder, onChange, onAdd, onRemove, addLabel, dateLabel }) {
   return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
     rows.map((row) =>
@@ -1778,8 +1621,6 @@ function EntryCard({ row, categories, namePlaceholder, dateLabel, onChange, onRe
   );
 }
 
-/* ---------------- Post-setup prompt ---------------- */
-
 function PostSetupPrompt({ onAdd, onSkip }) {
   return h('div', { className: 'wizard-shell' },
     h('div', { className: 'wizard-scroll', style: { display: 'flex', flexDirection: 'column', justifyContent: 'center' } },
@@ -1795,8 +1636,6 @@ function PostSetupPrompt({ onAdd, onSkip }) {
     )
   );
 }
-
-/* ---------------- Credit card entry list (setup step) ---------------- */
 
 function CreditCardEntryList({ cards, onChange, onAdd, onRemove }) {
   return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
@@ -1868,8 +1707,6 @@ function CreditCardEntryList({ cards, onChange, onAdd, onRemove }) {
   );
 }
 
-/* ---------------- Quick Add Modal ---------------- */
-
 const ENTRY_TYPES = [
   { id: 'oneTimePayment', label: 'One-time payment', icon: '\u{1F4B3}', desc: 'A single expense' },
   { id: 'bill', label: 'Bill', icon: '\u{1F4C5}', desc: 'Recurring' },
@@ -1890,7 +1727,7 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
   }
 
   useEffect(() => {
-    // adjust sensible defaults when type changes
+
     if (type === 'oneTimePayment') {
       setForm((f) => ({ ...f, freq: 'none', category: ONE_TIME_PAYMENT_CATEGORIES.includes(f.category) ? f.category : 'Other' }));
     } else if (type === 'oneTimeIncome') {
@@ -2022,20 +1859,19 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
     )
   );
 }
-/* ---------------- Home Page ---------------- */
 
 const DONUT_COLORS = ['#D85A5A', '#D8A857', '#8B6FD6', '#4FAE6B', '#D8845A', '#5AA8D8', '#C75AA8', '#7A8C5A'];
 
 function HomePage({ data, setData, isMobile }) {
   const currency = data.settings.currency;
-  const [breakdownGroupBy, setBreakdownGroupBy] = useState('source'); // 'source' | 'category'
-  const [breakdownFilter, setBreakdownFilter] = useState('bills'); // 'bills' | 'income' | 'both'
+  const [breakdownGroupBy, setBreakdownGroupBy] = useState('source');
+  const [breakdownFilter, setBreakdownFilter] = useState('bills');
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
-  const [priceModal, setPriceModal] = useState(null); // occurrence object or null
-  // mobile only: hides the charts behind a toggle so the page opens compact
+  const [priceModal, setPriceModal] = useState(null);
+
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
@@ -2056,7 +1892,6 @@ function HomePage({ data, setData, isMobile }) {
     [data, cursor]
   );
 
-  // one-time entries within this month
   const oneTimeThisMonth = useMemo(() => {
     return data.oneTimeEntries.filter((e) => {
       if (!e.date) return false;
@@ -2077,8 +1912,6 @@ function HomePage({ data, setData, isMobile }) {
   const totalProjectedIncome = incomeOccurrences.reduce((sum, o) => sum + o.amount, 0)
     + oneTimeIncomeThisMonth.reduce((sum, o) => sum + entryAmount(o), 0);
 
-  // range of projected income - for entries using an amount range, use min/max;
-  // fixed-amount entries contribute the same value to both ends.
   const projectedIncomeRange = useMemo(() => {
     let min = 0;
     let max = 0;
@@ -2119,8 +1952,6 @@ function HomePage({ data, setData, isMobile }) {
       .filter((o) => isPaid(data, o.id, o.occDate))
       .reduce((sum, o) => sum + o.amount, 0);
 
-  // all bills this month, paid or not - for the tile grid. Paid bills sort
-  // to the end so the grid stays focused on what still needs attention.
   const allTiles = useMemo(() => {
     return [...billOccurrences, ...oneTimePaymentsThisMonth]
       .sort((a, b) => {
@@ -2138,9 +1969,6 @@ function HomePage({ data, setData, isMobile }) {
     setData(next);
   }
 
-  // Day-by-day cumulative totals across the month, for the cash-flow chart -
-  // one running total for bills, one for income, so their overlap/timing is
-  // visible at a glance.
   const cashFlowSeries = useMemo(() => {
     const daysInMonth = monthEnd.getDate();
     const billsByDay = new Array(daysInMonth + 1).fill(0);
@@ -2178,7 +2006,6 @@ function HomePage({ data, setData, isMobile }) {
     return points;
   }, [billOccurrences, oneTimePaymentsThisMonth, incomeOccurrences, oneTimeIncomeThisMonth, cursor]);
 
-  // last month's totals, for the comparison card
   const lastMonthTotals = useMemo(() => {
     const lastMonthStart = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1);
     const lastMonthEnd = new Date(cursor.getFullYear(), cursor.getMonth(), 0);
@@ -2200,7 +2027,6 @@ function HomePage({ data, setData, isMobile }) {
     return { totalBills: totalBillsLast, totalIncome: totalIncomeLast };
   }, [data, cursor]);
 
-  // summary stats - biggest bill, biggest income source, average bill size
   const monthSummary = useMemo(() => {
     const billRows = [...billOccurrences, ...oneTimePaymentsThisMonth];
     const incomeRows = [...incomeOccurrences, ...oneTimeIncomeThisMonth.map((o) => ({ ...o, amount: resolvedAmount(data, o, o.date) }))];
@@ -2234,8 +2060,7 @@ function HomePage({ data, setData, isMobile }) {
     }
 
     const sc = data.settings.sectionColors || {};
-    // for one-time entries, payments and income use separate configurable
-    // colors even though they share a sourceList key
+
     const sourceColorFor = (o) => {
       if (o.sourceList === 'oneTimeEntries') return o.kind === 'income' ? sc.oneTimeIncome : sc.oneTimePayments;
       return sc[o.sourceList];
@@ -2244,9 +2069,7 @@ function HomePage({ data, setData, isMobile }) {
     const groups = {};
     rows.forEach((o) => {
       if (breakdownGroupBy === 'source') {
-        // one-time payments and one-time income are tracked as separate
-        // groups (they have separate colors), even though both live under
-        // the oneTimeEntries sourceList
+
         const groupKey = o.sourceList === 'oneTimeEntries' ? `oneTimeEntries:${o.kind}` : o.sourceList;
         const label = o.sourceList === 'oneTimeEntries'
           ? (o.kind === 'income' ? 'One-time income' : 'One-time payments')
@@ -2266,8 +2089,6 @@ function HomePage({ data, setData, isMobile }) {
       .map((g, i) => ({ ...g, pct: total > 0 ? g.amount / total : 0, color: g.color || DONUT_COLORS[i % DONUT_COLORS.length] }));
   }, [billOccurrences, oneTimePaymentsThisMonth, incomeOccurrences, oneTimeIncomeThisMonth, breakdownGroupBy, breakdownFilter, data]);
 
-  // next 7 days, bills and income combined, chronological - independent of
-  // the month being viewed, since due dates can straddle month boundaries
   const next7Days = useMemo(() => {
     const start = new Date(today);
     const end = new Date(today);
@@ -2292,7 +2113,6 @@ function HomePage({ data, setData, isMobile }) {
 
   const monthLabel = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
-  // --- shared pieces used by both layouts ---
   const next7List = next7Days.length === 0
     ? h('p', { className: 'empty-state' }, 'Nothing due in the next 7 days.')
     : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
@@ -2322,8 +2142,6 @@ function HomePage({ data, setData, isMobile }) {
         h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
       ),
 
-      // Option C: one unified summary card. Net is the tinted hero at the top,
-      // the four supporting figures are an aligned list beneath.
       h('div', { className: `summary-card${netSoFar >= 0 ? ' pos' : ' neg'}` },
         h('div', { className: 'summary-hero' },
           h('p', { className: 'summary-hero-label' }, 'Net so far'),
@@ -2365,7 +2183,6 @@ function HomePage({ data, setData, isMobile }) {
         )
       ),
 
-      // bills as a tickable checklist rather than tiles
       h('p', { className: 'section-title' }, 'Bills this month'),
       allTiles.length === 0
         ? h('p', { className: 'empty-state' }, 'Nothing scheduled this month.')
@@ -2403,7 +2220,6 @@ function HomePage({ data, setData, isMobile }) {
       h('p', { className: 'section-title' }, 'Next 7 days'),
       next7List,
 
-      // everything analytical hides behind this until asked for
       h('label', { className: 'advanced-toggle' },
         h('input', {
           type: 'checkbox',
@@ -2543,8 +2359,6 @@ function HomePage({ data, setData, isMobile }) {
   );
 }
 
-/* ---------------- Month Summary Card ---------------- */
-
 function MonthSummaryCard({ summary, currency }) {
   return h('div', { className: 'card' },
     h('p', { style: { margin: '0 0 10px', fontWeight: 500 } }, 'This month at a glance'),
@@ -2565,8 +2379,6 @@ function MonthSummaryCard({ summary, currency }) {
     )
   );
 }
-
-/* ---------------- Month Comparison Card ---------------- */
 
 function MonthComparisonCard({ lastMonth, thisMonth, currency }) {
   const billsDelta = thisMonth.totalBills - lastMonth.totalBills;
@@ -2602,10 +2414,8 @@ function MonthComparisonCard({ lastMonth, thisMonth, currency }) {
   );
 }
 
-/* ---------------- Cumulative cash flow chart ---------------- */
-
 function CashFlowChart({ points, currency }) {
-  const [view, setView] = useState('cumulative'); // 'cumulative' | 'daily'
+  const [view, setView] = useState('cumulative');
   const [hoverIdx, setHoverIdx] = useState(null);
 
   if (points.length === 0) return null;
@@ -2628,7 +2438,6 @@ function CashFlowChart({ points, currency }) {
 
   const pathFor = (key) => points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${PAD_L + i * stepX} ${scaleY(p[key])}`).join(' ');
 
-  // a handful of evenly-spaced day labels along the x-axis (avoid crowding for long months)
   const labelEvery = points.length > 20 ? 5 : points.length > 10 ? 2 : 1;
   const hovered = hoverIdx !== null ? points[hoverIdx] : null;
 
@@ -2653,7 +2462,7 @@ function CashFlowChart({ points, currency }) {
         className: 'cashflow-chart',
         onMouseLeave: () => setHoverIdx(null)
       },
-        // horizontal gridlines + scale labels
+
         h('line', { x1: PAD_L, y1: PAD_T, x2: PAD_L, y2: H - PAD_B, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
         h('line', { x1: PAD_L, y1: zeroY, x2: W - PAD_R, y2: zeroY, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
         h('text', { x: PAD_L - 8, y: PAD_T + 4, fontSize: 10, fill: 'var(--text-secondary)', textAnchor: 'end' }, fmtCurrency(maxVal, currency)),
@@ -2680,7 +2489,6 @@ function CashFlowChart({ points, currency }) {
           stroke: 'var(--border-secondary)', strokeWidth: 1
         }) : null,
 
-        // invisible hit zones, one per data point, for hover detection
         points.map((p, i) => h('rect', {
           key: `hit-${i}`,
           x: PAD_L + i * stepX - (stepX / 2 || 6),
@@ -2705,8 +2513,6 @@ function CashFlowChart({ points, currency }) {
     )
   );
 }
-
-/* ---------------- Category Breakdown Donut ---------------- */
 
 function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setFilter }) {
   const total = rows.reduce((s, r) => s + r.amount, 0);
@@ -2765,8 +2571,6 @@ function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setF
         )
   );
 }
-
-/* ---------------- Price Override Modal ---------------- */
 
 function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
   const existing = getOverride(data, occ.id, occ.occDate);
@@ -2878,7 +2682,6 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
     )
   );
 }
-/* ---------------- Late Payments Page ---------------- */
 
 function LatePage({ data, setData, lateBills }) {
   const currency = data.settings.currency;
@@ -2958,12 +2761,10 @@ function LatePage({ data, setData, lateBills }) {
     }) : null
   );
 }
-/* ---------------- Calendar Page ---------------- */
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DOW_FULL = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-// Short currency for tight calendar cells: $1,240 -> $1.2k, $95 -> $95.
 function fmtCompact(amount, currency) {
   const sym = (currency === 'EUR') ? '\u20ac' : (currency === 'GBP') ? '\u00a3' : '$';
   const n = Math.round(Number(amount) || 0);
@@ -2974,20 +2775,15 @@ function fmtCompact(amount, currency) {
   return `${sym}${n}`;
 }
 
-// ISO-8601 week number for a given date.
 function getISOWeekNumber(date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = (d.getUTCDay() + 6) % 7; // Monday = 0
+  const dayNum = (d.getUTCDay() + 6) % 7;
   d.setUTCDate(d.getUTCDate() - dayNum + 3);
   const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
   const diff = (d - firstThursday) / 86400000;
   return 1 + Math.round(diff / 7);
 }
 
-// Builds a list of { startDate, endDate, name, kind, id, occDate } spans for
-// entries that use a date range (and are not also recurring in a way that
-// makes a span ambiguous - recurring date-range entries shift their span by
-// the same offset as each occurrence).
 function getDateRangeSpans(data, allBills, gridStart, gridEnd) {
   const spans = [];
 
@@ -3005,10 +2801,9 @@ function getDateRangeSpans(data, allBills, gridStart, gridEnd) {
       return;
     }
 
-    // recurring with a date range - shift the span for each occurrence
     const removed = data.removedOccurrences || {};
     expandEntry(e, gridStart, gridEnd).forEach((occ) => {
-      if (removed[`${e.id}|${occ.occDate}`]) return; // single occurrence removed, rule untouched
+      if (removed[`${e.id}|${occ.occDate}`]) return;
       const occStart = parseYmd(occ.occDate);
       const occEnd = new Date(occStart);
       occEnd.setDate(occEnd.getDate() + offsetDays);
@@ -3040,16 +2835,16 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
   const [selectedDay, setSelectedDay] = useState(null);
-  // mobile: 'grid' (month overview) or 'agenda' (list of active days)
+
   const [view, setView] = useState('grid');
-  // drives the slide animation on month change: 'left' | 'right' | null
+
   const [slideDir, setSlideDir] = useState(null);
 
   const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
   const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
 
   const gridStart = new Date(monthStart);
-  // shift so the grid starts on firstDow
+
   let leadingDays = (monthStart.getDay() - firstDow + 7) % 7;
   gridStart.setDate(gridStart.getDate() - leadingDays);
   const gridEnd = new Date(monthEnd);
@@ -3058,7 +2853,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
 
   const allBills = getAllBillLikeEntries(data);
 
-  // quick lookup so each occurrence knows which list its template entry lives in
   const sourceListById = useMemo(() => buildSourceListLookup(data), [data]);
 
   const occurrences = useMemo(() => {
@@ -3084,33 +2878,8 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return map;
   }, [occurrences]);
 
-  // entries whose occurrence ALSO has a date range get excluded from the
-  // normal day-chip list so they don't show twice - they're rendered as a
-  // thin connector overlay between their start/end markers instead.
   const rangeSpans = useMemo(() => getDateRangeSpans(data, allBills, gridStart, gridEnd), [data, cursor]);
   const rangeEntryIds = useMemo(() => new Set(rangeSpans.map((s) => s.id)), [rangeSpans]);
-
-  // Mobile can't draw the connector bars, so instead each day inside a span
-  // gets a dashed band. Map every date string to the span covering it.
-  const rangeDayMap = useMemo(() => {
-    const map = {};
-    rangeSpans.forEach((s) => {
-      const cur = new Date(s.startDate);
-      while (cur <= s.endDate) {
-        const key = ymd(cur);
-        if (!map[key]) {
-          map[key] = {
-            color: s.color || (s.kind === 'income' ? '#4FAE6B' : '#D85A5A'),
-            isStart: key === ymd(s.startDate),
-            isEnd: key === ymd(s.endDate),
-            name: s.name
-          };
-        }
-        cur.setDate(cur.getDate() + 1);
-      }
-    });
-    return map;
-  }, [rangeSpans]);
 
   function changeMonth(delta) {
     setSlideDir(delta > 0 ? 'left' : 'right');
@@ -3118,8 +2887,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     setSelectedDay(null);
   }
 
-  // Numeric amount for an occurrence: override wins, else a range midpoint,
-  // else the plain amount. Used for the mobile day totals.
   function occAmount(o) {
     if (o.hasOverride) return Number(o.amount) || 0;
     if (o.isRange) {
@@ -3130,8 +2897,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return Number(o.amount) || 0;
   }
 
-  // Per-day summary for the mobile grid (Option A): a few colored dots showing
-  // what kind of items land that day, plus the day's net dollar movement.
   const daySummary = useMemo(() => {
     const map = {};
     Object.keys(occByDate).forEach((dateStr) => {
@@ -3154,7 +2919,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return map;
   }, [occByDate, data]);
 
-  // Agenda view (Option C): only days that have something, in date order.
   const agendaDays = useMemo(() => {
     return Object.keys(occByDate)
       .filter((ds) => {
@@ -3179,7 +2943,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     d.setDate(d.getDate() + 1);
   }
 
-  // split into week rows of 7
   const weeks = [];
   for (let i = 0; i < cells.length; i += 7) {
     weeks.push(cells.slice(i, i + 7));
@@ -3195,9 +2958,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
   const showWeekNumbers = !!data.settings.showWeekNumbers;
   const selectedOccs = selectedDay ? (occByDate[selectedDay] || []) : [];
 
-  // range connectors: each span becomes one or more per-week pixel-percent
-  // segments (a span crossing a week boundary is split so it never has to
-  // affect row height - it's drawn as an overlay positioned over the grid).
   const rangeSegments = useMemo(() => {
     const segments = [];
     weeks.forEach((week, wi) => {
@@ -3207,8 +2967,8 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
         if (s.endDate < weekStart || s.startDate > weekEnd) return;
         const start = s.startDate < weekStart ? weekStart : s.startDate;
         const end = s.endDate > weekEnd ? weekEnd : s.endDate;
-        const startCol = daysBetween(weekStart, start); // 0-indexed
-        const endCol = daysBetween(weekStart, end); // 0-indexed
+        const startCol = daysBetween(weekStart, start);
+        const endCol = daysBetween(weekStart, end);
         const paid = isPaid(data, s.id, s.occDate);
         const midDays = Math.floor(daysBetween(s.startDate, s.endDate) / 2);
         const midDate = new Date(s.startDate);
@@ -3231,7 +2991,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return segments;
   }, [weeks, rangeSpans, data]);
 
-  // swipe left/right on the grid to change months (mobile)
   const swipeStart = useRef(null);
   function onTouchStart(e) {
     if (e.touches.length !== 1) { swipeStart.current = null; return; }
@@ -3243,13 +3002,12 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     const dx = t.clientX - swipeStart.current.x;
     const dy = t.clientY - swipeStart.current.y;
     swipeStart.current = null;
-    // horizontal, decisive, and not mostly-vertical scroll
+
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) {
       changeMonth(dx < 0 ? 1 : -1);
     }
   }
 
-  // ---------------- MOBILE calendar (grid A + agenda C) ----------------
   if (isMobile) {
     const monthLabel = `${MONTH_NAMES[cursor.getMonth()]} ${cursor.getFullYear()}`;
 
@@ -3259,9 +3017,16 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
       ),
       h('div', { className: 'calm-weeks' },
         weeks.map((week, wi) => {
-          // range pills that touch this week
           const weekPills = rangeSegments.filter((seg) => seg.week === wi);
-          return h('div', { key: wi, className: 'calm-week' },
+          const lanes = [];
+          weekPills.forEach((seg) => {
+            let laneIdx = lanes.findIndex((lane) => lane.every((p) => seg.startCol > p.endCol || seg.endCol < p.startCol));
+            if (laneIdx === -1) { laneIdx = lanes.length; lanes.push([]); }
+            lanes[laneIdx].push(seg);
+            seg._lane = laneIdx;
+          });
+          const laneCount = lanes.length;
+          return h('div', { key: wi, className: 'calm-week', style: { '--lanes': laneCount } },
             h('div', { className: 'calm-week-cells' },
               week.map((cd) => {
                 const dateStr = ymd(cd);
@@ -3269,7 +3034,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
                 const isToday = dateStr === todayStr;
                 const isSelected = selectedDay === dateStr;
                 const sum = daySummary[dateStr];
-                // dots exclude range entries (shown as pills)
                 const dotColors = sum
                   ? sum.colors.filter((_, idx) => {
                       const o = occByDate[dateStr][idx];
@@ -3298,15 +3062,20 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
                 );
               })
             ),
-            // spanning range pills for this week
-            weekPills.length ? h('div', { className: 'calm-pills' },
+            laneCount ? h('div', { className: 'calm-pills', style: { height: `${laneCount * 17}px` } },
               weekPills.map((seg) => {
                 const leftPct = (seg.startCol / 7) * 100;
                 const widthPct = ((seg.endCol - seg.startCol + 1) / 7) * 100;
                 return h('button', {
                   key: seg.key,
                   className: `calm-pill${seg.paid ? ' paid' : ''}${seg.isStart ? ' start' : ''}${seg.isEnd ? ' end' : ''}`,
-                  style: { left: `${leftPct}%`, width: `${widthPct}%`, '--pill': seg.color, color: readableTextOn(seg.color) },
+                  style: {
+                    left: `${leftPct}%`,
+                    width: `${widthPct}%`,
+                    top: `${seg._lane * 17}px`,
+                    '--pill': seg.color,
+                    color: readableTextOn(seg.color)
+                  },
                   onClick: () => setSelectedDay(seg.occDate),
                   title: seg.name
                 }, seg.showLabel ? seg.name : '\u00a0');
@@ -3319,7 +3088,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
 
     const agendaView = agendaDays.length === 0
       ? h('div', { className: 'calm-agenda-empty' }, 'Nothing scheduled this month.')
-      : h('div', { className: 'calm-agenda' },
+      : h('div', { className: 'calm-agenda-scroll' }, h('div', { className: 'calm-agenda' },
           agendaDays.map(({ dateStr, items }) => {
             const d = parseYmd(dateStr);
             const isToday = dateStr === todayStr;
@@ -3350,7 +3119,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
               )
             );
           })
-        );
+        ));
 
     return h('div', { className: 'calendar-page calm' },
       h('div', { className: 'calm-header' },
@@ -3362,7 +3131,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
         h('button', { className: 'calm-nav', onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '\u203a')
       ),
 
-      // grid / agenda toggle
       h('div', { className: 'calm-toggle' },
         h('button', { className: `calm-toggle-btn${view === 'grid' ? ' on' : ''}`, onClick: () => setView('grid') }, 'Month'),
         h('button', { className: `calm-toggle-btn${view === 'agenda' ? ' on' : ''}`, onClick: () => setView('agenda') }, 'Agenda')
@@ -3413,8 +3181,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
             week.map((cd) => {
               const dateStr = ymd(cd);
               const inMonth = cd.getMonth() === cursor.getMonth();
-              // Range entries are drawn as bars (desktop) or a dashed band
-              // (mobile), so they're kept out of the per-day list either way.
+
               const occs = (occByDate[dateStr] || []).filter((o) => !rangeEntryIds.has(o.id));
               const isToday = dateStr === todayStr;
               const isPast = cd < today;
@@ -3458,8 +3225,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
           )
         ),
 
-        // Range bars are drawn across the grid; on a phone-width grid there
-        // is no room for them, and their entries still appear in the day sheet.
         isMobile ? null : h('div', { className: 'range-overlay' },
           rangeSegments.map((seg) => {
             const leftPct = (seg.startCol / 7) * 100;
@@ -3500,13 +3265,11 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
   );
 }
 
-/* ---------------- Day Detail Modal ---------------- */
-
 function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAddEntry }) {
   const sheet = useSheetDismiss(onClose);
   const [priceModal, setPriceModal] = useState(null);
-  const [editing, setEditing] = useState(null); // { sourceList, form } or null
-  const [confirmRemove, setConfirmRemove] = useState(null); // `${id}|${occDate}` or null
+  const [editing, setEditing] = useState(null);
+  const [confirmRemove, setConfirmRemove] = useState(null);
 
   function togglePaid(o) {
     const wasPaid = isPaid(data, o.id, o.occDate);
@@ -3516,7 +3279,7 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
   }
 
   function openEdit(o) {
-    if (o.sourceList === 'creditCards') return; // managed on Credit cards page
+    if (o.sourceList === 'creditCards') return;
     setEditing({ sourceList: o.sourceList, form: { ...entryToFormShape(o), _isNew: false } });
   }
 
@@ -3537,7 +3300,7 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
   function removeThisOccurrence(o) {
     let next;
     if (o.sourceList === 'oneTimeEntries') {
-      // one-time entries have exactly one occurrence - "remove" means delete it outright
+
       next = { ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== o.id) };
       next = logActivity(next, `Removed "${o.name}"`);
     } else {
@@ -3612,11 +3375,9 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
   );
 }
 
-/* ---------------- Essentials Page ---------------- */
-
 function BillsPage({ data, setData, onAddEntry }) {
   const currency = data.settings.currency;
-  const [editing, setEditing] = useState(null); // form-shape object while a bill is being added/edited, else null
+  const [editing, setEditing] = useState(null);
 
   function openAdd() {
     setEditing({ ...blankEntry({ freq: 'monthly', category: 'Other' }), _isNew: true });
@@ -3683,7 +3444,6 @@ function BillsPage({ data, setData, onAddEntry }) {
     }) : null
   );
 }
-/* ---------------- Subscriptions Page ---------------- */
 
 function SubscriptionsPage({ data, setData, onAddEntry }) {
   const currency = data.settings.currency;
@@ -3763,7 +3523,6 @@ function SubscriptionsPage({ data, setData, onAddEntry }) {
     }) : null
   );
 }
-/* ---------------- Credit Cards Page ---------------- */
 
 function blankCreditCard() {
   return {
@@ -3975,8 +3734,6 @@ function CreditCardsPage({ data, setData }) {
   );
 }
 
-/* ---------------- Projection Modal ---------------- */
-
 function ProjectionModal({ card, data, currency, onClose }) {
   const points = useMemo(() => getCardProjection(card, data, 12), [card, data]);
   const late = isCardPaymentLate(card, data);
@@ -3984,7 +3741,6 @@ function ProjectionModal({ card, data, currency, onClose }) {
   const maxBalance = Math.max(...points.map((p) => p.balance), 1);
   const willPayOff = points[points.length - 1].balance <= 0 && points.length <= 12;
 
-  // line chart geometry
   const W = 360, H = 160, PAD = 28;
   const stepX = (W - PAD * 2) / Math.max(1, points.length - 1);
   const scaleY = (v) => H - PAD - (v / maxBalance) * (H - PAD * 2);
@@ -3993,7 +3749,6 @@ function ProjectionModal({ card, data, currency, onClose }) {
     .map((p, i) => `${i === 0 ? 'M' : 'L'} ${PAD + i * stepX} ${scaleY(p.balance)}`)
     .join(' ');
 
-  // bar chart: skip month 0 (it has no interest/principal split)
   const barPoints = points.slice(1);
   const maxBar = Math.max(...barPoints.map((p) => p.interest + p.principalPaid), 1);
   const barW = (W - PAD * 2) / Math.max(1, barPoints.length) - 4;
@@ -4012,7 +3767,7 @@ function ProjectionModal({ card, data, currency, onClose }) {
 
       h('p', { className: 'list-item-sub', style: { margin: 0 } }, 'Projected balance over the next 12 months'),
       h('svg', { viewBox: `0 0 ${W} ${H}`, className: 'projection-chart' },
-        // baseline
+
         h('line', { x1: PAD, y1: H - PAD, x2: W - PAD, y2: H - PAD, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
         h('path', { d: linePath, fill: 'none', stroke: 'var(--accent)', strokeWidth: 2 }),
         points.map((p, i) =>
@@ -4052,14 +3807,13 @@ function ProjectionModal({ card, data, currency, onClose }) {
     )
   );
 }
-/* ---------------- All Bills Page ---------------- */
 
 function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddEntry }) {
   const currency = data.settings.currency;
-  // Nothing to act on means nothing worth taking up space - start collapsed.
+
   const [attentionCollapsed, setAttentionCollapsed] = useState(() => needsAttention.length === 0);
   const [showInfo, setShowInfo] = useState(false);
-  const [editing, setEditing] = useState(null); // { sourceList, entry } or null
+  const [editing, setEditing] = useState(null);
   const [categoryFilter, setCategoryFilter] = useState('all');
 
   const lateAttention = needsAttention.filter((o) => o.late);
@@ -4075,12 +3829,12 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     } else if (o.sourceList === 'oneTimeEntries') {
       next = { ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== o.id) };
     }
-    // credit card payments are managed from the Credit Cards page
+
     if (next) setData(logActivity(next, `Deleted "${o.name}"`));
   }
 
   function openEdit(e) {
-    if (e.sourceList === 'creditCards') return; // managed on Credit cards page
+    if (e.sourceList === 'creditCards') return;
     setEditing({ sourceList: e.sourceList, form: { ...entryToFormShape(e), _isNew: false } });
   }
 
@@ -4091,15 +3845,13 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     setEditing(null);
   }
 
-  // build the unified list - one row per template entry (not per occurrence)
   const unified = useMemo(() => {
     const rows = [];
 
     data.majorBills.forEach((e) => rows.push({ ...e, sourceList: 'majorBills', sourceLabel: 'Essential', kind: 'bill' }));
     data.subscriptions.forEach((e) => rows.push({ ...e, sourceList: 'subscriptions', sourceLabel: 'Subscription', kind: 'bill' }));
     getCreditCardPaymentEntries(data).forEach((e) => rows.push({ ...e, sourceList: 'creditCards', sourceLabel: 'Credit card', kind: 'bill' }));
-    // Day to day = one-time payments (groceries, gas, coffee...). Income-type
-    // one-time entries stay out; this page is expenses.
+
     (data.oneTimeEntries || []).forEach((e) => {
       if (e.oneTimeKind === 'income') return;
       rows.push({ ...e, sourceList: 'oneTimeEntries', sourceLabel: 'Day to day', kind: 'bill' });
@@ -4108,7 +3860,6 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     return rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   }, [data]);
 
-  // group rows by source type
   const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards', 'oneTimeEntries'];
   const SOURCE_GROUP_LABELS = {
     majorBills: 'Essentials',
@@ -4116,7 +3867,7 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     creditCards: 'Credit cards',
     oneTimeEntries: 'Day to day'
   };
-  // which editor page each group's edit arrow opens (mobile only)
+
   const SUBPAGE_FOR_GROUP = {
     majorBills: 'essentials',
     subscriptions: 'subscriptions',
@@ -4132,7 +3883,6 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
 
   const visibleGroups = categoryFilter === 'all' ? grouped : grouped.filter(([key]) => key === categoryFilter);
 
-  // monthly total per group, for the little summary cards on the filter chips
   const groupMonthlyTotals = useMemo(() => {
     const totals = {};
     grouped.forEach(([key, rows]) => {
@@ -4207,8 +3957,6 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
   return h('div', null,
     isMobile ? null : h('h2', null, 'All bills'),
 
-    // Needs attention sits at the very top so anything requiring a real price
-    // is the first thing seen; the category filter chips follow.
     attentionBlock,
     filterBlock,
 
@@ -4261,7 +4009,6 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
   );
 }
 
-/* A single row in the "needs attention" list with an inline price input */
 function AttentionRow({ o, data, setData, currency }) {
   const [price, setPrice] = useState('');
 
@@ -4299,7 +4046,6 @@ function AttentionRow({ o, data, setData, currency }) {
     )
   );
 }
-/* ---------------- Settings Page ---------------- */
 
 const SECTION_COLOR_LABELS = [
   { key: 'majorBills', label: 'Essentials' },
@@ -4315,11 +4061,6 @@ const SETTINGS_TABS = [
   { id: 'colors', label: 'Calendar colors' },
   { id: 'advanced', label: 'Advanced' }
 ];
-
-// --- custom accent picker ------------------------------------------------
-// Native <input type="color"> gives a cramped picker on iOS, so we roll our
-// own from range sliders (which behave identically everywhere) plus a hex
-// field. Hue/saturation/lightness cover the full spectrum with real control.
 
 function hexToHsl(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
@@ -4465,11 +4206,9 @@ function SettingsPage({ data, setData, onRestart }) {
   );
 }
 
-/* ---------------- General tab ---------------- */
-
 function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEditIncome, onDeleteIncome }) {
   return h('div', null,
-    // Income sources
+
     h('div', { className: 'card' },
       h('div', { className: 'row-between' },
         h('p', { style: { margin: 0, fontWeight: 500 } }, 'Income sources'),
@@ -4499,7 +4238,6 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
           )
     ),
 
-    // Appearance
     h('div', { className: 'card', style: { marginTop: '12px' } },
       h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Appearance'),
       h('label', null, 'Theme'),
@@ -4523,7 +4261,7 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
             onClick: () => updateSetting('accent', a.id)
           })
         ),
-        // custom: a color well that opens the slider picker below
+
         h('label', {
           className: `swatch swatch-custom${data.settings.accent === 'custom' ? ' selected' : ''}`,
           title: 'Custom color',
@@ -4551,7 +4289,6 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
       )
     ),
 
-    // Currency & late bills
     h('div', { className: 'card', style: { marginTop: '12px' } },
       h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Currency & bills'),
       h('label', null, 'Currency'),
@@ -4600,8 +4337,6 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
   );
 }
 
-/* ---------------- Calendar colors tab ---------------- */
-
 function ColorsTab({ data, updateSectionColor }) {
   return h('div', null,
     h('div', { className: 'card' },
@@ -4630,10 +4365,6 @@ function ColorsTab({ data, updateSectionColor }) {
   );
 }
 
-/* ---------------- Advanced tab ---------------- */
-
-/* ---------------- Sync card ---------------- */
-
 function relativeTime(ms) {
   if (!ms) return 'never';
   const diff = Date.now() - ms;
@@ -4649,8 +4380,8 @@ function relativeTime(ms) {
 function SyncCard({ data, setData, embedded }) {
   const [linked, setLinked] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState(null); // { ok, text }
-  const [conflict, setConflict] = useState(null); // { incoming } when file is older
+  const [msg, setMsg] = useState(null);
+  const [conflict, setConflict] = useState(null);
   const supportsFile = Sync.supportsFileSystem;
 
   useEffect(() => {
@@ -4661,11 +4392,9 @@ function SyncCard({ data, setData, embedded }) {
 
   function flash(ok, text) { setMsg({ ok, text }); }
 
-  // Save / push current data out to the sync file (or share sheet on phone).
   async function handleSync() {
     setBusy(true); setMsg(null);
-    // one stamp shared by both the written file and the local copy, so a
-    // later Load doesn't see a millisecond drift and cry "conflict"
+
     const stamp = Date.now();
     const stamped = { ...data, lastModified: stamp };
     const res = await Sync.writeOut(stamped);
@@ -4677,14 +4406,12 @@ function SyncCard({ data, setData, embedded }) {
         ? 'Synced to your file.'
         : 'Exported \u2014 choose where to save it (Files, LocalSend, etc.).');
     } else if (res.canceled) {
-      // no-op
+
     } else {
       flash(false, res.error || 'Could not sync.');
     }
   }
 
-  // Pull data in. Desktop reads the linked file; phone opens a picker. Newest
-  // wins: if the incoming copy is older, we ask before replacing.
   async function handleLoad() {
     setBusy(true); setMsg(null);
     const res = (supportsFile && linked) ? await Sync.readLinked() : await Sync.readFromPicker();
@@ -4700,7 +4427,7 @@ function SyncCard({ data, setData, embedded }) {
     const incomingTime = incoming.lastModified || 0;
     const localTime = data.lastModified || 0;
     if (incomingTime < localTime) {
-      // older file - don't clobber newer local data without asking
+
       setConflict({ incoming });
       return;
     }
@@ -4709,7 +4436,7 @@ function SyncCard({ data, setData, embedded }) {
   }
 
   function applyIncoming(incoming) {
-    // keep the file's own stamp so local and file stay in agreement
+
     setData(incoming, { lastModified: incoming.lastModified || Date.now() });
     setConflict(null);
   }
@@ -4721,10 +4448,10 @@ function SyncCard({ data, setData, embedded }) {
     if (res.ok) {
       setLinked(true);
       if (existing) {
-        // linking an existing file - offer to load from it immediately
+
         await handleLoad();
       } else {
-        // brand new file - write current data into it so it's not empty
+
         await handleSync();
       }
     } else if (!res.canceled) {
@@ -4751,7 +4478,6 @@ function SyncCard({ data, setData, embedded }) {
         'Last change: ', h('strong', null, relativeTime(lastModified)))
     ),
 
-    // desktop: link controls
     supportsFile ? h('div', { style: { marginTop: '10px' } },
       linked
         ? h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
@@ -4787,8 +4513,6 @@ function SyncCard({ data, setData, embedded }) {
   );
 }
 
-// A modal wrapper around the sync controls, opened from the sidebar button
-// (desktop) and the header sync icon (mobile) so sync isn't buried in Settings.
 function SyncModal({ data, setData, onClose }) {
   return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
     h('div', { className: 'modal-content as-window' },
@@ -4806,7 +4530,7 @@ function SyncModal({ data, setData, onClose }) {
 }
 
 function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setConfirming }) {
-  const [importWarning, setImportWarning] = useState(false); // show warning modal before import
+  const [importWarning, setImportWarning] = useState(false);
   const [importError, setImportError] = useState(null);
   const [importSuccess, setImportSuccess] = useState(false);
   const [exportError, setExportError] = useState(null);

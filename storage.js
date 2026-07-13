@@ -1,10 +1,3 @@
-// IndexedDB-backed storage shim for the web build of Finance Calendar.
-//
-// The desktop (Electron) build exposes window.api via a preload bridge; this
-// file recreates the same interface in the browser so none of the app's
-// components need to know which build they're running in. loadData/saveData
-// persist to IndexedDB; exportData/importData use a blob download and a file
-// picker in place of the desktop's native dialogs.
 
 (function () {
   const DB_NAME = 'finance-calendar';
@@ -12,8 +5,6 @@
   const STORE_NAME = 'kv';
   const DATA_KEY = 'finance-data';
 
-  // Mirrors the desktop build's default data shape (src/main.js), plus a
-  // couple of web-only settings for the Monday backup reminder.
   function getDefaultData() {
     return {
       onboardingComplete: false,
@@ -52,15 +43,13 @@
           oneTimePayments: '#D8845A',
           oneTimeIncome: '#4FAE6B'
         },
-        // web-only: weekly "download a backup" reminder
+
         backupReminderEnabled: true,
         lastBackupReminderShown: null
       }
     };
   }
 
-  // Fills in any fields missing from an older saved blob so the app never
-  // reads undefined for something it expects.
   function mergeDeep(defaults, data) {
     const out = { ...defaults, ...data };
     out.settings = {
@@ -125,9 +114,7 @@
 
   async function saveData(data) {
     try {
-      // Preserve an explicit lastModified if the caller set one (so a synced
-      // file and the local copy can share the exact same stamp); otherwise
-      // advance it now.
+
       const stamped = { ...data, lastModified: data.lastModified || Date.now() };
       await dbSet(DATA_KEY, stamped);
       return { success: true, lastModified: stamped.lastModified };
@@ -137,9 +124,6 @@
     }
   }
 
-  // Export: serialize current data and trigger a browser download. Browsers
-  // don't report whether the user actually saved the file, so this resolves
-  // success once the download is triggered.
   async function exportData() {
     try {
       const data = await loadData();
@@ -159,17 +143,13 @@
     }
   }
 
-  // Import: open a file picker, read and validate the chosen JSON, then
-  // overwrite IndexedDB and return the parsed data. Mirrors the desktop
-  // contract: { success, data?, error?, canceled? }.
   function importData() {
     return new Promise((resolve) => {
       const input = document.createElement('input');
       input.type = 'file';
-      // Broad accept: iOS greys out valid .json saved from other apps otherwise
+
       input.accept = '.json,application/json,text/plain,text/json';
-      // iOS Safari won't reliably fire 'change' on a detached input, so it
-      // must be in the DOM. Keep it invisible and off-layout.
+
       input.style.position = 'fixed';
       input.style.left = '-9999px';
       input.style.opacity = '0';
@@ -209,9 +189,7 @@
         reader.onerror = () => finish({ success: false, error: 'Could not read the selected file.' });
         reader.readAsText(file);
       };
-      // No focus-based cancel timeout: on iOS it races the file handoff and
-      // wrongly reports a cancel, discarding a real import. A backed-out
-      // picker simply leaves the promise pending, which is harmless.
+
       input.click();
     });
   }

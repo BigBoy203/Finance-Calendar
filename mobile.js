@@ -1,13 +1,6 @@
-/* ---------------- Mobile support ----------------
- * Layout switching is driven by a media query rather than user-agent
- * sniffing, so it reacts correctly to rotation, split-screen, and a desktop
- * browser window simply being made narrow. The breakpoint here must match
- * the one in styles.css.
- */
 
 const MOBILE_BREAKPOINT = 768;
 
-// True while the viewport is phone-sized. Re-renders on resize/rotate.
 function useIsMobile() {
   const query = `(max-width: ${MOBILE_BREAKPOINT}px)`;
   const [isMobile, setIsMobile] = useState(
@@ -20,7 +13,7 @@ function useIsMobile() {
     if (!window.matchMedia) return;
     const mql = window.matchMedia(query);
     const onChange = (e) => setIsMobile(e.matches);
-    // addEventListener on MediaQueryList isn't in older Safari; fall back
+
     if (mql.addEventListener) mql.addEventListener('change', onChange);
     else mql.addListener(onChange);
     setIsMobile(mql.matches);
@@ -33,9 +26,6 @@ function useIsMobile() {
   return isMobile;
 }
 
-// The five destinations that get a slot in the bottom bar. Everything else
-// (Essentials / Credit cards / Subscriptions) lives behind the "Bills" tab,
-// which opens All Bills - that page already links onward to each of them.
 const MOBILE_TABS = [
   { id: 'home', label: 'Home', icon: 'home' },
   { id: 'calendar', label: 'Calendar', icon: 'calendar' },
@@ -44,8 +34,6 @@ const MOBILE_TABS = [
   { id: 'allbills', label: 'Expenses', icon: 'allbills' }
 ];
 
-// Which bottom tab should light up for a given page. Sub-pages of All Bills
-// keep the Bills tab active so the user never sees "no tab selected".
 const TAB_FOR_PAGE = {
   home: 'home',
   calendar: 'calendar',
@@ -61,7 +49,7 @@ function MobileTabBar({ page, setPage, onAdd, lateCount, needsAttentionCount }) 
   const activeTab = TAB_FOR_PAGE[page] || page;
   return h('nav', { className: 'mobile-tabbar' },
     MOBILE_TABS.map((tab) => {
-      // the centre "add" tab is a raised circular button, not a normal tab
+
       if (tab.isAdd) {
         return h('button', {
           key: tab.id,
@@ -95,9 +83,6 @@ function MobileTabBar({ page, setPage, onAdd, lateCount, needsAttentionCount }) 
   );
 }
 
-// Compact top bar shown on mobile in place of the sidebar brand block.
-// A three-column grid keeps the title optically centered no matter how wide
-// the left icon or right button are. Sub-pages get a back arrow.
 function MobileHeader({ title, onSettings, onBack, onSync, lastExported }) {
   return h('header', { className: 'mobile-header' },
     h('div', { className: 'mobile-header-left' },
@@ -128,15 +113,8 @@ function MobileHeader({ title, onSettings, onBack, onSync, lastExported }) {
   );
 }
 
-// Pages that live under All bills on mobile and therefore need a back arrow.
 const MOBILE_SUBPAGES = ['essentials', 'creditcards', 'subscriptions'];
 
-// Existing modals become bottom sheets on mobile purely through CSS
-// (see the .modal-overlay / .modal-content rules in the mobile block), so
-// there's no separate sheet component to keep in sync.
-
-// Adds swipe-down-to-dismiss to a sheet. Attach the returned handlers to the
-// grabber element; dragging it down past a threshold calls onClose.
 function useSheetDismiss(onClose) {
   const startY = useRef(null);
   const dragY = useRef(0);

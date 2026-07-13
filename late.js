@@ -1,4 +1,3 @@
-/* ---------------- Late Payments Page ---------------- */
 
 function LatePage({ data, setData, lateBills }) {
   const currency = data.settings.currency;

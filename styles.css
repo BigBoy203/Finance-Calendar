@@ -28,7 +28,6 @@
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
-  /* accent - default blue, overridden by data-accent */
   --accent: #378ADD;
   --accent-bg: #e6f1fb;
   --accent-text: #0c447c;
@@ -86,7 +85,6 @@
   }
 }
 
-/* accent palettes - light mode values, dark mode handled by [data-theme=dark] below */
 [data-accent="blue"]   { --accent: #378ADD; --accent-bg: #e6f1fb; --accent-text: #0c447c; }
 [data-accent="teal"]   { --accent: #1D9E75; --accent-bg: #e1f5ee; --accent-text: #085041; }
 [data-accent="purple"] { --accent: #7F77DD; --accent-bg: #eeedfe; --accent-text: #3c3489; }
@@ -205,7 +203,6 @@ label {
   margin-bottom: 4px;
 }
 
-/* App layout */
 .app-shell {
   display: flex;
   height: 100%;
@@ -324,7 +321,6 @@ label {
   padding: 0 5px;
 }
 
-/* Bill tile grid (Home page remaining bills) */
 .bill-tile-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -393,7 +389,6 @@ label {
   margin: 0;
 }
 
-/* Late payments page */
 .late-banner {
   display: flex;
   align-items: center;
@@ -432,7 +427,6 @@ label {
   color: white;
 }
 
-/* Credit cards page */
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -470,7 +464,6 @@ label {
   padding: 1.5rem 2rem;
 }
 
-/* Cards & generic blocks */
 .card {
   background: var(--bg-primary);
   border: 0.5px solid var(--border-tertiary);
@@ -555,7 +548,6 @@ label {
   margin-top: 0;
 }
 
-/* Calendar */
 .calendar-header {
   display: flex;
   justify-content: space-between;
@@ -741,8 +733,6 @@ label {
   padding: 0 6px;
 }
 
-/* Date-range entries: a thin overlay connector spanning the days it covers,
-   positioned absolutely so it never affects row height or pushes weeks apart */
 .range-overlay {
   position: absolute;
   inset: 0;
@@ -810,7 +800,6 @@ label {
   text-decoration: line-through;
 }
 
-/* All bills - needs attention */
 .attention-section {
   background: var(--bg-secondary);
   border: 0.5px solid var(--border-tertiary);
@@ -866,7 +855,6 @@ label {
   flex-shrink: 0;
 }
 
-/* Wizard */
 .wizard-shell {
   max-width: 680px;
   margin: 2rem auto;
@@ -890,7 +878,6 @@ label {
   background: var(--accent);
 }
 
-/* Setup entry rows - card style, stacks on narrow widths */
 .setup-entry {
   background: var(--bg-primary);
   border: 0.5px solid var(--border-tertiary);
@@ -973,7 +960,7 @@ label {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* must sit above the mobile header (30) and bottom tab bar (40) */
+
   z-index: 100;
 }
 
@@ -1056,7 +1043,7 @@ label {
 .swatch.selected {
   border-color: var(--text-primary);
 }
-/* the custom-color well: a rainbow ring until a color is chosen */
+
 .swatch-custom {
   background: conic-gradient(from 0deg, #ff5252, #ffb142, #fdd835, #66bb6a, #29b6f6, #7e57c2, #ff5252);
   overflow: hidden;
@@ -1198,19 +1185,8 @@ label {
   text-transform: none;
 }
 
-/* =====================================================================
-   MOBILE
-   Everything below only applies at phone widths. The breakpoint here
-   must stay in sync with MOBILE_BREAKPOINT in mobile.js.
-   ===================================================================== */
-
-/* Chrome/Safari on phones can double-tap-zoom and rubber-band the whole
-   document. Locking overflow-x here is what stops the "everything drags
-   around" behaviour - the page is never wider than the viewport. */
 @media (max-width: 768px) {
-  /* Lock the document to exactly one screen. Nothing outside the app's own
-     panes may scroll - that's what stops the page sliding up past the tab
-     bar and exposing a black strip underneath. */
+
   html, body {
     height: 100%;
     overflow: hidden;
@@ -1222,10 +1198,6 @@ label {
     overflow: hidden;
   }
 
-  /* A proper app shell: the container is exactly one screen tall, the header
-     and tab bar are ordinary flex items, and only the middle scrolls. Nothing
-     can end up trapped behind a bar, and iOS's collapsing address bar can't
-     desync the layout the way it does with position: fixed + padding. */
   .app-shell.mobile {
     display: flex;
     flex-direction: column;
@@ -1233,7 +1205,6 @@ label {
     overflow: hidden;
   }
 
-  /* Screens that render outside the app shell still need to scroll. */
   .wizard-shell,
   .main-content:not(.mobile) {
     height: 100%;
@@ -1241,14 +1212,12 @@ label {
     -webkit-overflow-scrolling: touch;
   }
 
-  /* ---------- top bar ---------- */
   .mobile-header {
     flex-shrink: 0;
-    /* z-index is ignored on static elements - these must be positioned */
+
     position: relative;
     z-index: 2;
-    /* three tracks so the title stays optically centred no matter what
-       sits on either side of it; right side holds sync + add */
+
     display: grid;
     grid-template-columns: 60px 1fr 44px;
     align-items: center;
@@ -1300,8 +1269,7 @@ label {
     flex-shrink: 0;
   }
   .mobile-header-add {
-    /* a fixed square with a 50% radius is a true circle; a text "+" with
-       padding never is */
+
     width: 34px;
     height: 34px;
     min-height: 34px;
@@ -1316,23 +1284,21 @@ label {
     color: #fff;
   }
 
-  /* ---------- content: the only scrolling region ---------- */
   .main-content.mobile {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-    /* keep a bounce inside the pane from scrolling the page behind it */
+
     overscroll-behavior: contain;
     padding: 16px 16px 24px;
     max-width: 100%;
     overflow-x: hidden;
   }
 
-  /* ---------- bottom tab bar ---------- */
   .mobile-tabbar {
     flex-shrink: 0;
-    /* z-index is ignored on static elements - must be positioned */
+
     position: relative;
     z-index: 2;
     display: flex;
@@ -1347,7 +1313,7 @@ label {
     align-items: center;
     justify-content: center;
     gap: 2px;
-    /* 56px keeps every tab a comfortable thumb target */
+
     min-height: 56px;
     padding: 6px 2px;
     border: none;
@@ -1383,40 +1349,36 @@ label {
     text-align: center;
   }
 
-  /* ---------- modals become bottom sheets ---------- */
   .modal-overlay {
     align-items: flex-end;
     padding: 0;
-    /* sit above the keyboard so the sheet's buttons stay reachable */
+
     inset: 0 0 var(--kb, 0px) 0;
     overflow: hidden;
   }
   .modal-content {
     width: 100%;
     max-width: 100%;
-    /* Flex items default to min-width:auto, which refuses to shrink below the
-       content's minimum width - and that beats max-width. Without this, a wide
-       child (the type grid, a long <select> option) forces the sheet wider
-       than the screen and you can drag it sideways into empty space. */
+
     min-width: 0;
-    /* overflow-y:auto silently promotes overflow-x to auto; pin it shut */
+
     overflow-x: hidden;
-    /* the overlay is already keyboard-adjusted, so fill what's left of it */
+
     max-height: 100%;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
     border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-    /* no bottom padding: the pinned action row below supplies it */
+
     padding: 20px 16px 0;
     animation: sheet-up 0.22s ease-out;
   }
-  /* every direct child must also be allowed to shrink */
+
   .modal-content > * {
     min-width: 0;
     max-width: 100%;
   }
-  /* long option text shouldn't set the sheet's width */
+
   .modal-content select,
   .modal-content input {
     max-width: 100%;
@@ -1428,19 +1390,17 @@ label {
     min-width: 0;
     overflow-wrap: anywhere;
   }
-  /* sheets with no action row (the day detail sheet) still need clearance,
-     and its desktop rule pins a 460px width that would overflow a phone */
+
   .modal-content.day-modal {
     width: 100%;
     max-width: 100%;
     padding-bottom: calc(16px + env(safe-area-inset-bottom));
   }
-  /* Cancel / Save sit at the bottom of every form sheet. Pinning them means
-     a long form can never scroll them out of reach and strand the user. */
+
   .modal-content > .row-between:last-child {
     position: sticky;
     bottom: 0;
-    /* full-bleed across the sheet's padding; exempt from the max-width above */
+
     max-width: none;
     margin: 12px -16px 0;
     padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
@@ -1456,7 +1416,6 @@ label {
     max-width: 100%;
   }
 
-  /* a draggable-looking handle at the top of a sheet; swipe it down to close */
   .sheet-grabber {
     align-self: center;
     width: 40px;
@@ -1468,14 +1427,11 @@ label {
     flex-shrink: 0;
     touch-action: none;
   }
-  /* windows use an X, not a grabber */
+
   .modal-content.as-window .sheet-grabber {
     display: none;
   }
 
-  /* ---------- window-variant modals (Add entry, Bills editing) ----------
-     These pop from the centre with an X, rather than sliding up as a sheet.
-     Overrides the sheet rules above. */
   .modal-overlay.as-window {
     align-items: center;
     justify-content: center;
@@ -1490,7 +1446,7 @@ label {
     padding: 0 16px 16px;
     animation: window-in 0.16s ease-out;
   }
-  /* sticky title bar with the close button */
+
   .modal-window-head {
     position: sticky;
     top: 0;
@@ -1519,7 +1475,7 @@ label {
     background: var(--bg-tertiary);
     color: var(--text-secondary);
   }
-  /* windows keep the pinned action row, but not the full-bleed sheet look */
+
   .modal-content.as-window > .row-between:last-child {
     margin-top: 12px;
     padding: 12px 0 0;
@@ -1533,14 +1489,13 @@ label {
     to   { transform: translateY(0); }
   }
 
-  /* ---------- calendar ---------- */
   .calendar-cell.mobile {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: flex-start;
     gap: 3px;
-    /* square-ish cells, comfortably tappable */
+
     min-height: 48px;
     padding: 5px 0 4px;
     border: none;
@@ -1564,7 +1519,7 @@ label {
   .calendar-cell.mobile.outside {
     opacity: 0.32;
   }
-  /* ---------- lists become stacked cards ---------- */
+
   .list-item {
     flex-direction: column;
     align-items: stretch;
@@ -1575,7 +1530,7 @@ label {
   .list-item-name {
     font-size: 15px;
   }
-  /* the trailing amount/action cluster drops to its own row */
+
   .list-item > div:last-child,
   .list-item > span:last-child {
     display: flex;
@@ -1587,7 +1542,6 @@ label {
     font-size: 15px;
   }
 
-  /* ---------- one-column layouts ---------- */
   .grid-2,
   .home-chart-row,
   .home-bottom-row,
@@ -1603,8 +1557,7 @@ label {
     width: 100%;
   }
 
-  /* ---------- forms & tap targets ---------- */
-  /* 16px prevents iOS Safari from zooming in when a field is focused */
+
   input, select, textarea {
     font-size: 16px;
     height: 44px;
@@ -1623,12 +1576,11 @@ label {
     grid-template-columns: 1fr;
   }
 
-  /* ---------- misc overflow guards ---------- */
   .card, .metric-card {
     padding: 14px;
   }
   .trade-table-wrap {
-    /* keep wide tables scrolling inside themselves, never the page */
+
     max-width: 100%;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
@@ -1643,7 +1595,6 @@ label {
     font-size: 12px;
   }
 
-  /* ---------- sub-nav on All bills (mobile only) ---------- */
   .subnav-chips {
     display: flex;
     gap: 8px;
@@ -1681,12 +1632,10 @@ label {
     color: var(--accent);
   }
 
-  /* ---------- onboarding wizard ---------- */
   .wizard-shell {
     max-width: 100%;
     margin: 0;
-    /* lock to the viewport like the app shell, so the page can't be dragged
-       or pinch-zoomed during onboarding */
+
     height: 100%;
     display: flex;
     flex-direction: column;
@@ -1694,7 +1643,7 @@ label {
     padding: 0;
     overflow: hidden;
   }
-  /* the wizard's own content scrolls, the shell doesn't */
+
   .wizard-shell > * {
     flex-shrink: 0;
   }
@@ -1719,8 +1668,7 @@ label {
     min-height: 44px;
   }
 
-  /* ---------- remaining overflow guards ---------- */
-  /* date inputs carry a desktop min-width that can push the page wide */
+
   input[type="date"] {
     min-width: 0;
     width: 100%;
@@ -1735,16 +1683,11 @@ label {
     flex: 1;
     text-align: center;
   }
-  /* tiles and cards should never force a horizontal scrollbar */
+
   .bill-tile-grid {
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   }
 
-  /* ---------- calendar sizing ----------
-     Desktop pins the calendar to the viewport and stretches its rows to fill.
-     On mobile we keep the stretch (so the grid fills the pane instead of
-     bunching at the top), but drop the absolute positioning that made the
-     rows enormous. */
   .calendar-page {
     height: 100%;
     min-height: 0;
@@ -1759,108 +1702,28 @@ label {
     position: static;
     inset: auto;
     height: 100%;
-    /* equal rows that share the leftover space, never smaller than a thumb */
+
     grid-auto-rows: minmax(62px, 1fr);
   }
   .calendar-grid {
     gap: 2px;
   }
-  .calendar-cell.mobile {
-    min-height: 0;
-    justify-content: flex-start;
-    gap: 2px;
-    padding: 4px 2px;
-    overflow: hidden;
-  }
-  .calendar-cell.mobile .calendar-date {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    font-size: 12px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
 
-  /* a day's entries, named rather than reduced to anonymous dots */
-  .cal-names {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    width: 100%;
-    min-width: 0;
-  }
-  .cal-name {
-    font-size: 8.5px;
-    line-height: 1.25;
-    text-align: left;
-    padding: 1px 2px 1px 3px;
-    border-left: 2px solid var(--text-tertiary);
-    border-radius: 1px;
-    background: var(--bg-secondary);
-    color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    min-width: 0;
-  }
-  .cal-name.paid {
-    text-decoration: line-through;
-    opacity: 0.55;
-  }
-  .cal-name.late {
-    background: rgba(216, 90, 90, 0.16);
-    color: var(--late-red);
-    font-weight: 600;
-  }
-  .cal-name.more {
-    background: transparent;
-    border-left-color: transparent;
-    color: var(--text-tertiary);
-    padding-left: 3px;
-  }
-
-  /* a date-range entry: a dashed band under the day number, closed off at
-     whichever end the range actually starts or finishes */
-  .cal-range-band {
-    display: block;
-    width: 100%;
-    height: 0;
-    border-top: 1.5px dashed currentColor;
-    opacity: 0.75;
-    margin: 1px 0;
-  }
-  .cal-range-band.start {
-    margin-left: 25%;
-    width: 75%;
-  }
-  .cal-range-band.end {
-    margin-right: 25%;
-    width: 75%;
-  }
-  .cal-range-band.start.end {
-    margin: 1px auto;
-    width: 50%;
-  }
-  /* the week-number gutter can't stay aligned once rows are flexible */
   .week-number-col,
   .week-number-gutter {
     display: none;
   }
 
-  /* the calendar fills its pane, so it shouldn't scroll the pane too */
   .main-content.mobile:has(.calendar-page) {
     overflow-y: hidden;
   }
 
-  /* ---------- home ---------- */
   .mobile-home {
     max-width: 480px;
     margin: 0 auto;
     width: 100%;
   }
-  /* ---------- Option C: unified summary card ---------- */
+
   .summary-card {
     margin-top: 12px;
     background: var(--bg-secondary);
@@ -1868,7 +1731,7 @@ label {
     border-radius: var(--radius-lg);
     overflow: hidden;
   }
-  /* net hero: subtly tinted by sign, big headline number */
+
   .summary-hero {
     padding: 20px 16px 18px;
     text-align: center;
@@ -1898,7 +1761,6 @@ label {
   }
   .summary-hero-proj b { font-weight: 600; }
 
-  /* supporting figures: aligned label/value rows */
   .summary-rows {
     display: flex;
     flex-direction: column;
@@ -1929,7 +1791,6 @@ label {
     flex-shrink: 0;
   }
 
-  /* bills as a checklist rather than a grid of tiles */
   .bill-checklist {
     display: flex;
     flex-direction: column;
@@ -1989,7 +1850,6 @@ label {
     flex-shrink: 0;
   }
 
-  /* charts stay out of the way until asked for */
   .advanced-toggle {
     display: flex;
     align-items: center;
@@ -2018,7 +1878,6 @@ label {
   }
 }
 
-/* Very narrow phones: shave the calendar down further. */
 @media (max-width: 360px) {
   .calendar-cell.mobile .calendar-date {
     width: 20px;
@@ -2040,8 +1899,6 @@ label {
   color: var(--text-tertiary);
 }
 
-/* the late-dot carries a light ring; in tight, clipped flex rows on mobile
-   its left edge can get shaved. A hair of left margin clears the ring. */
 @media (max-width: 768px) {
   .bill-check-name .late-dot,
   .list-item-name .late-dot {
@@ -2061,7 +1918,6 @@ label {
   cursor: pointer;
 }
 
-/* floating desktop-app button (web, desktop viewport only) */
 .sidebar-foot {
   margin-top: auto;
   padding-top: 8px;
@@ -2101,12 +1957,11 @@ label {
   border-radius: var(--radius-md);
   border-left: 3px solid var(--accent);
 }
-/* hide the desktop FAB on mobile - it has no desktop use there */
+
 @media (max-width: 768px) {
   .desktop-fab { display: none; }
 }
 
-/* Bills tab: category filter chips, each showing that group's monthly total */
 .bill-filter-row {
   display: flex;
   flex-wrap: wrap;
@@ -2154,18 +2009,16 @@ label {
 }
 .bill-filter-chip.active .bill-filter-edit { color: rgba(255,255,255,0.85); }
 
-/* late payment rows: a clear full red border that never sub-pixel-clips */
 .late-list-item {
   border: 1px solid var(--late-red);
 }
 @media (max-width: 768px) {
-  /* ensure the last card's bottom border clears the scroll edge */
+
   .late-list-item:last-child {
     margin-bottom: 2px;
   }
 }
 
-/* custom accent picker */
 .custom-accent-picker {
   margin: 4px 0 14px;
   padding: 12px;
@@ -2207,7 +2060,6 @@ label {
   cursor: pointer;
 }
 
-/* Today jump button in the calendar header */
 .today-btn {
   font-size: 12px;
   padding: 4px 12px;
@@ -2223,7 +2075,6 @@ label {
   min-height: 0;
 }
 
-/* ---------------- Sync UI ---------------- */
 .sync-status {
   display: flex;
   align-items: center;
@@ -2263,7 +2114,6 @@ label {
   cursor: pointer;
 }
 
-/* mobile header sync button with a "last exported" label beneath the icon */
 @media (max-width: 768px) {
   .mobile-header-sync-group {
     display: flex;
@@ -2301,7 +2151,6 @@ label {
   }
 }
 
-/* ---- setup wizard: keep entry cards from overflowing on mobile ---- */
 @media (max-width: 768px) {
   .setup-entry {
     max-width: 100%;
@@ -2322,8 +2171,7 @@ label {
   .setup-entry-fields > div {
     min-width: 0;
   }
-  /* the fixed desktop field widths force the row wider than the screen;
-     let them share the row and shrink instead */
+
   .setup-entry-fields .field-amount,
   .setup-entry-fields .field-date,
   .setup-entry-fields .field-freq,
@@ -2345,7 +2193,7 @@ label {
     min-width: 0;
     max-width: 55%;
   }
-  /* clean, consistent borders on setup controls */
+
   .setup-entry input,
   .setup-entry select {
     border: 0.5px solid var(--border-secondary);
@@ -2354,7 +2202,6 @@ label {
   }
 }
 
-/* ---- center raised add button in the tab bar ---- */
 @media (max-width: 768px) {
   .mobile-tabbar { align-items: flex-end; }
   .mobile-tab-add {
@@ -2365,7 +2212,7 @@ label {
     border: none;
     background: transparent;
     padding: 0;
-    /* lift the circle so it sits proud of the bar like a typical app FAB */
+
     margin-bottom: 6px;
     cursor: pointer;
   }
@@ -2399,7 +2246,6 @@ label {
   }
 }
 
-/* ---- Add expense: type tiles (icon + name + hint) ---- */
 .type-tiles {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2428,7 +2274,6 @@ label {
 .type-tile-desc { font-size: 10px; color: var(--text-tertiary); }
 .type-tile.selected .type-tile-desc { color: var(--accent-text); }
 
-/* ================= Mobile calendar (grid A + agenda C) ================= */
 @media (max-width: 768px) {
   .calendar-page.calm {
     display: flex;
@@ -2471,7 +2316,6 @@ label {
     white-space: nowrap;
   }
 
-  /* segmented Month / Agenda toggle */
   .calm-toggle {
     display: flex;
     gap: 4px;
@@ -2495,7 +2339,6 @@ label {
     color: #fff;
   }
 
-  /* swipe viewport clips the sliding month */
   .calm-swipe {
     flex: 1 1 auto;
     min-height: 0;
@@ -2504,11 +2347,24 @@ label {
   }
   .calm-slide {
     height: 100%;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
   .calm-slide.slide-left { animation: calm-in-left 0.22s ease; }
   .calm-slide.slide-right { animation: calm-in-right 0.22s ease; }
+  .calm-grid-wrap {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+  .calm-agenda-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
   @keyframes calm-in-left {
     from { transform: translateX(28%); opacity: 0; }
     to { transform: translateX(0); opacity: 1; }
@@ -2518,7 +2374,6 @@ label {
     to { transform: translateX(0); opacity: 1; }
   }
 
-  /* ---- grid (Option A) ---- */
   .calm-dow {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
@@ -2534,34 +2389,44 @@ label {
   .calm-weeks {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 5px;
+    height: 100%;
   }
   .calm-week {
-    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0;
+    min-height: 0;
   }
   .calm-week-cells {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
-    gap: 4px;
+    gap: 5px;
+    flex: 1 1 0;
+    min-height: 0;
   }
   .calm-cell {
-    aspect-ratio: 1 / 1.15;
-    border-radius: 9px;
+    height: 100%;
+    min-height: 0;
+    border-radius: 10px;
     background: var(--bg-secondary);
-    border: none;
-    padding: 5px 4px 4px;
+    border: 0.5px solid var(--border-tertiary);
+    padding: 6px 4px 5px;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2px;
+    gap: 3px;
     overflow: hidden;
     cursor: pointer;
   }
   .calm-cell.out { opacity: 0.4; }
-  .calm-cell.today { outline: 1.5px solid var(--accent); outline-offset: -1.5px; }
-  .calm-cell.sel { background: var(--accent-bg); }
+  .calm-cell.today {
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .calm-cell.sel { background: var(--accent-bg); border-color: var(--accent); }
   .calm-dnum {
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-secondary);
     line-height: 1;
@@ -2585,26 +2450,23 @@ label {
     line-height: 5px;
   }
   .calm-amt {
-    font-size: 9px;
+    font-size: 9.5px;
     font-weight: 700;
     color: var(--text-secondary);
     line-height: 1;
   }
   .calm-amt.pos { color: var(--text-success); }
 
-  /* spanning range pills */
   .calm-pills {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 3px;
-    height: 15px;
-    pointer-events: none;
+    position: relative;
+    width: 100%;
+    margin-top: 3px;
+    flex-shrink: 0;
   }
   .calm-pill {
     position: absolute;
     height: 15px;
-    padding: 0 6px;
+    padding: 0 7px;
     border: none;
     border-radius: 7px;
     background: var(--pill);
@@ -2615,15 +2477,11 @@ label {
     overflow: hidden;
     text-overflow: ellipsis;
     text-align: left;
-    pointer-events: auto;
-    opacity: 0.95;
   }
-  /* squared inner edges when a pill continues past the week boundary */
   .calm-pill:not(.start) { border-top-left-radius: 0; border-bottom-left-radius: 0; }
   .calm-pill:not(.end) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
   .calm-pill.paid { opacity: 0.5; text-decoration: line-through; }
 
-  /* ---- agenda (Option C) ---- */
   .calm-agenda {
     background: var(--bg-secondary);
     border-radius: var(--radius-lg);

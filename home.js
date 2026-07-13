@@ -1,17 +1,16 @@
-/* ---------------- Home Page ---------------- */
 
 const DONUT_COLORS = ['#D85A5A', '#D8A857', '#8B6FD6', '#4FAE6B', '#D8845A', '#5AA8D8', '#C75AA8', '#7A8C5A'];
 
 function HomePage({ data, setData, isMobile }) {
   const currency = data.settings.currency;
-  const [breakdownGroupBy, setBreakdownGroupBy] = useState('source'); // 'source' | 'category'
-  const [breakdownFilter, setBreakdownFilter] = useState('bills'); // 'bills' | 'income' | 'both'
+  const [breakdownGroupBy, setBreakdownGroupBy] = useState('source');
+  const [breakdownFilter, setBreakdownFilter] = useState('bills');
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
-  const [priceModal, setPriceModal] = useState(null); // occurrence object or null
-  // mobile only: hides the charts behind a toggle so the page opens compact
+  const [priceModal, setPriceModal] = useState(null);
+
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
@@ -32,7 +31,6 @@ function HomePage({ data, setData, isMobile }) {
     [data, cursor]
   );
 
-  // one-time entries within this month
   const oneTimeThisMonth = useMemo(() => {
     return data.oneTimeEntries.filter((e) => {
       if (!e.date) return false;
@@ -53,8 +51,6 @@ function HomePage({ data, setData, isMobile }) {
   const totalProjectedIncome = incomeOccurrences.reduce((sum, o) => sum + o.amount, 0)
     + oneTimeIncomeThisMonth.reduce((sum, o) => sum + entryAmount(o), 0);
 
-  // range of projected income - for entries using an amount range, use min/max;
-  // fixed-amount entries contribute the same value to both ends.
   const projectedIncomeRange = useMemo(() => {
     let min = 0;
     let max = 0;
@@ -95,8 +91,6 @@ function HomePage({ data, setData, isMobile }) {
       .filter((o) => isPaid(data, o.id, o.occDate))
       .reduce((sum, o) => sum + o.amount, 0);
 
-  // all bills this month, paid or not - for the tile grid. Paid bills sort
-  // to the end so the grid stays focused on what still needs attention.
   const allTiles = useMemo(() => {
     return [...billOccurrences, ...oneTimePaymentsThisMonth]
       .sort((a, b) => {
@@ -114,9 +108,6 @@ function HomePage({ data, setData, isMobile }) {
     setData(next);
   }
 
-  // Day-by-day cumulative totals across the month, for the cash-flow chart -
-  // one running total for bills, one for income, so their overlap/timing is
-  // visible at a glance.
   const cashFlowSeries = useMemo(() => {
     const daysInMonth = monthEnd.getDate();
     const billsByDay = new Array(daysInMonth + 1).fill(0);
@@ -154,7 +145,6 @@ function HomePage({ data, setData, isMobile }) {
     return points;
   }, [billOccurrences, oneTimePaymentsThisMonth, incomeOccurrences, oneTimeIncomeThisMonth, cursor]);
 
-  // last month's totals, for the comparison card
   const lastMonthTotals = useMemo(() => {
     const lastMonthStart = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1);
     const lastMonthEnd = new Date(cursor.getFullYear(), cursor.getMonth(), 0);
@@ -176,7 +166,6 @@ function HomePage({ data, setData, isMobile }) {
     return { totalBills: totalBillsLast, totalIncome: totalIncomeLast };
   }, [data, cursor]);
 
-  // summary stats - biggest bill, biggest income source, average bill size
   const monthSummary = useMemo(() => {
     const billRows = [...billOccurrences, ...oneTimePaymentsThisMonth];
     const incomeRows = [...incomeOccurrences, ...oneTimeIncomeThisMonth.map((o) => ({ ...o, amount: resolvedAmount(data, o, o.date) }))];
@@ -210,8 +199,7 @@ function HomePage({ data, setData, isMobile }) {
     }
 
     const sc = data.settings.sectionColors || {};
-    // for one-time entries, payments and income use separate configurable
-    // colors even though they share a sourceList key
+
     const sourceColorFor = (o) => {
       if (o.sourceList === 'oneTimeEntries') return o.kind === 'income' ? sc.oneTimeIncome : sc.oneTimePayments;
       return sc[o.sourceList];
@@ -220,9 +208,7 @@ function HomePage({ data, setData, isMobile }) {
     const groups = {};
     rows.forEach((o) => {
       if (breakdownGroupBy === 'source') {
-        // one-time payments and one-time income are tracked as separate
-        // groups (they have separate colors), even though both live under
-        // the oneTimeEntries sourceList
+
         const groupKey = o.sourceList === 'oneTimeEntries' ? `oneTimeEntries:${o.kind}` : o.sourceList;
         const label = o.sourceList === 'oneTimeEntries'
           ? (o.kind === 'income' ? 'One-time income' : 'One-time payments')
@@ -242,8 +228,6 @@ function HomePage({ data, setData, isMobile }) {
       .map((g, i) => ({ ...g, pct: total > 0 ? g.amount / total : 0, color: g.color || DONUT_COLORS[i % DONUT_COLORS.length] }));
   }, [billOccurrences, oneTimePaymentsThisMonth, incomeOccurrences, oneTimeIncomeThisMonth, breakdownGroupBy, breakdownFilter, data]);
 
-  // next 7 days, bills and income combined, chronological - independent of
-  // the month being viewed, since due dates can straddle month boundaries
   const next7Days = useMemo(() => {
     const start = new Date(today);
     const end = new Date(today);
@@ -268,7 +252,6 @@ function HomePage({ data, setData, isMobile }) {
 
   const monthLabel = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
-  // --- shared pieces used by both layouts ---
   const next7List = next7Days.length === 0
     ? h('p', { className: 'empty-state' }, 'Nothing due in the next 7 days.')
     : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
@@ -298,8 +281,6 @@ function HomePage({ data, setData, isMobile }) {
         h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
       ),
 
-      // Option C: one unified summary card. Net is the tinted hero at the top,
-      // the four supporting figures are an aligned list beneath.
       h('div', { className: `summary-card${netSoFar >= 0 ? ' pos' : ' neg'}` },
         h('div', { className: 'summary-hero' },
           h('p', { className: 'summary-hero-label' }, 'Net so far'),
@@ -341,7 +322,6 @@ function HomePage({ data, setData, isMobile }) {
         )
       ),
 
-      // bills as a tickable checklist rather than tiles
       h('p', { className: 'section-title' }, 'Bills this month'),
       allTiles.length === 0
         ? h('p', { className: 'empty-state' }, 'Nothing scheduled this month.')
@@ -379,7 +359,6 @@ function HomePage({ data, setData, isMobile }) {
       h('p', { className: 'section-title' }, 'Next 7 days'),
       next7List,
 
-      // everything analytical hides behind this until asked for
       h('label', { className: 'advanced-toggle' },
         h('input', {
           type: 'checkbox',
@@ -519,8 +498,6 @@ function HomePage({ data, setData, isMobile }) {
   );
 }
 
-/* ---------------- Month Summary Card ---------------- */
-
 function MonthSummaryCard({ summary, currency }) {
   return h('div', { className: 'card' },
     h('p', { style: { margin: '0 0 10px', fontWeight: 500 } }, 'This month at a glance'),
@@ -541,8 +518,6 @@ function MonthSummaryCard({ summary, currency }) {
     )
   );
 }
-
-/* ---------------- Month Comparison Card ---------------- */
 
 function MonthComparisonCard({ lastMonth, thisMonth, currency }) {
   const billsDelta = thisMonth.totalBills - lastMonth.totalBills;
@@ -578,10 +553,8 @@ function MonthComparisonCard({ lastMonth, thisMonth, currency }) {
   );
 }
 
-/* ---------------- Cumulative cash flow chart ---------------- */
-
 function CashFlowChart({ points, currency }) {
-  const [view, setView] = useState('cumulative'); // 'cumulative' | 'daily'
+  const [view, setView] = useState('cumulative');
   const [hoverIdx, setHoverIdx] = useState(null);
 
   if (points.length === 0) return null;
@@ -604,7 +577,6 @@ function CashFlowChart({ points, currency }) {
 
   const pathFor = (key) => points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${PAD_L + i * stepX} ${scaleY(p[key])}`).join(' ');
 
-  // a handful of evenly-spaced day labels along the x-axis (avoid crowding for long months)
   const labelEvery = points.length > 20 ? 5 : points.length > 10 ? 2 : 1;
   const hovered = hoverIdx !== null ? points[hoverIdx] : null;
 
@@ -629,7 +601,7 @@ function CashFlowChart({ points, currency }) {
         className: 'cashflow-chart',
         onMouseLeave: () => setHoverIdx(null)
       },
-        // horizontal gridlines + scale labels
+
         h('line', { x1: PAD_L, y1: PAD_T, x2: PAD_L, y2: H - PAD_B, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
         h('line', { x1: PAD_L, y1: zeroY, x2: W - PAD_R, y2: zeroY, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
         h('text', { x: PAD_L - 8, y: PAD_T + 4, fontSize: 10, fill: 'var(--text-secondary)', textAnchor: 'end' }, fmtCurrency(maxVal, currency)),
@@ -656,7 +628,6 @@ function CashFlowChart({ points, currency }) {
           stroke: 'var(--border-secondary)', strokeWidth: 1
         }) : null,
 
-        // invisible hit zones, one per data point, for hover detection
         points.map((p, i) => h('rect', {
           key: `hit-${i}`,
           x: PAD_L + i * stepX - (stepX / 2 || 6),
@@ -681,8 +652,6 @@ function CashFlowChart({ points, currency }) {
     )
   );
 }
-
-/* ---------------- Category Breakdown Donut ---------------- */
 
 function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setFilter }) {
   const total = rows.reduce((s, r) => s + r.amount, 0);
@@ -741,8 +710,6 @@ function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setF
         )
   );
 }
-
-/* ---------------- Price Override Modal ---------------- */
 
 function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
   const existing = getOverride(data, occ.id, occ.occDate);

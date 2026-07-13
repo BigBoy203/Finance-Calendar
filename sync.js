@@ -1,18 +1,3 @@
-/* ---------------- Sync layer ----------------
- * Local-first sync with no server. Two modes:
- *
- *   Desktop (Chrome/Edge): the File System Access API lets us hold a handle
- *   to a user-chosen .json file across sessions (persisted in IndexedDB).
- *   After the one-time pick, Sync writes to that file and reads from it
- *   directly - no dialogs, no Files app.
- *
- *   iOS Safari (and anything without the API): falls back to a blob download
- *   (which routes through the iOS share sheet -> Save to Files / LocalSend)
- *   and a file-picker import.
- *
- * Conflict rule: newest wins, compared on data.lastModified. Reads never
- * silently replace newer local data - the caller is told and decides.
- */
 
 const Sync = (function () {
   const HANDLE_KEY = 'sync-file-handle';
@@ -23,8 +8,6 @@ const Sync = (function () {
     && 'showSaveFilePicker' in window
     && 'showOpenFilePicker' in window;
 
-  // ---- tiny IndexedDB helpers (handles must live in IDB, not localStorage,
-  // because a FileSystemFileHandle is a structured-clonable object) ----
   function openDb() {
     return new Promise((resolve, reject) => {
       const req = indexedDB.open(DB_NAME);
@@ -63,7 +46,6 @@ const Sync = (function () {
     });
   }
 
-  // ---- file handle lifecycle (desktop) ----
   async function getSavedHandle() {
     if (!supportsFileSystem) return null;
     try { return await idbGet(HANDLE_KEY); } catch (e) { return null; }
@@ -75,9 +57,6 @@ const Sync = (function () {
     await idbDel(HANDLE_KEY);
   }
 
-  // Verify (and if needed, re-request) permission on a stored handle. Browsers
-  // may require a fresh user gesture after a restart, so this is called from
-  // within click handlers.
   async function ensurePermission(handle, mode) {
     if (!handle || !handle.queryPermission) return true;
     const opts = { mode: mode || 'readwrite' };
@@ -86,7 +65,6 @@ const Sync = (function () {
     return false;
   }
 
-  // Let the user choose / create the sync file (desktop). One-time.
   async function linkFile() {
     if (!supportsFileSystem) return { ok: false, unsupported: true };
     try {
@@ -102,7 +80,6 @@ const Sync = (function () {
     }
   }
 
-  // Pick an existing file to link + read from (desktop "connect to existing").
   async function linkExistingFile() {
     if (!supportsFileSystem) return { ok: false, unsupported: true };
     try {
@@ -126,10 +103,6 @@ const Sync = (function () {
     return parsed;
   }
 
-  // ---- write ----
-  // Desktop: write to the linked file. Phone/unsupported: trigger a download
-  // (routes through the share sheet). `data` should already carry a current
-  // lastModified stamp.
   async function writeOut(data) {
     const json = JSON.stringify(data, null, 2);
     const handle = await getSavedHandle();
@@ -145,7 +118,7 @@ const Sync = (function () {
         return { ok: false, error: String((err && err.message) || err) };
       }
     }
-    // fallback: download / share sheet
+
     try {
       const stamp = new Date().toISOString().slice(0, 10);
       const blob = new Blob([json], { type: 'application/json' });
@@ -163,9 +136,6 @@ const Sync = (function () {
     }
   }
 
-  // ---- read ----
-  // Desktop: read the linked file. Returns the parsed data (caller compares
-  // lastModified and decides whether to apply).
   async function readLinked() {
     const handle = await getSavedHandle();
     if (!supportsFileSystem || !handle) return { ok: false, noFile: true };
@@ -182,16 +152,13 @@ const Sync = (function () {
     }
   }
 
-  // Phone/unsupported: open a file picker and read the chosen file.
   function readFromPicker() {
     return new Promise((resolve) => {
       const input = document.createElement('input');
       input.type = 'file';
-      // iOS is picky about accept filters and can grey out valid .json files
-      // saved from other apps, so accept broadly and validate after reading.
+
       input.accept = '.json,application/json,text/plain,text/json';
-      // iOS Safari will not reliably fire 'change' for a detached input, so it
-      // must live in the DOM. Keep it invisible and off-layout.
+
       input.style.position = 'fixed';
       input.style.left = '-9999px';
       input.style.opacity = '0';
@@ -212,10 +179,7 @@ const Sync = (function () {
         reader.onerror = () => finish({ ok: false, error: 'Could not read the file.' });
         reader.readAsText(file);
       };
-      // No focus-based cancel timeout: on iOS it fires before the file is
-      // handed over and wrongly reports a cancel. If the user backs out, the
-      // promise simply stays pending until the next attempt, which is
-      // harmless. A cancel is only reported when the picker returns no file.
+
       input.click();
     });
   }

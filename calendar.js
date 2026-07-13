@@ -1,9 +1,7 @@
-/* ---------------- Calendar Page ---------------- */
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DOW_FULL = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-// Short currency for tight calendar cells: $1,240 -> $1.2k, $95 -> $95.
 function fmtCompact(amount, currency) {
   const sym = (currency === 'EUR') ? '\u20ac' : (currency === 'GBP') ? '\u00a3' : '$';
   const n = Math.round(Number(amount) || 0);
@@ -14,20 +12,15 @@ function fmtCompact(amount, currency) {
   return `${sym}${n}`;
 }
 
-// ISO-8601 week number for a given date.
 function getISOWeekNumber(date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = (d.getUTCDay() + 6) % 7; // Monday = 0
+  const dayNum = (d.getUTCDay() + 6) % 7;
   d.setUTCDate(d.getUTCDate() - dayNum + 3);
   const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
   const diff = (d - firstThursday) / 86400000;
   return 1 + Math.round(diff / 7);
 }
 
-// Builds a list of { startDate, endDate, name, kind, id, occDate } spans for
-// entries that use a date range (and are not also recurring in a way that
-// makes a span ambiguous - recurring date-range entries shift their span by
-// the same offset as each occurrence).
 function getDateRangeSpans(data, allBills, gridStart, gridEnd) {
   const spans = [];
 
@@ -45,10 +38,9 @@ function getDateRangeSpans(data, allBills, gridStart, gridEnd) {
       return;
     }
 
-    // recurring with a date range - shift the span for each occurrence
     const removed = data.removedOccurrences || {};
     expandEntry(e, gridStart, gridEnd).forEach((occ) => {
-      if (removed[`${e.id}|${occ.occDate}`]) return; // single occurrence removed, rule untouched
+      if (removed[`${e.id}|${occ.occDate}`]) return;
       const occStart = parseYmd(occ.occDate);
       const occEnd = new Date(occStart);
       occEnd.setDate(occEnd.getDate() + offsetDays);
@@ -80,16 +72,16 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
   const [selectedDay, setSelectedDay] = useState(null);
-  // mobile: 'grid' (month overview) or 'agenda' (list of active days)
+
   const [view, setView] = useState('grid');
-  // drives the slide animation on month change: 'left' | 'right' | null
+
   const [slideDir, setSlideDir] = useState(null);
 
   const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
   const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
 
   const gridStart = new Date(monthStart);
-  // shift so the grid starts on firstDow
+
   let leadingDays = (monthStart.getDay() - firstDow + 7) % 7;
   gridStart.setDate(gridStart.getDate() - leadingDays);
   const gridEnd = new Date(monthEnd);
@@ -98,7 +90,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
 
   const allBills = getAllBillLikeEntries(data);
 
-  // quick lookup so each occurrence knows which list its template entry lives in
   const sourceListById = useMemo(() => buildSourceListLookup(data), [data]);
 
   const occurrences = useMemo(() => {
@@ -124,33 +115,8 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return map;
   }, [occurrences]);
 
-  // entries whose occurrence ALSO has a date range get excluded from the
-  // normal day-chip list so they don't show twice - they're rendered as a
-  // thin connector overlay between their start/end markers instead.
   const rangeSpans = useMemo(() => getDateRangeSpans(data, allBills, gridStart, gridEnd), [data, cursor]);
   const rangeEntryIds = useMemo(() => new Set(rangeSpans.map((s) => s.id)), [rangeSpans]);
-
-  // Mobile can't draw the connector bars, so instead each day inside a span
-  // gets a dashed band. Map every date string to the span covering it.
-  const rangeDayMap = useMemo(() => {
-    const map = {};
-    rangeSpans.forEach((s) => {
-      const cur = new Date(s.startDate);
-      while (cur <= s.endDate) {
-        const key = ymd(cur);
-        if (!map[key]) {
-          map[key] = {
-            color: s.color || (s.kind === 'income' ? '#4FAE6B' : '#D85A5A'),
-            isStart: key === ymd(s.startDate),
-            isEnd: key === ymd(s.endDate),
-            name: s.name
-          };
-        }
-        cur.setDate(cur.getDate() + 1);
-      }
-    });
-    return map;
-  }, [rangeSpans]);
 
   function changeMonth(delta) {
     setSlideDir(delta > 0 ? 'left' : 'right');
@@ -158,8 +124,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     setSelectedDay(null);
   }
 
-  // Numeric amount for an occurrence: override wins, else a range midpoint,
-  // else the plain amount. Used for the mobile day totals.
   function occAmount(o) {
     if (o.hasOverride) return Number(o.amount) || 0;
     if (o.isRange) {
@@ -170,8 +134,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return Number(o.amount) || 0;
   }
 
-  // Per-day summary for the mobile grid (Option A): a few colored dots showing
-  // what kind of items land that day, plus the day's net dollar movement.
   const daySummary = useMemo(() => {
     const map = {};
     Object.keys(occByDate).forEach((dateStr) => {
@@ -194,7 +156,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return map;
   }, [occByDate, data]);
 
-  // Agenda view (Option C): only days that have something, in date order.
   const agendaDays = useMemo(() => {
     return Object.keys(occByDate)
       .filter((ds) => {
@@ -219,7 +180,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     d.setDate(d.getDate() + 1);
   }
 
-  // split into week rows of 7
   const weeks = [];
   for (let i = 0; i < cells.length; i += 7) {
     weeks.push(cells.slice(i, i + 7));
@@ -235,9 +195,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
   const showWeekNumbers = !!data.settings.showWeekNumbers;
   const selectedOccs = selectedDay ? (occByDate[selectedDay] || []) : [];
 
-  // range connectors: each span becomes one or more per-week pixel-percent
-  // segments (a span crossing a week boundary is split so it never has to
-  // affect row height - it's drawn as an overlay positioned over the grid).
   const rangeSegments = useMemo(() => {
     const segments = [];
     weeks.forEach((week, wi) => {
@@ -247,8 +204,8 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
         if (s.endDate < weekStart || s.startDate > weekEnd) return;
         const start = s.startDate < weekStart ? weekStart : s.startDate;
         const end = s.endDate > weekEnd ? weekEnd : s.endDate;
-        const startCol = daysBetween(weekStart, start); // 0-indexed
-        const endCol = daysBetween(weekStart, end); // 0-indexed
+        const startCol = daysBetween(weekStart, start);
+        const endCol = daysBetween(weekStart, end);
         const paid = isPaid(data, s.id, s.occDate);
         const midDays = Math.floor(daysBetween(s.startDate, s.endDate) / 2);
         const midDate = new Date(s.startDate);
@@ -271,7 +228,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return segments;
   }, [weeks, rangeSpans, data]);
 
-  // swipe left/right on the grid to change months (mobile)
   const swipeStart = useRef(null);
   function onTouchStart(e) {
     if (e.touches.length !== 1) { swipeStart.current = null; return; }
@@ -283,13 +239,12 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     const dx = t.clientX - swipeStart.current.x;
     const dy = t.clientY - swipeStart.current.y;
     swipeStart.current = null;
-    // horizontal, decisive, and not mostly-vertical scroll
+
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) {
       changeMonth(dx < 0 ? 1 : -1);
     }
   }
 
-  // ---------------- MOBILE calendar (grid A + agenda C) ----------------
   if (isMobile) {
     const monthLabel = `${MONTH_NAMES[cursor.getMonth()]} ${cursor.getFullYear()}`;
 
@@ -299,9 +254,16 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
       ),
       h('div', { className: 'calm-weeks' },
         weeks.map((week, wi) => {
-          // range pills that touch this week
           const weekPills = rangeSegments.filter((seg) => seg.week === wi);
-          return h('div', { key: wi, className: 'calm-week' },
+          const lanes = [];
+          weekPills.forEach((seg) => {
+            let laneIdx = lanes.findIndex((lane) => lane.every((p) => seg.startCol > p.endCol || seg.endCol < p.startCol));
+            if (laneIdx === -1) { laneIdx = lanes.length; lanes.push([]); }
+            lanes[laneIdx].push(seg);
+            seg._lane = laneIdx;
+          });
+          const laneCount = lanes.length;
+          return h('div', { key: wi, className: 'calm-week', style: { '--lanes': laneCount } },
             h('div', { className: 'calm-week-cells' },
               week.map((cd) => {
                 const dateStr = ymd(cd);
@@ -309,7 +271,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
                 const isToday = dateStr === todayStr;
                 const isSelected = selectedDay === dateStr;
                 const sum = daySummary[dateStr];
-                // dots exclude range entries (shown as pills)
                 const dotColors = sum
                   ? sum.colors.filter((_, idx) => {
                       const o = occByDate[dateStr][idx];
@@ -338,15 +299,20 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
                 );
               })
             ),
-            // spanning range pills for this week
-            weekPills.length ? h('div', { className: 'calm-pills' },
+            laneCount ? h('div', { className: 'calm-pills', style: { height: `${laneCount * 17}px` } },
               weekPills.map((seg) => {
                 const leftPct = (seg.startCol / 7) * 100;
                 const widthPct = ((seg.endCol - seg.startCol + 1) / 7) * 100;
                 return h('button', {
                   key: seg.key,
                   className: `calm-pill${seg.paid ? ' paid' : ''}${seg.isStart ? ' start' : ''}${seg.isEnd ? ' end' : ''}`,
-                  style: { left: `${leftPct}%`, width: `${widthPct}%`, '--pill': seg.color, color: readableTextOn(seg.color) },
+                  style: {
+                    left: `${leftPct}%`,
+                    width: `${widthPct}%`,
+                    top: `${seg._lane * 17}px`,
+                    '--pill': seg.color,
+                    color: readableTextOn(seg.color)
+                  },
                   onClick: () => setSelectedDay(seg.occDate),
                   title: seg.name
                 }, seg.showLabel ? seg.name : '\u00a0');
@@ -359,7 +325,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
 
     const agendaView = agendaDays.length === 0
       ? h('div', { className: 'calm-agenda-empty' }, 'Nothing scheduled this month.')
-      : h('div', { className: 'calm-agenda' },
+      : h('div', { className: 'calm-agenda-scroll' }, h('div', { className: 'calm-agenda' },
           agendaDays.map(({ dateStr, items }) => {
             const d = parseYmd(dateStr);
             const isToday = dateStr === todayStr;
@@ -390,7 +356,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
               )
             );
           })
-        );
+        ));
 
     return h('div', { className: 'calendar-page calm' },
       h('div', { className: 'calm-header' },
@@ -402,7 +368,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
         h('button', { className: 'calm-nav', onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '\u203a')
       ),
 
-      // grid / agenda toggle
       h('div', { className: 'calm-toggle' },
         h('button', { className: `calm-toggle-btn${view === 'grid' ? ' on' : ''}`, onClick: () => setView('grid') }, 'Month'),
         h('button', { className: `calm-toggle-btn${view === 'agenda' ? ' on' : ''}`, onClick: () => setView('agenda') }, 'Agenda')
@@ -453,8 +418,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
             week.map((cd) => {
               const dateStr = ymd(cd);
               const inMonth = cd.getMonth() === cursor.getMonth();
-              // Range entries are drawn as bars (desktop) or a dashed band
-              // (mobile), so they're kept out of the per-day list either way.
+
               const occs = (occByDate[dateStr] || []).filter((o) => !rangeEntryIds.has(o.id));
               const isToday = dateStr === todayStr;
               const isPast = cd < today;
@@ -498,8 +462,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
           )
         ),
 
-        // Range bars are drawn across the grid; on a phone-width grid there
-        // is no room for them, and their entries still appear in the day sheet.
         isMobile ? null : h('div', { className: 'range-overlay' },
           rangeSegments.map((seg) => {
             const leftPct = (seg.startCol / 7) * 100;
@@ -540,13 +502,11 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
   );
 }
 
-/* ---------------- Day Detail Modal ---------------- */
-
 function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAddEntry }) {
   const sheet = useSheetDismiss(onClose);
   const [priceModal, setPriceModal] = useState(null);
-  const [editing, setEditing] = useState(null); // { sourceList, form } or null
-  const [confirmRemove, setConfirmRemove] = useState(null); // `${id}|${occDate}` or null
+  const [editing, setEditing] = useState(null);
+  const [confirmRemove, setConfirmRemove] = useState(null);
 
   function togglePaid(o) {
     const wasPaid = isPaid(data, o.id, o.occDate);
@@ -556,7 +516,7 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
   }
 
   function openEdit(o) {
-    if (o.sourceList === 'creditCards') return; // managed on Credit cards page
+    if (o.sourceList === 'creditCards') return;
     setEditing({ sourceList: o.sourceList, form: { ...entryToFormShape(o), _isNew: false } });
   }
 
@@ -577,7 +537,7 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
   function removeThisOccurrence(o) {
     let next;
     if (o.sourceList === 'oneTimeEntries') {
-      // one-time entries have exactly one occurrence - "remove" means delete it outright
+
       next = { ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== o.id) };
       next = logActivity(next, `Removed "${o.name}"`);
     } else {
@@ -651,4 +611,3 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
     )
   );
 }
-
