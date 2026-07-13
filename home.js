@@ -298,41 +298,46 @@ function HomePage({ data, setData, isMobile }) {
         h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
       ),
 
-      // four headline numbers, evenly squared off
-      h('div', { className: 'metric-grid-2x2' },
-        h('div', { className: 'metric-card' },
-          h('p', { className: 'metric-label' }, 'Bills this month'),
-          h('p', { className: 'metric-value' }, fmtCurrency(totalBills, currency))
+      // Option C: one unified summary card. Net is the tinted hero at the top,
+      // the four supporting figures are an aligned list beneath.
+      h('div', { className: `summary-card${netSoFar >= 0 ? ' pos' : ' neg'}` },
+        h('div', { className: 'summary-hero' },
+          h('p', { className: 'summary-hero-label' }, 'Net so far'),
+          h('p', {
+            className: 'summary-hero-value',
+            style: { color: netSoFar >= 0 ? 'var(--text-success)' : 'var(--late-red)' }
+          }, `${netSoFar >= 0 ? '+' : ''}${fmtCurrency(netSoFar, currency)}`),
+          h('p', { className: 'summary-hero-proj' },
+            'Projected ',
+            h('b', { style: { color: netProjected >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
+              `${netProjected >= 0 ? '+' : ''}${fmtCurrency(netProjected, currency)}`)
+          )
         ),
-        h('div', { className: 'metric-card' },
-          h('p', { className: 'metric-label' }, 'Income so far'),
-          h('p', { className: 'metric-value', style: { color: 'var(--text-success)' } }, fmtCurrency(incomeReceived, currency))
-        ),
-        h('div', { className: 'metric-card' },
-          h('p', { className: 'metric-label' }, 'Covered so far'),
-          h('p', { className: 'metric-value', style: { color: 'var(--text-warning)' } }, fmtCurrency(billsPaid, currency)),
-          h('p', { className: 'metric-foot' }, `of ${fmtCurrency(totalBills, currency)} \u00b7 ${fmtCurrency(Math.max(0, totalBills - billsPaid), currency)} left`)
-        ),
-        h('div', { className: 'metric-card' },
-          h('p', { className: 'metric-label' }, 'Projected income'),
-          h('p', { className: 'metric-value' }, fmtCurrency(totalProjectedIncome, currency)),
-          hasIncomeRange
-            ? h('p', { className: 'metric-foot' }, `${fmtCurrency(projectedIncomeRange.min, currency)}\u2013${fmtCurrency(projectedIncomeRange.max, currency)}`)
-            : h('p', { className: 'metric-foot' }, `${fmtCurrency(incomeReceived, currency)} received`)
-        )
-      ),
-
-      // the wide card from the sketch: both net figures side by side
-      h('div', { className: 'metric-card net-card' },
-        h('div', { className: 'net-card-half' },
-          h('p', { className: 'metric-label' }, 'Net so far'),
-          h('p', { className: 'metric-value', style: { color: netSoFar >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
-            `${netSoFar >= 0 ? '+' : ''}${fmtCurrency(netSoFar, currency)}`)
-        ),
-        h('div', { className: 'net-card-half net-card-half-right' },
-          h('p', { className: 'metric-label' }, 'Net projected'),
-          h('p', { className: 'metric-value', style: { color: netProjected >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
-            `${netProjected >= 0 ? '+' : ''}${fmtCurrency(netProjected, currency)}`)
+        h('div', { className: 'summary-rows' },
+          h('div', { className: 'summary-row' },
+            h('span', { className: 'summary-row-label' }, 'Bills this month'),
+            h('span', { className: 'summary-row-value' }, fmtCurrency(totalBills, currency))
+          ),
+          h('div', { className: 'summary-row' },
+            h('span', { className: 'summary-row-label' },
+              'Covered so far',
+              h('span', { className: 'summary-row-foot' }, `${fmtCurrency(Math.max(0, totalBills - billsPaid), currency)} left`)
+            ),
+            h('span', { className: 'summary-row-value', style: { color: 'var(--text-warning)' } }, fmtCurrency(billsPaid, currency))
+          ),
+          h('div', { className: 'summary-row' },
+            h('span', { className: 'summary-row-label' }, 'Income so far'),
+            h('span', { className: 'summary-row-value', style: { color: 'var(--text-success)' } }, fmtCurrency(incomeReceived, currency))
+          ),
+          h('div', { className: 'summary-row' },
+            h('span', { className: 'summary-row-label' },
+              'Projected income',
+              hasIncomeRange
+                ? h('span', { className: 'summary-row-foot' }, `${fmtCurrency(projectedIncomeRange.min, currency)}\u2013${fmtCurrency(projectedIncomeRange.max, currency)}`)
+                : null
+            ),
+            h('span', { className: 'summary-row-value' }, fmtCurrency(totalProjectedIncome, currency))
+          )
         )
       ),
 
@@ -740,7 +745,6 @@ function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setF
 /* ---------------- Price Override Modal ---------------- */
 
 function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
-  const sheet = useSheetDismiss(onClose);
   const existing = getOverride(data, occ.id, occ.occDate);
   const [price, setPrice] = useState(existing && existing.amount !== undefined ? String(existing.amount) : '');
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -797,12 +801,15 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
     ? `${fmtCurrency(occ.amountMin, currency)}-${fmtCurrency(occ.amountMax, currency)}`
     : fmtCurrency(entryAmount(occ), currency);
 
-  return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
-    h('div', { className: 'modal-content' },
-      h('div', { className: 'sheet-grabber', ...sheet, 'aria-label': 'Close' }),
-      h('div', { className: 'row-between' },
+  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+    h('div', { className: 'modal-content as-window' },
+      h('div', { className: 'modal-window-head' },
         h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, occ.name),
-        h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')
+        h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
+          h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
+            h('path', { d: 'M6 6l12 12M18 6L6 18' })
+          )
+        )
       ),
       h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } }, dateLabel),
       h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } },

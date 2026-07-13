@@ -1,17 +1,17 @@
 /* ---------------- Quick Add Modal ---------------- */
 
 const ENTRY_TYPES = [
-  { id: 'bill', label: 'Bill' },
-  { id: 'subscription', label: 'Subscription' },
-  { id: 'oneTimePayment', label: 'One-time payment' },
-  { id: 'oneTimeIncome', label: 'One-time income' }
+  { id: 'oneTimePayment', label: 'One-time payment', icon: '\u{1F4B3}', desc: 'A single expense' },
+  { id: 'bill', label: 'Bill', icon: '\u{1F4C5}', desc: 'Recurring' },
+  { id: 'subscription', label: 'Subscription', icon: '\u{1F504}', desc: 'Auto-renewing' },
+  { id: 'oneTimeIncome', label: 'Income', icon: '\u{1F4B0}', desc: 'Money in' }
 ];
 
 function QuickAddModal({ data, setData, initialDate, onClose }) {
-  const [type, setType] = useState('bill');
+  const [type, setType] = useState('oneTimePayment');
   const [form, setForm] = useState(() => blankEntry({
     date: initialDate || todayYmd(),
-    freq: 'monthly',
+    freq: 'none',
     category: 'Other'
   }));
 
@@ -64,7 +64,7 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
   return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
     h('div', { className: 'modal-content as-window' },
       h('div', { className: 'modal-window-head' },
-        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Add entry'),
+        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Add expense'),
         h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
           h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
             h('path', { d: 'M6 6l12 12M18 6L6 18' })
@@ -72,15 +72,16 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
         )
       ),
 
-      h('div', null,
-        h('label', null, 'Type'),
-        h('div', { className: 'type-selector' },
-          ENTRY_TYPES.map((t) =>
-            h('div', {
-              key: t.id,
-              className: `type-option${type === t.id ? ' selected' : ''}`,
-              onClick: () => setType(t.id)
-            }, t.label)
+      h('div', { className: 'type-tiles' },
+        ENTRY_TYPES.map((t) =>
+          h('button', {
+            key: t.id,
+            className: `type-tile${type === t.id ? ' selected' : ''}`,
+            onClick: () => setType(t.id)
+          },
+            h('span', { className: 'type-tile-icon' }, t.icon),
+            h('span', { className: 'type-tile-name' }, t.label),
+            h('span', { className: 'type-tile-desc' }, t.desc)
           )
         )
       ),
@@ -146,7 +147,7 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
 
       h('div', { className: 'row-between', style: { marginTop: '4px' } },
         h('button', { onClick: onClose }, 'Cancel'),
-        h('button', { className: 'primary', onClick: submit }, 'Add')
+        h('button', { className: 'primary', onClick: submit }, type === 'oneTimeIncome' ? 'Add income' : 'Add expense')
       )
     )
   );

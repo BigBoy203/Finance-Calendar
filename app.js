@@ -2,7 +2,7 @@ const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
 // Shown under the Settings heading. Bump this when the web build changes.
-const WEB_VERSION = '1.4';
+const WEB_VERSION = '1.9';
 
 /* ---------------- Helpers ---------------- */
 
@@ -858,27 +858,26 @@ function App() {
   if (isMobile) {
     const pageTitle = ({
       home: 'Home', calendar: 'Calendar', late: 'Late payments',
-      allbills: 'All bills', essentials: 'Essentials', creditcards: 'Credit cards',
+      allbills: 'Expenses', essentials: 'Essentials', creditcards: 'Credit cards',
       subscriptions: 'Subscriptions', settings: 'Settings'
     })[page] || 'Finance Calendar';
 
     return h('div', { className: 'app-shell mobile' },
       h(MobileHeader, {
         title: pageTitle,
-        onQuickAdd: () => setQuickAdd({ date: todayYmd() }),
+        onSettings: () => setPage('settings'),
         onSync: () => setSyncModal(true),
         onBack: MOBILE_SUBPAGES.includes(page) ? () => setPage('allbills') : null,
-        onHome: () => {
-          setPage('home');
-          const pane = document.querySelector('.main-content.mobile');
-          if (pane) pane.scrollTo({ top: 0, behavior: 'smooth' });
-        }
+        lastExported: data.settings && data.settings.lastExported
+          ? relativeTime(data.settings.lastExported)
+          : null
       }),
       h('div', { className: 'main-content mobile' }, syncBannerEl, pageContent),
       syncModal ? h(SyncModal, { data, setData: persist, onClose: () => setSyncModal(false) }) : null,
       h(MobileTabBar, {
         page,
         setPage,
+        onAdd: () => setQuickAdd({ date: todayYmd() }),
         lateCount: lateBills.length,
         needsAttentionCount
       }),
@@ -1142,9 +1141,9 @@ function useIsMobile() {
 const MOBILE_TABS = [
   { id: 'home', label: 'Home', icon: 'home' },
   { id: 'calendar', label: 'Calendar', icon: 'calendar' },
+  { id: 'add', label: 'Add', icon: 'plus', isAdd: true },
   { id: 'late', label: 'Late', icon: 'alert' },
-  { id: 'allbills', label: 'Bills', icon: 'allbills' },
-  { id: 'settings', label: 'Settings', icon: 'settings' }
+  { id: 'allbills', label: 'Expenses', icon: 'allbills' }
 ];
 
 // Which bottom tab should light up for a given page. Sub-pages of All Bills
@@ -1160,10 +1159,23 @@ const TAB_FOR_PAGE = {
   settings: 'settings'
 };
 
-function MobileTabBar({ page, setPage, lateCount, needsAttentionCount }) {
+function MobileTabBar({ page, setPage, onAdd, lateCount, needsAttentionCount }) {
   const activeTab = TAB_FOR_PAGE[page] || page;
   return h('nav', { className: 'mobile-tabbar' },
     MOBILE_TABS.map((tab) => {
+      // the centre "add" tab is a raised circular button, not a normal tab
+      if (tab.isAdd) {
+        return h('button', {
+          key: tab.id,
+          className: 'mobile-tab-add',
+          onClick: onAdd,
+          'aria-label': 'Add expense'
+        },
+          h('svg', { width: 26, height: 26, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.6, strokeLinecap: 'round' },
+            h('path', { d: 'M12 5v14M5 12h14' })
+          )
+        );
+      }
       const active = activeTab === tab.id;
       let badge = null;
       if (tab.id === 'late' && lateCount > 0) badge = lateCount;
@@ -1188,28 +1200,29 @@ function MobileTabBar({ page, setPage, lateCount, needsAttentionCount }) {
 // Compact top bar shown on mobile in place of the sidebar brand block.
 // A three-column grid keeps the title optically centered no matter how wide
 // the left icon or right button are. Sub-pages get a back arrow.
-function MobileHeader({ title, onQuickAdd, onBack, onHome, onSync }) {
+function MobileHeader({ title, onSettings, onBack, onSync, lastExported }) {
   return h('header', { className: 'mobile-header' },
     h('div', { className: 'mobile-header-left' },
       onBack
         ? h('button', { className: 'mobile-header-back', onClick: onBack, 'aria-label': 'Back' }, '\u2039')
-        : h('button', { className: 'mobile-header-logo-btn', onClick: onHome, 'aria-label': 'Home' },
-            h('img', { src: 'assets/icon.svg', alt: '', className: 'mobile-header-logo' })
-          )
+        : (onSync
+            ? h('button', { className: 'mobile-header-sync-group', onClick: onSync, 'aria-label': 'Sync data' },
+                h('span', { className: 'mobile-header-sync-icon' },
+                  h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' },
+                    h('path', { d: 'M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6' })
+                  )
+                ),
+                h('span', { className: 'mobile-header-sync-label' }, lastExported || 'Not synced')
+              )
+            : null)
     ),
     h('h1', { className: 'mobile-header-title' }, title || 'Finance Calendar'),
     h('div', { className: 'mobile-header-right' },
-      onSync
-        ? h('button', { className: 'mobile-header-sync', onClick: onSync, 'aria-label': 'Sync data' },
-            h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' },
-              h('path', { d: 'M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6' })
-            )
-          )
-        : null,
-      onQuickAdd
-        ? h('button', { className: 'mobile-header-add', onClick: onQuickAdd, 'aria-label': 'Quick add' },
-            h('svg', { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.4, strokeLinecap: 'round' },
-              h('path', { d: 'M12 5v14M5 12h14' })
+      onSettings
+        ? h('button', { className: 'mobile-header-settings', onClick: onSettings, 'aria-label': 'Settings' },
+            h('svg', { width: 21, height: 21, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8 },
+              h('circle', { cx: 12, cy: 12, r: 3 }),
+              h('path', { d: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z' })
             )
           )
         : null
@@ -1713,9 +1726,9 @@ function EntryCard({ row, categories, namePlaceholder, dateLabel, onChange, onRe
         onChange: (e) => onChange('name', e.target.value)
       }),
       categories ? h('select', {
+        className: 'setup-category-select',
         value: row.category || '',
-        onChange: (e) => onChange('category', e.target.value),
-        style: { width: '150px' }
+        onChange: (e) => onChange('category', e.target.value)
       }, categories.map((c) => h('option', { key: c, value: c }, c))) : null,
       h('button', { className: 'x-btn', 'aria-label': 'Remove', onClick: onRemove }, '\u00d7')
     ),
@@ -1858,17 +1871,17 @@ function CreditCardEntryList({ cards, onChange, onAdd, onRemove }) {
 /* ---------------- Quick Add Modal ---------------- */
 
 const ENTRY_TYPES = [
-  { id: 'bill', label: 'Bill' },
-  { id: 'subscription', label: 'Subscription' },
-  { id: 'oneTimePayment', label: 'One-time payment' },
-  { id: 'oneTimeIncome', label: 'One-time income' }
+  { id: 'oneTimePayment', label: 'One-time payment', icon: '\u{1F4B3}', desc: 'A single expense' },
+  { id: 'bill', label: 'Bill', icon: '\u{1F4C5}', desc: 'Recurring' },
+  { id: 'subscription', label: 'Subscription', icon: '\u{1F504}', desc: 'Auto-renewing' },
+  { id: 'oneTimeIncome', label: 'Income', icon: '\u{1F4B0}', desc: 'Money in' }
 ];
 
 function QuickAddModal({ data, setData, initialDate, onClose }) {
-  const [type, setType] = useState('bill');
+  const [type, setType] = useState('oneTimePayment');
   const [form, setForm] = useState(() => blankEntry({
     date: initialDate || todayYmd(),
-    freq: 'monthly',
+    freq: 'none',
     category: 'Other'
   }));
 
@@ -1921,7 +1934,7 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
   return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
     h('div', { className: 'modal-content as-window' },
       h('div', { className: 'modal-window-head' },
-        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Add entry'),
+        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Add expense'),
         h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
           h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
             h('path', { d: 'M6 6l12 12M18 6L6 18' })
@@ -1929,15 +1942,16 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
         )
       ),
 
-      h('div', null,
-        h('label', null, 'Type'),
-        h('div', { className: 'type-selector' },
-          ENTRY_TYPES.map((t) =>
-            h('div', {
-              key: t.id,
-              className: `type-option${type === t.id ? ' selected' : ''}`,
-              onClick: () => setType(t.id)
-            }, t.label)
+      h('div', { className: 'type-tiles' },
+        ENTRY_TYPES.map((t) =>
+          h('button', {
+            key: t.id,
+            className: `type-tile${type === t.id ? ' selected' : ''}`,
+            onClick: () => setType(t.id)
+          },
+            h('span', { className: 'type-tile-icon' }, t.icon),
+            h('span', { className: 'type-tile-name' }, t.label),
+            h('span', { className: 'type-tile-desc' }, t.desc)
           )
         )
       ),
@@ -2003,7 +2017,7 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
 
       h('div', { className: 'row-between', style: { marginTop: '4px' } },
         h('button', { onClick: onClose }, 'Cancel'),
-        h('button', { className: 'primary', onClick: submit }, 'Add')
+        h('button', { className: 'primary', onClick: submit }, type === 'oneTimeIncome' ? 'Add income' : 'Add expense')
       )
     )
   );
@@ -2308,41 +2322,46 @@ function HomePage({ data, setData, isMobile }) {
         h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
       ),
 
-      // four headline numbers, evenly squared off
-      h('div', { className: 'metric-grid-2x2' },
-        h('div', { className: 'metric-card' },
-          h('p', { className: 'metric-label' }, 'Bills this month'),
-          h('p', { className: 'metric-value' }, fmtCurrency(totalBills, currency))
+      // Option C: one unified summary card. Net is the tinted hero at the top,
+      // the four supporting figures are an aligned list beneath.
+      h('div', { className: `summary-card${netSoFar >= 0 ? ' pos' : ' neg'}` },
+        h('div', { className: 'summary-hero' },
+          h('p', { className: 'summary-hero-label' }, 'Net so far'),
+          h('p', {
+            className: 'summary-hero-value',
+            style: { color: netSoFar >= 0 ? 'var(--text-success)' : 'var(--late-red)' }
+          }, `${netSoFar >= 0 ? '+' : ''}${fmtCurrency(netSoFar, currency)}`),
+          h('p', { className: 'summary-hero-proj' },
+            'Projected ',
+            h('b', { style: { color: netProjected >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
+              `${netProjected >= 0 ? '+' : ''}${fmtCurrency(netProjected, currency)}`)
+          )
         ),
-        h('div', { className: 'metric-card' },
-          h('p', { className: 'metric-label' }, 'Income so far'),
-          h('p', { className: 'metric-value', style: { color: 'var(--text-success)' } }, fmtCurrency(incomeReceived, currency))
-        ),
-        h('div', { className: 'metric-card' },
-          h('p', { className: 'metric-label' }, 'Covered so far'),
-          h('p', { className: 'metric-value', style: { color: 'var(--text-warning)' } }, fmtCurrency(billsPaid, currency)),
-          h('p', { className: 'metric-foot' }, `of ${fmtCurrency(totalBills, currency)} \u00b7 ${fmtCurrency(Math.max(0, totalBills - billsPaid), currency)} left`)
-        ),
-        h('div', { className: 'metric-card' },
-          h('p', { className: 'metric-label' }, 'Projected income'),
-          h('p', { className: 'metric-value' }, fmtCurrency(totalProjectedIncome, currency)),
-          hasIncomeRange
-            ? h('p', { className: 'metric-foot' }, `${fmtCurrency(projectedIncomeRange.min, currency)}\u2013${fmtCurrency(projectedIncomeRange.max, currency)}`)
-            : h('p', { className: 'metric-foot' }, `${fmtCurrency(incomeReceived, currency)} received`)
-        )
-      ),
-
-      // the wide card from the sketch: both net figures side by side
-      h('div', { className: 'metric-card net-card' },
-        h('div', { className: 'net-card-half' },
-          h('p', { className: 'metric-label' }, 'Net so far'),
-          h('p', { className: 'metric-value', style: { color: netSoFar >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
-            `${netSoFar >= 0 ? '+' : ''}${fmtCurrency(netSoFar, currency)}`)
-        ),
-        h('div', { className: 'net-card-half net-card-half-right' },
-          h('p', { className: 'metric-label' }, 'Net projected'),
-          h('p', { className: 'metric-value', style: { color: netProjected >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
-            `${netProjected >= 0 ? '+' : ''}${fmtCurrency(netProjected, currency)}`)
+        h('div', { className: 'summary-rows' },
+          h('div', { className: 'summary-row' },
+            h('span', { className: 'summary-row-label' }, 'Bills this month'),
+            h('span', { className: 'summary-row-value' }, fmtCurrency(totalBills, currency))
+          ),
+          h('div', { className: 'summary-row' },
+            h('span', { className: 'summary-row-label' },
+              'Covered so far',
+              h('span', { className: 'summary-row-foot' }, `${fmtCurrency(Math.max(0, totalBills - billsPaid), currency)} left`)
+            ),
+            h('span', { className: 'summary-row-value', style: { color: 'var(--text-warning)' } }, fmtCurrency(billsPaid, currency))
+          ),
+          h('div', { className: 'summary-row' },
+            h('span', { className: 'summary-row-label' }, 'Income so far'),
+            h('span', { className: 'summary-row-value', style: { color: 'var(--text-success)' } }, fmtCurrency(incomeReceived, currency))
+          ),
+          h('div', { className: 'summary-row' },
+            h('span', { className: 'summary-row-label' },
+              'Projected income',
+              hasIncomeRange
+                ? h('span', { className: 'summary-row-foot' }, `${fmtCurrency(projectedIncomeRange.min, currency)}\u2013${fmtCurrency(projectedIncomeRange.max, currency)}`)
+                : null
+            ),
+            h('span', { className: 'summary-row-value' }, fmtCurrency(totalProjectedIncome, currency))
+          )
         )
       ),
 
@@ -2750,7 +2769,6 @@ function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setF
 /* ---------------- Price Override Modal ---------------- */
 
 function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
-  const sheet = useSheetDismiss(onClose);
   const existing = getOverride(data, occ.id, occ.occDate);
   const [price, setPrice] = useState(existing && existing.amount !== undefined ? String(existing.amount) : '');
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -2807,12 +2825,15 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
     ? `${fmtCurrency(occ.amountMin, currency)}-${fmtCurrency(occ.amountMax, currency)}`
     : fmtCurrency(entryAmount(occ), currency);
 
-  return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
-    h('div', { className: 'modal-content' },
-      h('div', { className: 'sheet-grabber', ...sheet, 'aria-label': 'Close' }),
-      h('div', { className: 'row-between' },
+  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+    h('div', { className: 'modal-content as-window' },
+      h('div', { className: 'modal-window-head' },
         h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, occ.name),
-        h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')
+        h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
+          h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
+            h('path', { d: 'M6 6l12 12M18 6L6 18' })
+          )
+        )
       ),
       h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } }, dateLabel),
       h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } },
@@ -2942,6 +2963,17 @@ function LatePage({ data, setData, lateBills }) {
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DOW_FULL = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
+// Short currency for tight calendar cells: $1,240 -> $1.2k, $95 -> $95.
+function fmtCompact(amount, currency) {
+  const sym = (currency === 'EUR') ? '\u20ac' : (currency === 'GBP') ? '\u00a3' : '$';
+  const n = Math.round(Number(amount) || 0);
+  if (n >= 1000) {
+    const k = n / 1000;
+    return `${sym}${k >= 10 ? Math.round(k) : k.toFixed(1)}k`;
+  }
+  return `${sym}${n}`;
+}
+
 // ISO-8601 week number for a given date.
 function getISOWeekNumber(date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -3008,6 +3040,10 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
   const [selectedDay, setSelectedDay] = useState(null);
+  // mobile: 'grid' (month overview) or 'agenda' (list of active days)
+  const [view, setView] = useState('grid');
+  // drives the slide animation on month change: 'left' | 'right' | null
+  const [slideDir, setSlideDir] = useState(null);
 
   const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
   const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
@@ -3077,9 +3113,57 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
   }, [rangeSpans]);
 
   function changeMonth(delta) {
+    setSlideDir(delta > 0 ? 'left' : 'right');
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
     setSelectedDay(null);
   }
+
+  // Numeric amount for an occurrence: override wins, else a range midpoint,
+  // else the plain amount. Used for the mobile day totals.
+  function occAmount(o) {
+    if (o.hasOverride) return Number(o.amount) || 0;
+    if (o.isRange) {
+      const min = Number(o.amountMin) || 0;
+      const max = Number(o.amountMax) || 0;
+      return (min + max) / 2;
+    }
+    return Number(o.amount) || 0;
+  }
+
+  // Per-day summary for the mobile grid (Option A): a few colored dots showing
+  // what kind of items land that day, plus the day's net dollar movement.
+  const daySummary = useMemo(() => {
+    const map = {};
+    Object.keys(occByDate).forEach((dateStr) => {
+      const items = occByDate[dateStr];
+      let outflow = 0;
+      const colors = [];
+      items.forEach((o) => {
+        const amt = occAmount(o) || 0;
+        if (o.kind === 'income') {
+          outflow -= amt;
+          colors.push({ c: getEntryColor(o, data) || '#4FAE6B', income: true });
+        } else {
+          const paid = isPaid(data, o.id, o.occDate);
+          outflow += amt;
+          colors.push({ c: paid ? 'var(--text-tertiary)' : (getEntryColor(o, data) || '#D85A5A'), income: false });
+        }
+      });
+      map[dateStr] = { total: outflow, colors, count: items.length };
+    });
+    return map;
+  }, [occByDate, data]);
+
+  // Agenda view (Option C): only days that have something, in date order.
+  const agendaDays = useMemo(() => {
+    return Object.keys(occByDate)
+      .filter((ds) => {
+        const d = parseYmd(ds);
+        return d.getMonth() === cursor.getMonth() && d.getFullYear() === cursor.getFullYear();
+      })
+      .sort()
+      .map((ds) => ({ dateStr: ds, items: occByDate[ds] }));
+  }, [occByDate, cursor]);
   function goToday() {
     const n = new Date();
     setCursor(new Date(n.getFullYear(), n.getMonth(), 1));
@@ -3165,15 +3249,147 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     }
   }
 
-  return h('div', { className: 'calendar-page' },
-    h('div', { className: 'calendar-header' },
-      h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
-        h('h2', { style: { margin: 0 } }, `${MONTH_NAMES[cursor.getMonth()]} ${cursor.getFullYear()}`),
-        !isCurrentMonth ? h('button', { className: 'today-btn', onClick: goToday }, 'Today') : null
+  // ---------------- MOBILE calendar (grid A + agenda C) ----------------
+  if (isMobile) {
+    const monthLabel = `${MONTH_NAMES[cursor.getMonth()]} ${cursor.getFullYear()}`;
+
+    const gridView = h('div', { className: 'calm-grid-wrap' },
+      h('div', { className: 'calm-dow' },
+        dowLabels.map((dn) => h('div', { key: dn, className: 'calm-dow-cell' }, dn.slice(0, 1)))
       ),
-      h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
-    ),
+      h('div', { className: 'calm-weeks' },
+        weeks.map((week, wi) => {
+          // range pills that touch this week
+          const weekPills = rangeSegments.filter((seg) => seg.week === wi);
+          return h('div', { key: wi, className: 'calm-week' },
+            h('div', { className: 'calm-week-cells' },
+              week.map((cd) => {
+                const dateStr = ymd(cd);
+                const inMonth = cd.getMonth() === cursor.getMonth();
+                const isToday = dateStr === todayStr;
+                const isSelected = selectedDay === dateStr;
+                const sum = daySummary[dateStr];
+                // dots exclude range entries (shown as pills)
+                const dotColors = sum
+                  ? sum.colors.filter((_, idx) => {
+                      const o = occByDate[dateStr][idx];
+                      return !rangeEntryIds.has(o.id);
+                    })
+                  : [];
+                const dots = dotColors.slice(0, 4);
+                return h('button', {
+                  key: dateStr,
+                  className: `calm-cell${inMonth ? '' : ' out'}${isToday ? ' today' : ''}${isSelected ? ' sel' : ''}`,
+                  onClick: () => setSelectedDay(dateStr)
+                },
+                  h('span', { className: 'calm-dnum' }, cd.getDate()),
+                  dots.length
+                    ? h('span', { className: 'calm-dots' },
+                        dots.map((dc, i) => h('span', { key: i, className: 'calm-dot', style: { background: dc.c } })),
+                        dotColors.length > 4 ? h('span', { className: 'calm-dot-more' }, '+') : null
+                      )
+                    : null,
+                  (sum && inMonth && sum.total !== 0)
+                    ? h('span', { className: `calm-amt${sum.total < 0 ? ' pos' : ''}` },
+                        sum.total < 0
+                          ? `+${fmtCompact(Math.abs(sum.total), currency)}`
+                          : fmtCompact(sum.total, currency))
+                    : null
+                );
+              })
+            ),
+            // spanning range pills for this week
+            weekPills.length ? h('div', { className: 'calm-pills' },
+              weekPills.map((seg) => {
+                const leftPct = (seg.startCol / 7) * 100;
+                const widthPct = ((seg.endCol - seg.startCol + 1) / 7) * 100;
+                return h('button', {
+                  key: seg.key,
+                  className: `calm-pill${seg.paid ? ' paid' : ''}${seg.isStart ? ' start' : ''}${seg.isEnd ? ' end' : ''}`,
+                  style: { left: `${leftPct}%`, width: `${widthPct}%`, '--pill': seg.color, color: readableTextOn(seg.color) },
+                  onClick: () => setSelectedDay(seg.occDate),
+                  title: seg.name
+                }, seg.showLabel ? seg.name : '\u00a0');
+              })
+            ) : null
+          );
+        })
+      )
+    );
+
+    const agendaView = agendaDays.length === 0
+      ? h('div', { className: 'calm-agenda-empty' }, 'Nothing scheduled this month.')
+      : h('div', { className: 'calm-agenda' },
+          agendaDays.map(({ dateStr, items }) => {
+            const d = parseYmd(dateStr);
+            const isToday = dateStr === todayStr;
+            return h('div', { key: dateStr, className: 'calm-ag-day' },
+              h('button', { className: `calm-ag-date${isToday ? ' today' : ''}`, onClick: () => setSelectedDay(dateStr) },
+                h('span', { className: 'calm-ag-d' }, d.getDate()),
+                h('span', { className: 'calm-ag-w' }, DOW_FULL[d.getDay()].slice(0, 3))
+              ),
+              h('div', { className: 'calm-ag-items' },
+                items.map((o, i) => {
+                  const income = o.kind === 'income';
+                  const paid = !income && isPaid(data, o.id, o.occDate);
+                  const late = !paid && !income &&
+                    (isForcedLate(data, o.id, o.occDate) || (parseYmd(o.occDate) < today && !isDismissedLate(data, o.id, o.occDate)));
+                  const color = income ? (getEntryColor(o, data) || '#4FAE6B') : (getEntryColor(o, data) || '#D85A5A');
+                  return h('button', {
+                    key: `${o.id}-${o.occDate}-${i}`,
+                    className: `calm-ag-item${paid ? ' paid' : ''}`,
+                    onClick: () => setSelectedDay(dateStr)
+                  },
+                    h('span', { className: 'calm-ag-stripe', style: { background: paid ? 'var(--text-tertiary)' : color } }),
+                    late ? h('span', { className: 'late-dot' }) : null,
+                    h('span', { className: 'calm-ag-name' }, o.name),
+                    h('span', { className: 'calm-ag-amt', style: income ? { color: 'var(--text-success)' } : null },
+                      `${income ? '+' : ''}${occAmountLabel(o, currency)}`)
+                  );
+                })
+              )
+            );
+          })
+        );
+
+    return h('div', { className: 'calendar-page calm' },
+      h('div', { className: 'calm-header' },
+        h('button', { className: 'calm-nav', onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '\u2039'),
+        h('div', { className: 'calm-title-wrap' },
+          h('h2', { className: 'calm-title' }, monthLabel),
+          !isCurrentMonth ? h('button', { className: 'today-btn', onClick: goToday }, 'Today') : null
+        ),
+        h('button', { className: 'calm-nav', onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '\u203a')
+      ),
+
+      // grid / agenda toggle
+      h('div', { className: 'calm-toggle' },
+        h('button', { className: `calm-toggle-btn${view === 'grid' ? ' on' : ''}`, onClick: () => setView('grid') }, 'Month'),
+        h('button', { className: `calm-toggle-btn${view === 'agenda' ? ' on' : ''}`, onClick: () => setView('agenda') }, 'Agenda')
+      ),
+
+      h('div', {
+        className: 'calm-swipe',
+        onTouchStart: onTouchStart,
+        onTouchEnd: onTouchEnd
+      },
+        h('div', {
+          key: `${cursor.getFullYear()}-${cursor.getMonth()}-${view}`,
+          className: `calm-slide${slideDir ? ' slide-' + slideDir : ''}`
+        }, view === 'grid' ? gridView : agendaView)
+      ),
+
+      selectedDay ? h(DayDetailModal, {
+        data, setData, currency,
+        dateStr: selectedDay,
+        occs: selectedOccs,
+        onClose: () => setSelectedDay(null),
+        onAddEntry
+      }) : null
+    );
+  }
+
+  return h('div', { className: 'calendar-page' },
     h('div', {
       className: 'calendar-swipe-area',
       onTouchStart: isMobile ? onTouchStart : undefined,
@@ -3203,43 +3419,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
               const isToday = dateStr === todayStr;
               const isPast = cd < today;
               const isSelected = selectedDay === dateStr;
-
-              // Phones can't fit the desktop chips, but a truncated name is far
-              // more useful than an anonymous dot - so show up to two, then a
-              // count. Days inside a date range get a dashed band beneath.
-              if (isMobile) {
-                const band = rangeDayMap[dateStr];
-                const shown = occs.slice(0, 2);
-                const extra = occs.length - shown.length;
-                return h('button', {
-                  key: dateStr,
-                  className: `calendar-cell mobile${inMonth ? '' : ' outside'}${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}`,
-                  onClick: () => setSelectedDay(dateStr)
-                },
-                  h('span', { className: 'calendar-date' }, cd.getDate()),
-                  band ? h('span', {
-                    className: `cal-range-band${band.isStart ? ' start' : ''}${band.isEnd ? ' end' : ''}`,
-                    style: { borderColor: band.color },
-                    title: band.name
-                  }) : null,
-                  h('span', { className: 'cal-names' },
-                    shown.map((o, i) => {
-                      const paid = o.kind !== 'income' && isPaid(data, o.id, o.occDate);
-                      const late = !paid && o.kind !== 'income' &&
-                        (isForcedLate(data, o.id, o.occDate) || (parseYmd(o.occDate) < today && !isDismissedLate(data, o.id, o.occDate)));
-                      const color = o.kind === 'income'
-                        ? (getEntryColor(o, data) || '#4FAE6B')
-                        : (getEntryColor(o, data) || '#D85A5A');
-                      return h('span', {
-                        key: `${o.id}-${o.occDate}-${i}`,
-                        className: `cal-name${paid ? ' paid' : ''}${late ? ' late' : ''}`,
-                        style: { borderLeftColor: paid ? 'var(--text-tertiary)' : color }
-                      }, o.name);
-                    }),
-                    extra > 0 ? h('span', { className: 'cal-name more' }, `+${extra}`) : null
-                  )
-                );
-              }
 
               return h('div', {
                 key: dateStr,
@@ -3919,19 +4098,23 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     data.majorBills.forEach((e) => rows.push({ ...e, sourceList: 'majorBills', sourceLabel: 'Essential', kind: 'bill' }));
     data.subscriptions.forEach((e) => rows.push({ ...e, sourceList: 'subscriptions', sourceLabel: 'Subscription', kind: 'bill' }));
     getCreditCardPaymentEntries(data).forEach((e) => rows.push({ ...e, sourceList: 'creditCards', sourceLabel: 'Credit card', kind: 'bill' }));
-    // One-time entries are intentionally excluded from the Bills page - they
-    // live on Home / the calendar, not in this recurring-bill overview.
+    // Day to day = one-time payments (groceries, gas, coffee...). Income-type
+    // one-time entries stay out; this page is expenses.
+    (data.oneTimeEntries || []).forEach((e) => {
+      if (e.oneTimeKind === 'income') return;
+      rows.push({ ...e, sourceList: 'oneTimeEntries', sourceLabel: 'Day to day', kind: 'bill' });
+    });
 
     return rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   }, [data]);
 
-  // group rows by source type (Essentials / Subscriptions / Credit cards / One-time)
-  const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards'];
+  // group rows by source type
+  const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards', 'oneTimeEntries'];
   const SOURCE_GROUP_LABELS = {
     majorBills: 'Essentials',
     subscriptions: 'Subscriptions',
     creditCards: 'Credit cards',
-    oneTimeEntries: 'One-time entries'
+    oneTimeEntries: 'Day to day'
   };
   // which editor page each group's edit arrow opens (mobile only)
   const SUBPAGE_FOR_GROUP = {
@@ -4488,7 +4671,8 @@ function SyncCard({ data, setData, embedded }) {
     const res = await Sync.writeOut(stamped);
     setBusy(false);
     if (res.ok) {
-      setData(stamped, { lastModified: stamp });
+      const withStamp = { ...stamped, settings: { ...stamped.settings, lastExported: stamp } };
+      setData(withStamp, { lastModified: stamp });
       flash(true, res.mode === 'file'
         ? 'Synced to your file.'
         : 'Exported \u2014 choose where to save it (Files, LocalSend, etc.).');

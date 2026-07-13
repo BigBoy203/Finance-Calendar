@@ -2,7 +2,7 @@ const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
 // Shown under the Settings heading. Bump this when the web build changes.
-const WEB_VERSION = '1.4';
+const WEB_VERSION = '1.9';
 
 /* ---------------- Helpers ---------------- */
 
@@ -858,27 +858,26 @@ function App() {
   if (isMobile) {
     const pageTitle = ({
       home: 'Home', calendar: 'Calendar', late: 'Late payments',
-      allbills: 'All bills', essentials: 'Essentials', creditcards: 'Credit cards',
+      allbills: 'Expenses', essentials: 'Essentials', creditcards: 'Credit cards',
       subscriptions: 'Subscriptions', settings: 'Settings'
     })[page] || 'Finance Calendar';
 
     return h('div', { className: 'app-shell mobile' },
       h(MobileHeader, {
         title: pageTitle,
-        onQuickAdd: () => setQuickAdd({ date: todayYmd() }),
+        onSettings: () => setPage('settings'),
         onSync: () => setSyncModal(true),
         onBack: MOBILE_SUBPAGES.includes(page) ? () => setPage('allbills') : null,
-        onHome: () => {
-          setPage('home');
-          const pane = document.querySelector('.main-content.mobile');
-          if (pane) pane.scrollTo({ top: 0, behavior: 'smooth' });
-        }
+        lastExported: data.settings && data.settings.lastExported
+          ? relativeTime(data.settings.lastExported)
+          : null
       }),
       h('div', { className: 'main-content mobile' }, syncBannerEl, pageContent),
       syncModal ? h(SyncModal, { data, setData: persist, onClose: () => setSyncModal(false) }) : null,
       h(MobileTabBar, {
         page,
         setPage,
+        onAdd: () => setQuickAdd({ date: todayYmd() }),
         lateCount: lateBills.length,
         needsAttentionCount
       }),

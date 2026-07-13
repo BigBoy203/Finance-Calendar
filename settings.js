@@ -370,7 +370,8 @@ function SyncCard({ data, setData, embedded }) {
     const res = await Sync.writeOut(stamped);
     setBusy(false);
     if (res.ok) {
-      setData(stamped, { lastModified: stamp });
+      const withStamp = { ...stamped, settings: { ...stamped.settings, lastExported: stamp } };
+      setData(withStamp, { lastModified: stamp });
       flash(true, res.mode === 'file'
         ? 'Synced to your file.'
         : 'Exported \u2014 choose where to save it (Files, LocalSend, etc.).');

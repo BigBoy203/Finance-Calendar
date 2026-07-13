@@ -3,6 +3,17 @@
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DOW_FULL = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
+// Short currency for tight calendar cells: $1,240 -> $1.2k, $95 -> $95.
+function fmtCompact(amount, currency) {
+  const sym = (currency === 'EUR') ? '\u20ac' : (currency === 'GBP') ? '\u00a3' : '$';
+  const n = Math.round(Number(amount) || 0);
+  if (n >= 1000) {
+    const k = n / 1000;
+    return `${sym}${k >= 10 ? Math.round(k) : k.toFixed(1)}k`;
+  }
+  return `${sym}${n}`;
+}
+
 // ISO-8601 week number for a given date.
 function getISOWeekNumber(date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -69,6 +80,10 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
   const [selectedDay, setSelectedDay] = useState(null);
+  // mobile: 'grid' (month overview) or 'agenda' (list of active days)
+  const [view, setView] = useState('grid');
+  // drives the slide animation on month change: 'left' | 'right' | null
+  const [slideDir, setSlideDir] = useState(null);
 
   const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
   const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
@@ -138,9 +153,57 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
   }, [rangeSpans]);
 
   function changeMonth(delta) {
+    setSlideDir(delta > 0 ? 'left' : 'right');
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
     setSelectedDay(null);
   }
+
+  // Numeric amount for an occurrence: override wins, else a range midpoint,
+  // else the plain amount. Used for the mobile day totals.
+  function occAmount(o) {
+    if (o.hasOverride) return Number(o.amount) || 0;
+    if (o.isRange) {
+      const min = Number(o.amountMin) || 0;
+      const max = Number(o.amountMax) || 0;
+      return (min + max) / 2;
+    }
+    return Number(o.amount) || 0;
+  }
+
+  // Per-day summary for the mobile grid (Option A): a few colored dots showing
+  // what kind of items land that day, plus the day's net dollar movement.
+  const daySummary = useMemo(() => {
+    const map = {};
+    Object.keys(occByDate).forEach((dateStr) => {
+      const items = occByDate[dateStr];
+      let outflow = 0;
+      const colors = [];
+      items.forEach((o) => {
+        const amt = occAmount(o) || 0;
+        if (o.kind === 'income') {
+          outflow -= amt;
+          colors.push({ c: getEntryColor(o, data) || '#4FAE6B', income: true });
+        } else {
+          const paid = isPaid(data, o.id, o.occDate);
+          outflow += amt;
+          colors.push({ c: paid ? 'var(--text-tertiary)' : (getEntryColor(o, data) || '#D85A5A'), income: false });
+        }
+      });
+      map[dateStr] = { total: outflow, colors, count: items.length };
+    });
+    return map;
+  }, [occByDate, data]);
+
+  // Agenda view (Option C): only days that have something, in date order.
+  const agendaDays = useMemo(() => {
+    return Object.keys(occByDate)
+      .filter((ds) => {
+        const d = parseYmd(ds);
+        return d.getMonth() === cursor.getMonth() && d.getFullYear() === cursor.getFullYear();
+      })
+      .sort()
+      .map((ds) => ({ dateStr: ds, items: occByDate[ds] }));
+  }, [occByDate, cursor]);
   function goToday() {
     const n = new Date();
     setCursor(new Date(n.getFullYear(), n.getMonth(), 1));
@@ -226,15 +289,147 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     }
   }
 
-  return h('div', { className: 'calendar-page' },
-    h('div', { className: 'calendar-header' },
-      h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
-        h('h2', { style: { margin: 0 } }, `${MONTH_NAMES[cursor.getMonth()]} ${cursor.getFullYear()}`),
-        !isCurrentMonth ? h('button', { className: 'today-btn', onClick: goToday }, 'Today') : null
+  // ---------------- MOBILE calendar (grid A + agenda C) ----------------
+  if (isMobile) {
+    const monthLabel = `${MONTH_NAMES[cursor.getMonth()]} ${cursor.getFullYear()}`;
+
+    const gridView = h('div', { className: 'calm-grid-wrap' },
+      h('div', { className: 'calm-dow' },
+        dowLabels.map((dn) => h('div', { key: dn, className: 'calm-dow-cell' }, dn.slice(0, 1)))
       ),
-      h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
-    ),
+      h('div', { className: 'calm-weeks' },
+        weeks.map((week, wi) => {
+          // range pills that touch this week
+          const weekPills = rangeSegments.filter((seg) => seg.week === wi);
+          return h('div', { key: wi, className: 'calm-week' },
+            h('div', { className: 'calm-week-cells' },
+              week.map((cd) => {
+                const dateStr = ymd(cd);
+                const inMonth = cd.getMonth() === cursor.getMonth();
+                const isToday = dateStr === todayStr;
+                const isSelected = selectedDay === dateStr;
+                const sum = daySummary[dateStr];
+                // dots exclude range entries (shown as pills)
+                const dotColors = sum
+                  ? sum.colors.filter((_, idx) => {
+                      const o = occByDate[dateStr][idx];
+                      return !rangeEntryIds.has(o.id);
+                    })
+                  : [];
+                const dots = dotColors.slice(0, 4);
+                return h('button', {
+                  key: dateStr,
+                  className: `calm-cell${inMonth ? '' : ' out'}${isToday ? ' today' : ''}${isSelected ? ' sel' : ''}`,
+                  onClick: () => setSelectedDay(dateStr)
+                },
+                  h('span', { className: 'calm-dnum' }, cd.getDate()),
+                  dots.length
+                    ? h('span', { className: 'calm-dots' },
+                        dots.map((dc, i) => h('span', { key: i, className: 'calm-dot', style: { background: dc.c } })),
+                        dotColors.length > 4 ? h('span', { className: 'calm-dot-more' }, '+') : null
+                      )
+                    : null,
+                  (sum && inMonth && sum.total !== 0)
+                    ? h('span', { className: `calm-amt${sum.total < 0 ? ' pos' : ''}` },
+                        sum.total < 0
+                          ? `+${fmtCompact(Math.abs(sum.total), currency)}`
+                          : fmtCompact(sum.total, currency))
+                    : null
+                );
+              })
+            ),
+            // spanning range pills for this week
+            weekPills.length ? h('div', { className: 'calm-pills' },
+              weekPills.map((seg) => {
+                const leftPct = (seg.startCol / 7) * 100;
+                const widthPct = ((seg.endCol - seg.startCol + 1) / 7) * 100;
+                return h('button', {
+                  key: seg.key,
+                  className: `calm-pill${seg.paid ? ' paid' : ''}${seg.isStart ? ' start' : ''}${seg.isEnd ? ' end' : ''}`,
+                  style: { left: `${leftPct}%`, width: `${widthPct}%`, '--pill': seg.color, color: readableTextOn(seg.color) },
+                  onClick: () => setSelectedDay(seg.occDate),
+                  title: seg.name
+                }, seg.showLabel ? seg.name : '\u00a0');
+              })
+            ) : null
+          );
+        })
+      )
+    );
+
+    const agendaView = agendaDays.length === 0
+      ? h('div', { className: 'calm-agenda-empty' }, 'Nothing scheduled this month.')
+      : h('div', { className: 'calm-agenda' },
+          agendaDays.map(({ dateStr, items }) => {
+            const d = parseYmd(dateStr);
+            const isToday = dateStr === todayStr;
+            return h('div', { key: dateStr, className: 'calm-ag-day' },
+              h('button', { className: `calm-ag-date${isToday ? ' today' : ''}`, onClick: () => setSelectedDay(dateStr) },
+                h('span', { className: 'calm-ag-d' }, d.getDate()),
+                h('span', { className: 'calm-ag-w' }, DOW_FULL[d.getDay()].slice(0, 3))
+              ),
+              h('div', { className: 'calm-ag-items' },
+                items.map((o, i) => {
+                  const income = o.kind === 'income';
+                  const paid = !income && isPaid(data, o.id, o.occDate);
+                  const late = !paid && !income &&
+                    (isForcedLate(data, o.id, o.occDate) || (parseYmd(o.occDate) < today && !isDismissedLate(data, o.id, o.occDate)));
+                  const color = income ? (getEntryColor(o, data) || '#4FAE6B') : (getEntryColor(o, data) || '#D85A5A');
+                  return h('button', {
+                    key: `${o.id}-${o.occDate}-${i}`,
+                    className: `calm-ag-item${paid ? ' paid' : ''}`,
+                    onClick: () => setSelectedDay(dateStr)
+                  },
+                    h('span', { className: 'calm-ag-stripe', style: { background: paid ? 'var(--text-tertiary)' : color } }),
+                    late ? h('span', { className: 'late-dot' }) : null,
+                    h('span', { className: 'calm-ag-name' }, o.name),
+                    h('span', { className: 'calm-ag-amt', style: income ? { color: 'var(--text-success)' } : null },
+                      `${income ? '+' : ''}${occAmountLabel(o, currency)}`)
+                  );
+                })
+              )
+            );
+          })
+        );
+
+    return h('div', { className: 'calendar-page calm' },
+      h('div', { className: 'calm-header' },
+        h('button', { className: 'calm-nav', onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '\u2039'),
+        h('div', { className: 'calm-title-wrap' },
+          h('h2', { className: 'calm-title' }, monthLabel),
+          !isCurrentMonth ? h('button', { className: 'today-btn', onClick: goToday }, 'Today') : null
+        ),
+        h('button', { className: 'calm-nav', onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '\u203a')
+      ),
+
+      // grid / agenda toggle
+      h('div', { className: 'calm-toggle' },
+        h('button', { className: `calm-toggle-btn${view === 'grid' ? ' on' : ''}`, onClick: () => setView('grid') }, 'Month'),
+        h('button', { className: `calm-toggle-btn${view === 'agenda' ? ' on' : ''}`, onClick: () => setView('agenda') }, 'Agenda')
+      ),
+
+      h('div', {
+        className: 'calm-swipe',
+        onTouchStart: onTouchStart,
+        onTouchEnd: onTouchEnd
+      },
+        h('div', {
+          key: `${cursor.getFullYear()}-${cursor.getMonth()}-${view}`,
+          className: `calm-slide${slideDir ? ' slide-' + slideDir : ''}`
+        }, view === 'grid' ? gridView : agendaView)
+      ),
+
+      selectedDay ? h(DayDetailModal, {
+        data, setData, currency,
+        dateStr: selectedDay,
+        occs: selectedOccs,
+        onClose: () => setSelectedDay(null),
+        onAddEntry
+      }) : null
+    );
+  }
+
+  return h('div', { className: 'calendar-page' },
     h('div', {
       className: 'calendar-swipe-area',
       onTouchStart: isMobile ? onTouchStart : undefined,
@@ -264,43 +459,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
               const isToday = dateStr === todayStr;
               const isPast = cd < today;
               const isSelected = selectedDay === dateStr;
-
-              // Phones can't fit the desktop chips, but a truncated name is far
-              // more useful than an anonymous dot - so show up to two, then a
-              // count. Days inside a date range get a dashed band beneath.
-              if (isMobile) {
-                const band = rangeDayMap[dateStr];
-                const shown = occs.slice(0, 2);
-                const extra = occs.length - shown.length;
-                return h('button', {
-                  key: dateStr,
-                  className: `calendar-cell mobile${inMonth ? '' : ' outside'}${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}`,
-                  onClick: () => setSelectedDay(dateStr)
-                },
-                  h('span', { className: 'calendar-date' }, cd.getDate()),
-                  band ? h('span', {
-                    className: `cal-range-band${band.isStart ? ' start' : ''}${band.isEnd ? ' end' : ''}`,
-                    style: { borderColor: band.color },
-                    title: band.name
-                  }) : null,
-                  h('span', { className: 'cal-names' },
-                    shown.map((o, i) => {
-                      const paid = o.kind !== 'income' && isPaid(data, o.id, o.occDate);
-                      const late = !paid && o.kind !== 'income' &&
-                        (isForcedLate(data, o.id, o.occDate) || (parseYmd(o.occDate) < today && !isDismissedLate(data, o.id, o.occDate)));
-                      const color = o.kind === 'income'
-                        ? (getEntryColor(o, data) || '#4FAE6B')
-                        : (getEntryColor(o, data) || '#D85A5A');
-                      return h('span', {
-                        key: `${o.id}-${o.occDate}-${i}`,
-                        className: `cal-name${paid ? ' paid' : ''}${late ? ' late' : ''}`,
-                        style: { borderLeftColor: paid ? 'var(--text-tertiary)' : color }
-                      }, o.name);
-                    }),
-                    extra > 0 ? h('span', { className: 'cal-name more' }, `+${extra}`) : null
-                  )
-                );
-              }
 
               return h('div', {
                 key: dateStr,

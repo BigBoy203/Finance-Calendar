@@ -44,19 +44,23 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
     data.majorBills.forEach((e) => rows.push({ ...e, sourceList: 'majorBills', sourceLabel: 'Essential', kind: 'bill' }));
     data.subscriptions.forEach((e) => rows.push({ ...e, sourceList: 'subscriptions', sourceLabel: 'Subscription', kind: 'bill' }));
     getCreditCardPaymentEntries(data).forEach((e) => rows.push({ ...e, sourceList: 'creditCards', sourceLabel: 'Credit card', kind: 'bill' }));
-    // One-time entries are intentionally excluded from the Bills page - they
-    // live on Home / the calendar, not in this recurring-bill overview.
+    // Day to day = one-time payments (groceries, gas, coffee...). Income-type
+    // one-time entries stay out; this page is expenses.
+    (data.oneTimeEntries || []).forEach((e) => {
+      if (e.oneTimeKind === 'income') return;
+      rows.push({ ...e, sourceList: 'oneTimeEntries', sourceLabel: 'Day to day', kind: 'bill' });
+    });
 
     return rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   }, [data]);
 
-  // group rows by source type (Essentials / Subscriptions / Credit cards / One-time)
-  const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards'];
+  // group rows by source type
+  const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards', 'oneTimeEntries'];
   const SOURCE_GROUP_LABELS = {
     majorBills: 'Essentials',
     subscriptions: 'Subscriptions',
     creditCards: 'Credit cards',
-    oneTimeEntries: 'One-time entries'
+    oneTimeEntries: 'Day to day'
   };
   // which editor page each group's edit arrow opens (mobile only)
   const SUBPAGE_FOR_GROUP = {

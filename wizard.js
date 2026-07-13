@@ -267,9 +267,9 @@ function EntryCard({ row, categories, namePlaceholder, dateLabel, onChange, onRe
         onChange: (e) => onChange('name', e.target.value)
       }),
       categories ? h('select', {
+        className: 'setup-category-select',
         value: row.category || '',
-        onChange: (e) => onChange('category', e.target.value),
-        style: { width: '150px' }
+        onChange: (e) => onChange('category', e.target.value)
       }, categories.map((c) => h('option', { key: c, value: c }, c))) : null,
       h('button', { className: 'x-btn', 'aria-label': 'Remove', onClick: onRemove }, '\u00d7')
     ),
