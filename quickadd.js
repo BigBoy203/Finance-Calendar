@@ -1,6 +1,6 @@
 
 const ENTRY_TYPES = [
-  { id: 'oneTimePayment', label: 'One-time payment', icon: '\u{1F4B3}', desc: 'A single expense' },
+  { id: 'oneTimePayment', label: 'Purchase', icon: '\u{1F4B3}', desc: 'A single expense' },
   { id: 'bill', label: 'Bill', icon: '\u{1F4C5}', desc: 'Recurring' },
   { id: 'subscription', label: 'Subscription', icon: '\u{1F504}', desc: 'Auto-renewing' },
   { id: 'oneTimeIncome', label: 'Income', icon: '\u{1F4B0}', desc: 'Money in' }
@@ -33,6 +33,7 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
 
   function submit() {
     if (!form.name.trim()) return;
+    haptic('success');
     const entry = {
       ...form,
       amount: form.amount === '' ? 0 : parseFloat(form.amount) || 0,

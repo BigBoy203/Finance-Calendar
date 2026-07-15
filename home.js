@@ -103,6 +103,7 @@ function HomePage({ data, setData, isMobile }) {
 
   function togglePaid(o) {
     const wasPaid = isPaid(data, o.id, o.occDate);
+    haptic(wasPaid ? 'light' : 'success');
     let next = togglePaidStatus(data, o.id, o.occDate);
     next = logActivity(next, `${wasPaid ? 'Unmarked' : 'Marked'} "${o.name}" as paid`);
     setData(next);
@@ -717,6 +718,7 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
   const [confirmRemove, setConfirmRemove] = useState(false);
 
   function save() {
+    haptic('success');
     const val = price === '' ? null : parseFloat(price);
     const key = `${occ.id}|${occ.occDate}`;
     const next = { ...data.overrides };
@@ -744,12 +746,14 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
 
   const forcedLate = isForcedLate(data, occ.id, occ.occDate);
   function toggleLate() {
+    haptic('warn');
     let next = toggleForcedLate(data, occ.id, occ.occDate);
     next = logActivity(next, `${forcedLate ? 'Unmarked' : 'Marked'} "${occ.name}" as late`);
     setData(next);
   }
 
   function removeThisOccurrence() {
+    haptic('heavy');
     let next;
     if (occ.sourceList === 'oneTimeEntries') {
       next = { ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== occ.id) };
@@ -769,53 +773,56 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
     : fmtCurrency(entryAmount(occ), currency);
 
   return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
-    h('div', { className: 'modal-content as-window' },
+    h('div', { className: 'modal-content as-window price-modal' },
       h('div', { className: 'modal-window-head' },
-        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, occ.name),
+        h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, occ.name),
         h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
           h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
             h('path', { d: 'M6 6l12 12M18 6L6 18' })
           )
         )
       ),
-      h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } }, dateLabel),
-      h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } },
-        `Usual amount: ${templateLabel}`),
-      h('div', null,
+
+      h('div', { className: 'price-meta' },
+        h('span', null, dateLabel),
+        h('span', { className: 'price-meta-amt' }, templateLabel)
+      ),
+
+      h('div', { className: 'price-field' },
         h('label', null, 'Actual price for this occurrence'),
         h('input', {
           type: 'number',
+          inputMode: 'decimal',
           placeholder: 'e.g. 94.32',
           value: price,
-          onChange: (e) => setPrice(e.target.value),
-          style: { width: '100%' }
-        })
-      ),
-      h('p', { style: { margin: 0, fontSize: '12px', color: 'var(--text-secondary)' } },
-        'Setting this only affects this occurrence - future months still use the usual amount or range.'),
-
-      occ.kind !== 'income' ? h('div', { className: 'row-between', style: { paddingTop: '8px', borderTop: '0.5px solid var(--border-tertiary)' } },
-        h('div', null,
-          h('p', { style: { margin: 0, fontSize: '13px', fontWeight: 500 } }, 'Late status'),
-          h('p', { style: { margin: 0, fontSize: '12px', color: 'var(--text-secondary)' } },
-            forcedLate ? 'Manually marked late.' : 'Mark this occurrence late regardless of its due date.')
-        ),
-        h('button', { onClick: toggleLate }, forcedLate ? 'Unmark late' : 'Mark as late')
-      ) : null,
-
-      h('div', { className: 'row-between', style: { paddingTop: '8px', borderTop: '0.5px solid var(--border-tertiary)' } },
-        h('div', null,
-          h('p', { style: { margin: 0, fontSize: '13px', fontWeight: 500 } }, 'Remove this occurrence'),
-          h('p', { style: { margin: 0, fontSize: '12px', color: 'var(--text-secondary)' } },
-            occ.sourceList === 'oneTimeEntries' ? 'Deletes this entry entirely.' : 'Only this date - the recurring rule is unaffected.')
-        ),
-        confirmRemove
-          ? h('button', { className: 'danger-text', onClick: removeThisOccurrence }, 'Confirm remove?')
-          : h('button', { className: 'danger-text', onClick: () => setConfirmRemove(true) }, 'Remove')
+          onChange: (e) => setPrice(e.target.value)
+        }),
+        h('p', { className: 'price-hint' },
+          'Only affects this occurrence \u2014 future months keep the usual amount.')
       ),
 
-      h('div', { className: 'row-between', style: { marginTop: '4px' } },
-        existing ? h('button', { className: 'danger-text', onClick: clearOverride }, 'Clear override') : h('button', { onClick: onClose }, 'Cancel'),
+      h('div', { className: 'price-actions' },
+        occ.kind !== 'income'
+          ? h('button', { className: `price-action-row${forcedLate ? ' active' : ''}`, onClick: toggleLate },
+              h('div', null,
+                h('span', { className: 'price-action-title' }, forcedLate ? 'Marked late' : 'Mark late'),
+                h('span', { className: 'price-action-sub' }, forcedLate ? 'Tap to clear' : 'Flag this date as late')
+              ),
+              h('span', { className: 'price-action-chevron' }, forcedLate ? '\u2713' : '\u203a')
+            )
+          : null,
+        h('button', { className: 'price-action-row danger', onClick: () => confirmRemove ? removeThisOccurrence() : setConfirmRemove(true) },
+          h('div', null,
+            h('span', { className: 'price-action-title' }, confirmRemove ? 'Tap again to confirm' : 'Remove this occurrence'),
+            h('span', { className: 'price-action-sub' },
+              occ.sourceList === 'oneTimeEntries' ? 'Deletes this entry' : 'Only this date; rule stays')
+          ),
+          h('span', { className: 'price-action-chevron' }, '\u203a')
+        )
+      ),
+
+      h('div', { className: 'price-footer' },
+        existing ? h('button', { className: 'link-btn', onClick: clearOverride }, 'Clear override') : h('span'),
         h('button', { className: 'primary', onClick: save }, 'Save')
       )
     )

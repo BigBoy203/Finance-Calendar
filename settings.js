@@ -284,6 +284,15 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
           onChange: (e) => updateSetting('autoDeductCardPayments', e.target.checked)
         }),
         h('label', { htmlFor: 'auto-deduct-cc', style: { margin: 0 } }, 'Automatically deduct from a credit card\u2019s balance when its payment is marked paid')
+      ),
+      h('div', { className: 'checkbox-row' },
+        h('input', {
+          type: 'checkbox',
+          id: 'haptics',
+          checked: data.settings.hapticsEnabled !== false,
+          onChange: (e) => { updateSetting('hapticsEnabled', e.target.checked); if (e.target.checked) haptic('medium'); }
+        }),
+        h('label', { htmlFor: 'haptics', style: { margin: 0 } }, 'Vibrate on taps where supported (Android and native apps; iPhone Safari does not support web vibration)')
       )
     )
   );
@@ -451,8 +460,8 @@ function SyncCard({ data, setData, embedded }) {
 
     msg ? h('p', { style: { margin: '10px 0 0', fontSize: '13px', color: msg.ok ? 'var(--text-success)' : 'var(--late-red)' } }, msg.text) : null,
 
-    conflict ? h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) setConflict(null); } },
-      h('div', { className: 'modal-content' },
+    conflict ? h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) setConflict(null); } },
+      h('div', { className: 'modal-content as-window' },
         h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, 'That file is older'),
         h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
           `The data you're loading was last changed ${relativeTime(conflict.incoming.lastModified)}, but this device has newer changes from ${relativeTime(data.lastModified)}. Loading it will replace your newer data.`),
@@ -540,15 +549,6 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
             onClick: () => updateSetting('density', o.id)
           }, o.label)
         )
-      ),
-      h('div', { className: 'checkbox-row' },
-        h('input', {
-          type: 'checkbox',
-          id: 'show-week-numbers',
-          checked: !!data.settings.showWeekNumbers,
-          onChange: (e) => updateSetting('showWeekNumbers', e.target.checked)
-        }),
-        h('label', { htmlFor: 'show-week-numbers', style: { margin: 0 } }, 'Show week numbers on the calendar')
       )
     ),
 
@@ -605,8 +605,8 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
       )
     ),
 
-    importWarning ? h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) setImportWarning(false); } },
-      h('div', { className: 'modal-content' },
+    importWarning ? h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) setImportWarning(false); } },
+      h('div', { className: 'modal-content as-window' },
         h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px', color: 'var(--late-red)' } }, '\u26a0\ufe0f This will delete all your current data'),
         h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
           'Importing a file will permanently erase all your current bills, income, subscriptions, credit cards, history, and settings. ',

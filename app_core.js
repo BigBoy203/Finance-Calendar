@@ -1,7 +1,18 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '2.0';
+const WEB_VERSION = '2.6';
+
+let _hapticsEnabled = true;
+function setHapticsEnabled(on) { _hapticsEnabled = !!on; }
+function haptic(kind) {
+  try {
+    if (!_hapticsEnabled) return;
+    if (typeof navigator === 'undefined' || !navigator.vibrate) return;
+    const patterns = { light: 8, medium: 15, success: [10, 40, 10], warn: [20, 60, 20], heavy: 25 };
+    navigator.vibrate(patterns[kind] || patterns.light);
+  } catch (e) {}
+}
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -552,7 +563,6 @@ function App() {
   const [loadError, setLoadError] = useState(null);
   const [page, setPage] = useState('home');
   const [billsExpanded, setBillsExpanded] = useState(true);
-  const [postSetupPrompt, setPostSetupPrompt] = useState(false);
   const [quickAdd, setQuickAdd] = useState(null);
 
   useEffect(() => {
@@ -560,6 +570,10 @@ function App() {
     panes.forEach((p) => { if (p) p.scrollTop = 0; });
     window.scrollTo(0, 0);
   }, [page]);
+
+  useEffect(() => {
+    setHapticsEnabled(data && data.settings ? data.settings.hapticsEnabled !== false : true);
+  }, [data && data.settings && data.settings.hapticsEnabled]);
 
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
   const [desktopInfo, setDesktopInfo] = useState(false);
@@ -683,24 +697,14 @@ function App() {
     return h(OnboardingWizard, {
       data,
       isMobile,
-      onComplete: (next, opts) => {
+      onComplete: (next) => {
         persist({
           ...next,
           onboardingComplete: true,
           settings: { ...next.settings, installDate: next.settings.installDate || todayYmd() }
         });
 
-        if (!(opts && opts.imported)) {
-          setPostSetupPrompt(true);
-        }
       }
-    });
-  }
-
-  if (postSetupPrompt) {
-    return h(PostSetupPrompt, {
-      onAdd: () => { setPostSetupPrompt(false); setQuickAdd({ date: todayYmd() }); },
-      onSkip: () => setPostSetupPrompt(false)
     });
   }
 
@@ -876,8 +880,8 @@ function DesktopInfoModal({ onClose }) {
     ['Works offline', 'No internet needed once installed - it\u2019s a real app, not a website.'],
     ['No backup nagging', 'Because it autosaves to disk, there\u2019s no weekly \u201cdownload a backup\u201d reminder.']
   ];
-  return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
-    h('div', { className: 'modal-content' },
+  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+    h('div', { className: 'modal-content as-window' },
       h('div', { className: 'row-between' },
         h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Desktop app'),
         h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')
@@ -906,8 +910,8 @@ function DesktopInfoModal({ onClose }) {
 }
 
 function BackupReminderModal({ onDownloadBackup, onDismiss }) {
-  return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onDismiss(); } },
-    h('div', { className: 'modal-content' },
+  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onDismiss(); } },
+    h('div', { className: 'modal-content as-window' },
       h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Weekly backup reminder'),
       h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
         'This web version keeps your data in this browser only. It\u2019s a good habit to download a backup ',
@@ -968,6 +972,7 @@ function getBlankData() {
         oneTimeIncome: '#4FAE6B'
       },
       backupReminderEnabled: true,
+      hapticsEnabled: true,
       lastBackupReminderShown: null
     }
   };

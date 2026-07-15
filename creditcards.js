@@ -140,8 +140,8 @@ function CreditCardsPage({ data, setData }) {
       onClose: () => setProjectionCard(null)
     }) : null,
 
-    showForm ? h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) setShowForm(false); } },
-      h('div', { className: 'modal-content' },
+    showForm ? h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) setShowForm(false); } },
+      h('div', { className: 'modal-content as-window' },
         h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, editingId ? 'Edit credit card' : 'Add credit card'),
         h('div', null,
           h('label', null, 'Name'),
@@ -228,7 +228,7 @@ function ProjectionModal({ card, data, currency, onClose }) {
   const maxBar = Math.max(...barPoints.map((p) => p.interest + p.principalPaid), 1);
   const barW = (W - PAD * 2) / Math.max(1, barPoints.length) - 4;
 
-  return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
     h('div', { className: 'modal-content', style: { width: '420px' } },
       h('div', { className: 'row-between' },
         h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, `${card.name} - projection`),

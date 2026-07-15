@@ -156,15 +156,35 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return map;
   }, [occByDate, data]);
 
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayStr = ymd(today);
+
   const agendaDays = useMemo(() => {
-    return Object.keys(occByDate)
-      .filter((ds) => {
-        const d = parseYmd(ds);
-        return d.getMonth() === cursor.getMonth() && d.getFullYear() === cursor.getFullYear();
-      })
-      .sort()
-      .map((ds) => ({ dateStr: ds, items: occByDate[ds] }));
-  }, [occByDate, cursor]);
+    const y = cursor.getFullYear();
+    const m = cursor.getMonth();
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    const rows = [];
+    let gapStart = null;
+    const flushGap = (endDay) => {
+      if (gapStart == null) return;
+      rows.push({ type: 'gap', start: gapStart, end: endDay });
+      gapStart = null;
+    };
+    for (let day = 1; day <= daysInMonth; day++) {
+      const ds = ymd(new Date(y, m, day));
+      const items = occByDate[ds];
+      const isToday = ds === todayStr;
+      if ((items && items.length) || isToday) {
+        flushGap(day - 1);
+        rows.push({ type: 'day', dateStr: ds, items: items || [] });
+      } else {
+        if (gapStart == null) gapStart = day;
+      }
+    }
+    flushGap(daysInMonth);
+    return rows;
+  }, [occByDate, cursor, todayStr]);
   function goToday() {
     const n = new Date();
     setCursor(new Date(n.getFullYear(), n.getMonth(), 1));
@@ -187,10 +207,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
 
   const dowLabels = [];
   for (let i = 0; i < 7; i++) dowLabels.push(DOW_FULL[(firstDow + i) % 7]);
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayStr = ymd(today);
 
   const showWeekNumbers = !!data.settings.showWeekNumbers;
   const selectedOccs = selectedDay ? (occByDate[selectedDay] || []) : [];
@@ -323,19 +339,34 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
       )
     );
 
+    const monthNm = MONTH_NAMES[cursor.getMonth()].slice(0, 3);
+    const gapLabel = (row) => row.start === row.end
+      ? `${monthNm} ${row.start}`
+      : `${monthNm} ${row.start}\u2013${row.end}`;
+
     const agendaView = agendaDays.length === 0
       ? h('div', { className: 'calm-agenda-empty' }, 'Nothing scheduled this month.')
       : h('div', { className: 'calm-agenda-scroll' }, h('div', { className: 'calm-agenda' },
-          agendaDays.map(({ dateStr, items }) => {
+          agendaDays.map((row, ri) => {
+            if (row.type === 'gap') {
+              return h('div', { key: `gap-${ri}`, className: 'calm-ag-gap' },
+                h('span', { className: 'calm-ag-gap-range' }, gapLabel(row)),
+                h('span', { className: 'calm-ag-gap-label' }, 'Nothing scheduled')
+              );
+            }
+            const dateStr = row.dateStr;
+            const items = row.items;
             const d = parseYmd(dateStr);
             const isToday = dateStr === todayStr;
-            return h('div', { key: dateStr, className: 'calm-ag-day' },
+            return h('div', { key: dateStr, className: `calm-ag-day${isToday ? ' is-today' : ''}` },
               h('button', { className: `calm-ag-date${isToday ? ' today' : ''}`, onClick: () => setSelectedDay(dateStr) },
                 h('span', { className: 'calm-ag-d' }, d.getDate()),
                 h('span', { className: 'calm-ag-w' }, DOW_FULL[d.getDay()].slice(0, 3))
               ),
               h('div', { className: 'calm-ag-items' },
-                items.map((o, i) => {
+                items.length === 0
+                  ? h('span', { className: 'calm-ag-today-empty' }, 'Nothing today')
+                  : items.map((o, i) => {
                   const income = o.kind === 'income';
                   const paid = !income && isPaid(data, o.id, o.occDate);
                   const late = !paid && !income &&

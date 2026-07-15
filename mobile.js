@@ -54,7 +54,7 @@ function MobileTabBar({ page, setPage, onAdd, lateCount, needsAttentionCount }) 
         return h('button', {
           key: tab.id,
           className: 'mobile-tab-add',
-          onClick: onAdd,
+          onClick: () => { haptic('medium'); onAdd(); },
           'aria-label': 'Add expense'
         },
           h('svg', { width: 26, height: 26, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.6, strokeLinecap: 'round' },
