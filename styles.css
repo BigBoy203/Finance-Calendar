@@ -2665,7 +2665,7 @@ label {
   gap: 10px;
 }
 .setup-field { min-width: 0; }
-.setup-field label {
+.setup-field > label {
   display: block;
   font-size: 11px;
   font-weight: 600;
@@ -2674,8 +2674,8 @@ label {
   letter-spacing: 0.04em;
   margin-bottom: 5px;
 }
-.setup-field input,
-.setup-field select {
+.setup-field > input,
+.setup-field > select {
   width: 100%;
   min-width: 0;
   height: 40px;
@@ -2685,6 +2685,9 @@ label {
   align-items: center;
   gap: 8px;
   margin-top: 12px;
+}
+.modal-content .setup-entry-links {
+  margin-top: 0;
 }
 .setup-link {
   padding: 0;

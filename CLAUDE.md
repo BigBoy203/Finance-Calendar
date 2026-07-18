@@ -20,6 +20,7 @@ node --check app.js
 - `node --check` does NOT catch use-before-declaration (temporal dead zone). A `const` used by a useMemo above its declaration = black-screen crash at runtime. This has happened. When adding hooks/consts inside components, declare dependencies ABOVE their first use.
 - After any CSS edit verify brace balance: count of `{` must equal `}`. Bulk python string-replace on styles.css has corrupted it before; prefer small targeted edits.
 - Bump `WEB_VERSION` in `app_core.js` on every shipped change.
+- Headless UI verification recipe (serve + Playwright at iPhone viewport + IndexedDB seed): `.claude/skills/verify/SKILL.md`.
 
 ## Code style — hard rules from the owner
 
@@ -35,6 +36,7 @@ node --check app.js
 - Paid state: `data.paidHistory["entryId|YYYY-MM-DD"] = true`. Per-occurrence overrides in `data.overrides` keyed the same way.
 - Mobile detection: `useIsMobile()` (matchMedia ≤768px). Mobile UI: fixed shell, bottom tab bar Home · Calendar · [＋ raised circle] · Late · Expenses; Settings is the gear in the header; Sync button top-left with "last synced" label under it.
 - Modal rule: big forms and dialogs = centered window (`.modal-overlay.as-window` + `.modal-content.as-window` + `.modal-window-head` + `.modal-x`). Only the calendar day-detail stays a slide-up sheet.
+- Form field system (wizard, edit modals, quick-add all share it): `.setup-field` (small uppercase label + full-width 40px input) inside `.setup-entry-grid` (2-col), inline `.setup-link` toggles joined by `.setup-link-dot` ("Amount range · Date range"). Do NOT use the old pattern of stacked full-width fields with underlined `.toggle-link` buttons in forms — on mobile those balloon to 40px rows and wreck spacing (`.toggle-link` survives only for the allbills info banner). `.setup-field` label/input selectors are direct-child scoped (`>`) so nested checkbox/color rows keep normal styling — keep them that way.
 - Mobile calendar: `.calm-*` classes; dot grid + compact daily totals, Month/Agenda toggle, spanning range pills in a reserved lane below each week (lane-stacked when ranges overlap). IMPORTANT: mobile has `button { min-height: 40px }` — any new small button-like element must be added to the exemption list (`min-height: 0`) or it balloons.
 - Onboarding (`wizard.js`): welcome screen → income → bills → subscriptions → credit cards. Bills/subs start EMPTY with tap-to-add suggestion chips. Mid-month rule: on the final step (if today > 1st) a default-on toggle marks already-passed bills this month as paid so nothing shows falsely late on day one.
 - Add window (`quickadd.js`): icon tiles Purchase (default) / Bill / Subscription / Income.

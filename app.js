@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '2.7';
+const WEB_VERSION = '2.8';
 
 let _hapticsEnabled = true;
 function setHapticsEnabled(on) { _hapticsEnabled = !!on; }
@@ -1175,61 +1175,62 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
           )
         )
       ),
-      h('div', null,
+      h('div', { className: 'setup-field' },
         h('label', null, 'Name'),
-        h('input', { type: 'text', value: form.name, onChange: (e) => update('name', e.target.value), style: { width: '100%' } })
+        h('input', { type: 'text', value: form.name, onChange: (e) => update('name', e.target.value) })
       ),
-      h('div', { style: { display: 'flex', gap: '8px' } },
+      h('div', { className: 'setup-entry-grid' },
         form.useAmountRange
           ? h(React.Fragment, null,
-              h('div', { style: { flex: 1 } },
+              h('div', { className: 'setup-field' },
                 h('label', null, 'Min'),
-                h('input', { type: 'number', value: form.amountMin, onChange: (e) => update('amountMin', e.target.value), style: { width: '100%' } })
+                h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: form.amountMin, onChange: (e) => update('amountMin', e.target.value) })
               ),
-              h('div', { style: { flex: 1 } },
+              h('div', { className: 'setup-field' },
                 h('label', null, 'Max'),
-                h('input', { type: 'number', value: form.amountMax, onChange: (e) => update('amountMax', e.target.value), style: { width: '100%' } })
+                h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: form.amountMax, onChange: (e) => update('amountMax', e.target.value) })
               )
             )
-          : h('div', { style: { flex: 1 } },
+          : h('div', { className: 'setup-field' },
               h('label', null, 'Amount'),
-              h('input', { type: 'number', value: form.amount, onChange: (e) => update('amount', e.target.value), style: { width: '100%' } })
-            )
-      ),
-      h('button', { className: 'toggle-link', onClick: () => update('useAmountRange', !form.useAmountRange) },
-        form.useAmountRange ? 'Use fixed amount' : 'Use amount range'),
-      h('div', { style: { display: 'flex', gap: '8px' } },
+              h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: form.amount, onChange: (e) => update('amount', e.target.value) })
+            ),
         form.useDateRange
           ? h(React.Fragment, null,
-              h('div', { style: { flex: 1 } },
-                h('label', null, 'Start date'),
-                h('input', { type: 'date', value: form.date, onChange: (e) => update('date', e.target.value), style: { width: '100%' } })
+              h('div', { className: 'setup-field' },
+                h('label', null, 'Start'),
+                h('input', { type: 'date', value: form.date, onChange: (e) => update('date', e.target.value) })
               ),
-              h('div', { style: { flex: 1 } },
-                h('label', null, 'End date'),
-                h('input', { type: 'date', value: form.dateEnd, onChange: (e) => update('dateEnd', e.target.value), style: { width: '100%' } })
+              h('div', { className: 'setup-field' },
+                h('label', null, 'End'),
+                h('input', { type: 'date', value: form.dateEnd, onChange: (e) => update('dateEnd', e.target.value) })
               )
             )
-          : h('div', { style: { flex: 1 } },
+          : h('div', { className: 'setup-field' },
               h('label', null, dateLabel || 'Date'),
-              h('input', { type: 'date', value: form.date, onChange: (e) => update('date', e.target.value), style: { width: '100%' } })
-            )
+              h('input', { type: 'date', value: form.date, onChange: (e) => update('date', e.target.value) })
+            ),
+        useFreq ? h('div', { className: 'setup-field' },
+          h('label', null, 'Repeats'),
+          h('select', { value: form.freq, onChange: (e) => update('freq', e.target.value) },
+            FREQS.map((f) => h('option', { key: f, value: f }, FREQ_LABELS[f])))
+        ) : null,
+        categories ? h('div', { className: 'setup-field' },
+          h('label', null, 'Category'),
+          h('select', { value: form.category, onChange: (e) => update('category', e.target.value) },
+            (categories.includes(form.category) ? categories : [form.category, ...categories]).map((c) => h('option', { key: c, value: c }, c)))
+        ) : null
       ),
-      h('button', { className: 'toggle-link', onClick: () => update('useDateRange', !form.useDateRange) },
-        form.useDateRange ? 'Use single date' : 'Use date range'),
-      useFreq ? h('div', null,
-        h('label', null, 'Frequency'),
-        h('select', { value: form.freq, onChange: (e) => update('freq', e.target.value), style: { width: '100%' } },
-          FREQS.map((f) => h('option', { key: f, value: f }, FREQ_LABELS[f])))
-      ) : null,
-      categories ? h('div', null,
-        h('label', null, 'Category'),
-        h('select', { value: form.category, onChange: (e) => update('category', e.target.value), style: { width: '100%' } },
-          (categories.includes(form.category) ? categories : [form.category, ...categories]).map((c) => h('option', { key: c, value: c }, c)))
-      ) : null,
-      h('div', null,
+      h('div', { className: 'setup-entry-links' },
+        h('button', { className: 'setup-link', onClick: () => update('useAmountRange', !form.useAmountRange) },
+          form.useAmountRange ? 'Fixed amount' : 'Amount range'),
+        h('span', { className: 'setup-link-dot' }, '·'),
+        h('button', { className: 'setup-link', onClick: () => update('useDateRange', !form.useDateRange) },
+          form.useDateRange ? 'Single date' : 'Date range')
+      ),
+      h('div', { className: 'setup-field' },
         h('label', null, 'Calendar color'),
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
           h('div', { className: 'checkbox-row', style: { margin: 0 } },
             h('input', {
               type: 'checkbox',
@@ -1908,64 +1909,63 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
         )
       ),
 
-      h('div', null,
+      h('div', { className: 'setup-field' },
         h('label', null, 'Name'),
-        h('input', { type: 'text', value: form.name, onChange: (e) => update('name', e.target.value), style: { width: '100%' } })
+        h('input', { type: 'text', value: form.name, onChange: (e) => update('name', e.target.value) })
       ),
 
-      h('div', { style: { display: 'flex', gap: '8px' } },
+      h('div', { className: 'setup-entry-grid' },
         form.useAmountRange
           ? h(React.Fragment, null,
-              h('div', { style: { flex: 1 } },
-                h('label', null, 'Min amount'),
-                h('input', { type: 'number', value: form.amountMin, onChange: (e) => update('amountMin', e.target.value), style: { width: '100%' } })
+              h('div', { className: 'setup-field' },
+                h('label', null, 'Min'),
+                h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: form.amountMin, onChange: (e) => update('amountMin', e.target.value) })
               ),
-              h('div', { style: { flex: 1 } },
-                h('label', null, 'Max amount'),
-                h('input', { type: 'number', value: form.amountMax, onChange: (e) => update('amountMax', e.target.value), style: { width: '100%' } })
+              h('div', { className: 'setup-field' },
+                h('label', null, 'Max'),
+                h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: form.amountMax, onChange: (e) => update('amountMax', e.target.value) })
               )
             )
-          : h('div', { style: { flex: 1 } },
+          : h('div', { className: 'setup-field' },
               h('label', null, 'Amount'),
-              h('input', { type: 'number', value: form.amount, onChange: (e) => update('amount', e.target.value), style: { width: '100%' } })
-            )
-      ),
-      h('button', { className: 'toggle-link', onClick: () => update('useAmountRange', !form.useAmountRange) },
-        form.useAmountRange ? 'Use fixed amount' : 'Use amount range'),
-
-      h('div', { style: { display: 'flex', gap: '8px' } },
+              h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: form.amount, onChange: (e) => update('amount', e.target.value) })
+            ),
         form.useDateRange
           ? h(React.Fragment, null,
-              h('div', { style: { flex: 1 } },
-                h('label', null, 'Start date'),
-                h('input', { type: 'date', value: form.date, onChange: (e) => update('date', e.target.value), style: { width: '100%' } })
+              h('div', { className: 'setup-field' },
+                h('label', null, 'Start'),
+                h('input', { type: 'date', value: form.date, onChange: (e) => update('date', e.target.value) })
               ),
-              h('div', { style: { flex: 1 } },
-                h('label', null, 'End date'),
-                h('input', { type: 'date', value: form.dateEnd, onChange: (e) => update('dateEnd', e.target.value), style: { width: '100%' } })
+              h('div', { className: 'setup-field' },
+                h('label', null, 'End'),
+                h('input', { type: 'date', value: form.dateEnd, onChange: (e) => update('dateEnd', e.target.value) })
               )
             )
-          : h('div', { style: { flex: 1 } },
+          : h('div', { className: 'setup-field' },
               h('label', null, dateLabel),
-              h('input', { type: 'date', value: form.date, onChange: (e) => update('date', e.target.value), style: { width: '100%' } })
-            )
+              h('input', { type: 'date', value: form.date, onChange: (e) => update('date', e.target.value) })
+            ),
+        showFreq ? h('div', { className: 'setup-field' },
+          h('label', null, 'Repeats'),
+          h('select', { value: form.freq, onChange: (e) => update('freq', e.target.value) },
+            FREQS.map((f) => h('option', { key: f, value: f }, FREQ_LABELS[f])))
+        ) : null,
+        categories ? h('div', { className: 'setup-field' },
+          h('label', null, 'Category'),
+          h('select', { value: form.category, onChange: (e) => update('category', e.target.value) },
+            categories.map((c) => h('option', { key: c, value: c }, c)))
+        ) : null
       ),
-      (type === 'bill' || type === 'subscription')
-        ? h('button', { className: 'toggle-link', onClick: () => update('useDateRange', !form.useDateRange) },
-            form.useDateRange ? 'Use single date' : 'Use date range')
-        : null,
 
-      showFreq ? h('div', null,
-        h('label', null, 'Frequency'),
-        h('select', { value: form.freq, onChange: (e) => update('freq', e.target.value), style: { width: '100%' } },
-          FREQS.map((f) => h('option', { key: f, value: f }, FREQ_LABELS[f])))
-      ) : null,
-
-      categories ? h('div', null,
-        h('label', null, 'Category'),
-        h('select', { value: form.category, onChange: (e) => update('category', e.target.value), style: { width: '100%' } },
-          categories.map((c) => h('option', { key: c, value: c }, c)))
-      ) : null,
+      h('div', { className: 'setup-entry-links' },
+        h('button', { className: 'setup-link', onClick: () => update('useAmountRange', !form.useAmountRange) },
+          form.useAmountRange ? 'Fixed amount' : 'Amount range'),
+        showFreq ? h(React.Fragment, null,
+          h('span', { className: 'setup-link-dot' }, '·'),
+          h('button', { className: 'setup-link', onClick: () => update('useDateRange', !form.useDateRange) },
+            form.useDateRange ? 'Single date' : 'Date range')
+        ) : null
+      ),
 
       h('div', { className: 'row-between', style: { marginTop: '4px' } },
         h('button', { onClick: onClose }, 'Cancel'),
