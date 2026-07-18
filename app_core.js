@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '2.6';
+const WEB_VERSION = '2.7';
 
 let _hapticsEnabled = true;
 function setHapticsEnabled(on) { _hapticsEnabled = !!on; }
