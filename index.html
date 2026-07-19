@@ -80,8 +80,13 @@
   <script src="app.js"></script>
 
   <script>
-    window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+    if (location.hostname.endsWith('.vercel.app')) {
+      window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+      var vaScript = document.createElement('script');
+      vaScript.defer = true;
+      vaScript.src = '/_vercel/insights/script.js';
+      document.body.appendChild(vaScript);
+    }
   </script>
-  <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

@@ -13,4 +13,4 @@ Static site, no build server. Rebuild `app.js` first (concat command in CLAUDE.m
 4. Navigation: bottom tab bar texts `Home / Calendar / Late / Expenses`; the raised ＋ is `.mobile-tab-add`. List items open edit modals on click.
 5. Attach `pageerror`/console-error listeners — a TDZ mistake in the concat order is a silent black screen.
 
-Gotchas: `/_vercel/insights/script.js` 404s locally — expected, ignore. Kill the server by port match when done.
+Gotchas: the service worker (`sw.js`) registers even on 127.0.0.1 — always use a fresh browser context per run so its cache can't serve stale files; test offline behavior with `context.setOffline(true)` after one full online load. Vercel analytics is hostname-gated and never loads locally. Kill the server by port match when done.

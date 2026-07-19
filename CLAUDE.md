@@ -14,7 +14,8 @@ node --check app.js
 ```
 
 - `storage.js` and `sync.js` load as separate script tags in `index.html` (before `app.js`) and define globals `window.api` and `Sync`. NEVER concatenate them into `app.js`.
-- `index.html` loads only: vendor react, storage.js, sync.js, app.js — in that order.
+- `sw.js` is the service worker (offline app-shell cache, network-first). It is standalone: never concatenated, never a script tag — `app_core.js` registers it as `sw.js?v=WEB_VERSION`, so bumping `WEB_VERSION` is what rolls the offline cache. Any new file the shell needs at runtime must be added to the `SHELL` list in `sw.js`.
+- `index.html` loads only: vendor react, storage.js, sync.js, app.js — in that order. Vercel analytics is injected dynamically and ONLY on `*.vercel.app` hostnames — keep it out of packaged/native builds.
 - After building, check for duplicate top-level definitions:
   `grep "^function \|^const " app.js | sed 's/(.*//' | sort | uniq -d` (must output nothing)
 - `node --check` does NOT catch use-before-declaration (temporal dead zone). A `const` used by a useMemo above its declaration = black-screen crash at runtime. This has happened. When adding hooks/consts inside components, declare dependencies ABOVE their first use.

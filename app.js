@@ -1,7 +1,13 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '2.8';
+const WEB_VERSION = '2.9';
+
+if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js?v=' + WEB_VERSION).catch(() => {});
+  });
+}
 
 let _hapticsEnabled = true;
 function setHapticsEnabled(on) { _hapticsEnabled = !!on; }
