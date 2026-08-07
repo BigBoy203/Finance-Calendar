@@ -28,7 +28,7 @@ function useIsMobile() {
 
 const MOBILE_TABS = [
   { id: 'home', label: 'Home', icon: 'home' },
-  { id: 'calendar', label: 'Calendar', icon: 'calendar' },
+  { id: 'overview', label: 'Overview', icon: 'calendar' },
   { id: 'add', label: 'Add', icon: 'plus', isAdd: true },
   { id: 'late', label: 'Late', icon: 'alert' },
   { id: 'allbills', label: 'Expenses', icon: 'allbills' }
@@ -36,7 +36,7 @@ const MOBILE_TABS = [
 
 const TAB_FOR_PAGE = {
   home: 'home',
-  calendar: 'calendar',
+  overview: 'overview',
   late: 'late',
   allbills: 'allbills',
   essentials: 'allbills',
@@ -83,7 +83,7 @@ function MobileTabBar({ page, setPage, onAdd, lateCount, needsAttentionCount }) 
   );
 }
 
-function MobileHeader({ title, onSettings, onBack, onSync, lastExported }) {
+function MobileHeader({ title, titleEl, onSettings, onBack, onSync, lastExported }) {
   return h('header', { className: 'mobile-header' },
     h('div', { className: 'mobile-header-left' },
       onBack
@@ -99,7 +99,7 @@ function MobileHeader({ title, onSettings, onBack, onSync, lastExported }) {
               )
             : null)
     ),
-    h('h1', { className: 'mobile-header-title' }, title || 'Finance Calendar'),
+    titleEl || h('h1', { className: 'mobile-header-title' }, title || 'Finance Calendar'),
     h('div', { className: 'mobile-header-right' },
       onSettings
         ? h('button', { className: 'mobile-header-settings', onClick: onSettings, 'aria-label': 'Settings' },

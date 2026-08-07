@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '2.9';
+const WEB_VERSION = '3.0-dev';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -570,6 +570,7 @@ function App() {
   const [page, setPage] = useState('home');
   const [billsExpanded, setBillsExpanded] = useState(true);
   const [quickAdd, setQuickAdd] = useState(null);
+  const [overviewView, setOverviewView] = useState('calendar');
 
   useEffect(() => {
     const panes = document.querySelectorAll('.main-content, .main-content.mobile');
@@ -716,7 +717,7 @@ function App() {
 
   const NAV_ITEMS = [
     { id: 'home', label: 'Home', icon: 'home' },
-    { id: 'calendar', label: 'Calendar', icon: 'calendar' },
+    { id: 'overview', label: 'Overview', icon: 'calendar' },
     { id: 'late', label: 'Late payments', icon: 'alert' },
     {
       id: 'allbills', label: 'All bills', icon: 'allbills',
@@ -735,8 +736,12 @@ function App() {
   let pageContent;
   if (page === 'home') {
     pageContent = h(HomePage, { data, setData: persist, isMobile });
-  } else if (page === 'calendar') {
-    pageContent = h(CalendarPage, { data, setData: persist, isMobile, onAddEntry: (date) => setQuickAdd({ date }) });
+  } else if (page === 'overview') {
+    pageContent = h(OverviewPage, {
+      data, setData: persist, isMobile,
+      onAddEntry: (date) => setQuickAdd({ date }),
+      view: overviewView, setView: setOverviewView
+    });
   } else if (page === 'late') {
     pageContent = h(LatePage, { data, setData: persist, lateBills });
   } else if (page === 'essentials') {
@@ -764,7 +769,7 @@ function App() {
 
   if (isMobile) {
     const pageTitle = ({
-      home: 'Home', calendar: 'Calendar', late: 'Late payments',
+      home: 'Home', overview: 'Overview', late: 'Late payments',
       allbills: 'Expenses', essentials: 'Essentials', creditcards: 'Credit cards',
       subscriptions: 'Subscriptions', settings: 'Settings'
     })[page] || 'Finance Calendar';
@@ -772,6 +777,9 @@ function App() {
     return h('div', { className: 'app-shell mobile' },
       h(MobileHeader, {
         title: pageTitle,
+        titleEl: page === 'overview'
+          ? h(OverviewSwitch, { view: overviewView, setView: setOverviewView })
+          : null,
         onSettings: () => setPage('settings'),
         onSync: () => setSyncModal(true),
         onBack: MOBILE_SUBPAGES.includes(page) ? () => setPage('allbills') : null,

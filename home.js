@@ -1,105 +1,138 @@
 
 const DONUT_COLORS = ['#D85A5A', '#D8A857', '#8B6FD6', '#4FAE6B', '#D8845A', '#5AA8D8', '#C75AA8', '#7A8C5A'];
 
+function billRowState(data, o, today) {
+  const paid = isPaid(data, o.id, o.occDate);
+  const late = !paid && (isForcedLate(data, o.id, o.occDate)
+    || (parseYmd(o.occDate) < today && !isDismissedLate(data, o.id, o.occDate)));
+  return { paid, late };
+}
+
+function BillChecklist({ rows, data, currency, onToggle, onOpen }) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return h('div', { className: 'bill-checklist' },
+    rows.map((o) => {
+      const { paid, late } = billRowState(data, o, today);
+      const accentColor = getEntryColor(o, data) || '#D85A5A';
+      return h('div', {
+        key: `${o.id}-${o.occDate}`,
+        className: `bill-check-row${paid ? ' paid' : ''}`,
+        onClick: () => onOpen(o)
+      },
+        h('input', {
+          type: 'checkbox',
+          checked: paid,
+          onClick: (e) => e.stopPropagation(),
+          onChange: () => onToggle(o),
+          'aria-label': `Mark ${o.name} paid`
+        }),
+        h('span', { className: 'bill-check-accent', style: { background: accentColor } }),
+        h('div', { className: 'bill-check-text' },
+          h('p', { className: 'bill-check-name' },
+            late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
+            o.name
+          ),
+          h('p', { className: 'bill-check-sub' },
+            `${formatDate(parseYmd(o.occDate), data.settings)} \u00b7 ${o.category || (FREQ_LABELS[o.freq] || o.freq)}`)
+        ),
+        h('span', { className: 'bill-check-amount' }, occAmountLabel(o, currency))
+      );
+    })
+  );
+}
+
+function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return h('div', { className: 'bill-tile-grid' },
+    rows.map((o) => {
+      const { paid, late } = billRowState(data, o, today);
+      const accentColor = getEntryColor(o, data) || '#D85A5A';
+      return h('div', {
+        key: `${o.id}-${o.occDate}`,
+        className: `bill-tile${paid ? ' paid' : ''}`,
+        style: { borderLeft: `3px solid ${accentColor}` },
+        onClick: () => onOpen(o)
+      },
+        h('div', { className: 'bill-tile-top' },
+          h('p', { className: 'bill-tile-name' },
+            late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
+            o.name
+          ),
+          h('input', {
+            type: 'checkbox',
+            checked: paid,
+            onClick: (e) => e.stopPropagation(),
+            onChange: () => onToggle(o),
+            'aria-label': `Mark ${o.name} paid`
+          })
+        ),
+        h('p', { className: 'bill-tile-amount' }, occAmountLabel(o, currency)),
+        h('p', { className: 'bill-tile-sub' },
+          `${formatDate(parseYmd(o.occDate), data.settings)} \u2014 ${o.category || (FREQ_LABELS[o.freq] || o.freq)}`)
+      );
+    })
+  );
+}
+
+function NextCheckCard({ data, currency, nextCheck, listEl }) {
+  const { check, windowEnd, bills, due, checkAmount, overdueCount } = nextCheck;
+  const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
+
+  const whenText = check
+    ? `${check.name} \u00b7 ${dateLabel}`
+    : `No income scheduled \u2014 showing through ${dateLabel}`;
+
+  const noteText = overdueCount > 0
+    ? `${overdueCount} overdue \u00b7 ${bills.length} to pay`
+    : `${bills.length} to pay`;
+
+  const shortfall = due - checkAmount;
+  const fillPct = checkAmount > 0 ? Math.min(100, (due / checkAmount) * 100) : 0;
+
+  return h('section', { className: `nextcheck${overdueCount > 0 ? ' urgent' : ''}` },
+    h('div', { className: 'nextcheck-top' },
+      h('div', { className: 'nextcheck-when' },
+        h('p', { className: 'nextcheck-label' }, 'Before your next check'),
+        h('p', { className: 'nextcheck-sub' }, whenText)
+      ),
+      h('div', { className: 'nextcheck-figure' },
+        h('p', { className: 'nextcheck-due' }, fmtCurrency(due, currency)),
+        h('p', { className: 'nextcheck-note' }, noteText)
+      )
+    ),
+
+    checkAmount > 0 ? h('div', { className: 'nextcheck-bar' },
+      h('span', { className: `nextcheck-bar-fill${shortfall > 0 ? ' over' : ''}`, style: { width: `${fillPct}%` } })
+    ) : null,
+
+    checkAmount > 0 ? h('p', { className: `nextcheck-verdict${shortfall > 0 ? ' short' : ''}` },
+      shortfall > 0
+        ? `${fmtCurrency(shortfall, currency)} more than that check covers`
+        : `${fmtCurrency(-shortfall, currency)} of it left over`
+    ) : null,
+
+    bills.length === 0
+      ? h('p', { className: 'empty-state' }, 'Nothing due before then \u2014 you\u2019re clear.')
+      : listEl
+  );
+}
+
 function HomePage({ data, setData, isMobile }) {
   const currency = data.settings.currency;
-  const [breakdownGroupBy, setBreakdownGroupBy] = useState('source');
-  const [breakdownFilter, setBreakdownFilter] = useState('bills');
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
   const [priceModal, setPriceModal] = useState(null);
+  const [billsOpen, setBillsOpen] = useState(false);
 
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const fin = useMonthFinancials(data, cursor);
+  const nextCheck = useNextCheck(data);
 
-  const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
-  const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const allBills = getAllBillLikeEntries(data);
-
-  const sourceListById = useMemo(() => buildSourceListLookup(data), [data]);
-
-  const billOccurrences = useMemo(
-    () => expandAll(allBills, 'bill', monthStart, monthEnd, data).map((o) => ({ ...o, sourceList: sourceListById[o.id] })),
-    [data, cursor]
-  );
-  const incomeOccurrences = useMemo(
-    () => expandAll(data.incomeSources, 'income', monthStart, monthEnd, data).map((o) => ({ ...o, sourceList: 'incomeSources' })),
-    [data, cursor]
-  );
-
-  const oneTimeThisMonth = useMemo(() => {
-    return data.oneTimeEntries.filter((e) => {
-      if (!e.date) return false;
-      const d = parseYmd(e.date);
-      return d >= monthStart && d <= monthEnd;
-    });
-  }, [data.oneTimeEntries, cursor]);
-
-  const oneTimePaymentsThisMonth = useMemo(() => oneTimeThisMonth
-    .filter((e) => e.oneTimeKind === 'payment')
-    .map((e) => ({ ...oneTimeOccurrence(data, e), sourceList: 'oneTimeEntries' })), [oneTimeThisMonth, data]);
-
-  const oneTimeIncomeThisMonth = oneTimeThisMonth.filter((e) => e.oneTimeKind === 'income');
-
-  const totalBills = billOccurrences.reduce((sum, o) => sum + o.amount, 0)
-    + oneTimePaymentsThisMonth.reduce((sum, o) => sum + o.amount, 0);
-
-  const totalProjectedIncome = incomeOccurrences.reduce((sum, o) => sum + o.amount, 0)
-    + oneTimeIncomeThisMonth.reduce((sum, o) => sum + entryAmount(o), 0);
-
-  const projectedIncomeRange = useMemo(() => {
-    let min = 0;
-    let max = 0;
-    incomeOccurrences.forEach((o) => {
-      if (o.useAmountRange) {
-        min += Number(o.amountMin) || 0;
-        max += Number(o.amountMax) || 0;
-      } else {
-        min += o.amount;
-        max += o.amount;
-      }
-    });
-    oneTimeIncomeThisMonth.forEach((o) => {
-      if (o.useAmountRange) {
-        min += Number(o.amountMin) || 0;
-        max += Number(o.amountMax) || 0;
-      } else {
-        const amt = entryAmount(o);
-        min += amt;
-        max += amt;
-      }
-    });
-    return { min, max };
-  }, [incomeOccurrences, oneTimeIncomeThisMonth]);
-  const hasIncomeRange = projectedIncomeRange.min !== projectedIncomeRange.max;
-
-  const incomeReceived = incomeOccurrences
-    .filter((o) => parseYmd(o.occDate) <= today)
-    .reduce((sum, o) => sum + o.amount, 0)
-    + oneTimeIncomeThisMonth
-      .filter((o) => parseYmd(o.date) <= today)
-      .reduce((sum, o) => sum + entryAmount(o), 0);
-
-  const billsPaid = billOccurrences
-    .filter((o) => isPaid(data, o.id, o.occDate))
-    .reduce((sum, o) => sum + o.amount, 0)
-    + oneTimePaymentsThisMonth
-      .filter((o) => isPaid(data, o.id, o.occDate))
-      .reduce((sum, o) => sum + o.amount, 0);
-
-  const allTiles = useMemo(() => {
-    return [...billOccurrences, ...oneTimePaymentsThisMonth]
-      .sort((a, b) => {
-        const aPaid = isPaid(data, a.id, a.occDate);
-        const bPaid = isPaid(data, b.id, b.occDate);
-        if (aPaid !== bPaid) return aPaid ? 1 : -1;
-        return a.occDate.localeCompare(b.occDate);
-      });
-  }, [billOccurrences, oneTimePaymentsThisMonth, data]);
+  const now = new Date();
+  const isCurrentMonth = cursor.getFullYear() === now.getFullYear() && cursor.getMonth() === now.getMonth();
 
   function togglePaid(o) {
     const wasPaid = isPaid(data, o.id, o.occDate);
@@ -109,397 +142,77 @@ function HomePage({ data, setData, isMobile }) {
     setData(next);
   }
 
-  const cashFlowSeries = useMemo(() => {
-    const daysInMonth = monthEnd.getDate();
-    const billsByDay = new Array(daysInMonth + 1).fill(0);
-    const incomeByDay = new Array(daysInMonth + 1).fill(0);
-
-    [...billOccurrences, ...oneTimePaymentsThisMonth].forEach((o) => {
-      const day = parseYmd(o.occDate).getDate();
-      billsByDay[day] += o.amount;
-    });
-    incomeOccurrences.forEach((o) => {
-      const day = parseYmd(o.occDate).getDate();
-      incomeByDay[day] += o.amount;
-    });
-    oneTimeIncomeThisMonth.forEach((o) => {
-      const day = parseYmd(o.date).getDate();
-      incomeByDay[day] += entryAmount(o);
-    });
-
-    let runningBills = 0;
-    let runningIncome = 0;
-    const points = [];
-    for (let day = 1; day <= daysInMonth; day++) {
-      runningBills += billsByDay[day];
-      runningIncome += incomeByDay[day];
-      points.push({
-        day,
-        bills: runningBills,
-        income: runningIncome,
-        net: runningIncome - runningBills,
-        dailyBills: billsByDay[day],
-        dailyIncome: incomeByDay[day],
-        dailyNet: incomeByDay[day] - billsByDay[day]
-      });
-    }
-    return points;
-  }, [billOccurrences, oneTimePaymentsThisMonth, incomeOccurrences, oneTimeIncomeThisMonth, cursor]);
-
-  const lastMonthTotals = useMemo(() => {
-    const lastMonthStart = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1);
-    const lastMonthEnd = new Date(cursor.getFullYear(), cursor.getMonth(), 0);
-
-    const lastBills = expandAll(allBills, 'bill', lastMonthStart, lastMonthEnd, data);
-    const lastIncome = expandAll(data.incomeSources, 'income', lastMonthStart, lastMonthEnd, data);
-    const lastOneTime = data.oneTimeEntries.filter((e) => {
-      if (!e.date) return false;
-      const d = parseYmd(e.date);
-      return d >= lastMonthStart && d <= lastMonthEnd;
-    });
-    const lastOneTimeBills = lastOneTime.filter((e) => e.oneTimeKind === 'payment')
-      .reduce((sum, e) => sum + resolvedAmount(data, e, e.date), 0);
-    const lastOneTimeIncome = lastOneTime.filter((e) => e.oneTimeKind === 'income')
-      .reduce((sum, e) => sum + resolvedAmount(data, e, e.date), 0);
-
-    const totalBillsLast = lastBills.reduce((sum, o) => sum + o.amount, 0) + lastOneTimeBills;
-    const totalIncomeLast = lastIncome.reduce((sum, o) => sum + o.amount, 0) + lastOneTimeIncome;
-    return { totalBills: totalBillsLast, totalIncome: totalIncomeLast };
-  }, [data, cursor]);
-
-  const monthSummary = useMemo(() => {
-    const billRows = [...billOccurrences, ...oneTimePaymentsThisMonth];
-    const incomeRows = [...incomeOccurrences, ...oneTimeIncomeThisMonth.map((o) => ({ ...o, amount: resolvedAmount(data, o, o.date) }))];
-
-    const biggestBill = billRows.reduce((max, o) => (!max || o.amount > max.amount ? o : max), null);
-    const biggestIncome = incomeRows.reduce((max, o) => (!max || o.amount > max.amount ? o : max), null);
-    const avgBill = billRows.length > 0 ? billRows.reduce((s, o) => s + o.amount, 0) / billRows.length : 0;
-
-    return { biggestBill, biggestIncome, avgBill, billCount: billRows.length };
-  }, [billOccurrences, oneTimePaymentsThisMonth, incomeOccurrences, oneTimeIncomeThisMonth, data]);
-
-  const SOURCE_GROUP_LABELS = {
-    majorBills: 'Essentials',
-    subscriptions: 'Subscriptions',
-    creditCards: 'Credit cards',
-    oneTimeEntries: 'One-time',
-    incomeSources: 'Income'
-  };
-
-  const breakdownData = useMemo(() => {
-    const rows = [];
-    if (breakdownFilter === 'bills' || breakdownFilter === 'both') {
-      billOccurrences.forEach((o) => rows.push(o));
-      oneTimePaymentsThisMonth.forEach((o) => rows.push(o));
-    }
-    if (breakdownFilter === 'income' || breakdownFilter === 'both') {
-      incomeOccurrences.forEach((o) => rows.push(o));
-      oneTimeIncomeThisMonth.forEach((o) => {
-        rows.push({ ...o, amount: resolvedAmount(data, o, o.date), sourceList: 'oneTimeEntries' });
-      });
-    }
-
-    const sc = data.settings.sectionColors || {};
-
-    const sourceColorFor = (o) => {
-      if (o.sourceList === 'oneTimeEntries') return o.kind === 'income' ? sc.oneTimeIncome : sc.oneTimePayments;
-      return sc[o.sourceList];
-    };
-
-    const groups = {};
-    rows.forEach((o) => {
-      if (breakdownGroupBy === 'source') {
-
-        const groupKey = o.sourceList === 'oneTimeEntries' ? `oneTimeEntries:${o.kind}` : o.sourceList;
-        const label = o.sourceList === 'oneTimeEntries'
-          ? (o.kind === 'income' ? 'One-time income' : 'One-time payments')
-          : (SOURCE_GROUP_LABELS[o.sourceList] || 'Other');
-        if (!groups[groupKey]) groups[groupKey] = { label, amount: 0, color: sourceColorFor(o) || DONUT_COLORS[0] };
-        groups[groupKey].amount += o.amount;
-      } else {
-        const key = o.category || 'Other';
-        if (!groups[key]) groups[key] = { label: key, amount: 0, color: null };
-        groups[key].amount += o.amount;
-      }
-    });
-
-    const total = Object.values(groups).reduce((s, v) => s + v.amount, 0);
-    return Object.values(groups)
-      .sort((a, b) => b.amount - a.amount)
-      .map((g, i) => ({ ...g, pct: total > 0 ? g.amount / total : 0, color: g.color || DONUT_COLORS[i % DONUT_COLORS.length] }));
-  }, [billOccurrences, oneTimePaymentsThisMonth, incomeOccurrences, oneTimeIncomeThisMonth, breakdownGroupBy, breakdownFilter, data]);
-
-  const next7Days = useMemo(() => {
-    const start = new Date(today);
-    const end = new Date(today);
-    end.setDate(end.getDate() + 7);
-    const within = (dateStr) => {
-      const d = parseYmd(dateStr);
-      return d >= start && d <= end;
-    };
-
-    const billOccs7 = expandAll(allBills, 'bill', start, end, data).map((o) => ({ ...o, sourceList: sourceListById[o.id] }));
-    const incomeOccs7 = expandAll(data.incomeSources, 'income', start, end, data).map((o) => ({ ...o, sourceList: 'incomeSources' }));
-    const oneTime7 = data.oneTimeEntries
-      .filter((e) => e.date && within(e.date))
-      .map((e) => ({ ...oneTimeOccurrence(data, e), sourceList: 'oneTimeEntries' }));
-
-    return [...billOccs7, ...incomeOccs7, ...oneTime7].sort((a, b) => a.occDate.localeCompare(b.occDate));
-  }, [data, cursor]);
-
   function changeMonth(delta) {
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
   }
 
   const monthLabel = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const netSoFar = fin.incomeReceived - fin.billsPaid;
+  const netProjected = fin.totalProjectedIncome - fin.totalBills;
+  const leftToPay = Math.max(0, fin.totalBills - fin.billsPaid);
+  const coveredPct = fin.totalBills > 0 ? Math.min(100, (fin.billsPaid / fin.totalBills) * 100) : 0;
 
-  const next7List = next7Days.length === 0
-    ? h('p', { className: 'empty-state' }, 'Nothing due in the next 7 days.')
-    : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-        next7Days.map((o, i) => {
-          const dateLabel = formatDate(parseYmd(o.occDate), data.settings);
-          return h('div', { key: `${o.id}-${o.occDate}-${i}`, className: 'list-item clickable', onClick: () => setPriceModal(o) },
-            h('div', null,
-              h('p', { className: 'list-item-name' }, o.name),
-              h('p', { className: 'list-item-sub' }, dateLabel)
-            ),
-            h('span', {
-              className: 'list-item-amount',
-              style: { color: o.kind === 'income' ? 'var(--text-success)' : 'inherit', fontSize: '12px' }
-            }, `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`)
-          );
-        })
-      );
+  const Renderer = isMobile ? BillChecklist : BillTileGrid;
+  const listProps = { data, currency, onToggle: togglePaid, onOpen: setPriceModal };
 
-  const netSoFar = incomeReceived - billsPaid;
-  const netProjected = totalProjectedIncome - totalBills;
-
-  if (isMobile) {
-    return h('div', { className: 'mobile-home' },
+  return h('div', { className: `home-page${isMobile ? ' mobile-home' : ''}` },
+    h('div', { className: `home-wash${netSoFar >= 0 ? '' : ' neg'}` },
       h('div', { className: 'home-month-header' },
         h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
         h('h1', { className: 'home-month-title' }, monthLabel),
         h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
       ),
-
-      h('div', { className: `summary-card${netSoFar >= 0 ? ' pos' : ' neg'}` },
-        h('div', { className: 'summary-hero' },
-          h('p', { className: 'summary-hero-label' }, 'Net so far'),
-          h('p', {
-            className: 'summary-hero-value',
-            style: { color: netSoFar >= 0 ? 'var(--text-success)' : 'var(--late-red)' }
-          }, `${netSoFar >= 0 ? '+' : ''}${fmtCurrency(netSoFar, currency)}`),
-          h('p', { className: 'summary-hero-proj' },
-            'Projected ',
-            h('b', { style: { color: netProjected >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
-              `${netProjected >= 0 ? '+' : ''}${fmtCurrency(netProjected, currency)}`)
-          )
-        ),
-        h('div', { className: 'summary-rows' },
-          h('div', { className: 'summary-row' },
-            h('span', { className: 'summary-row-label' }, 'Bills this month'),
-            h('span', { className: 'summary-row-value' }, fmtCurrency(totalBills, currency))
-          ),
-          h('div', { className: 'summary-row' },
-            h('span', { className: 'summary-row-label' },
-              'Covered so far',
-              h('span', { className: 'summary-row-foot' }, `${fmtCurrency(Math.max(0, totalBills - billsPaid), currency)} left`)
-            ),
-            h('span', { className: 'summary-row-value', style: { color: 'var(--text-warning)' } }, fmtCurrency(billsPaid, currency))
-          ),
-          h('div', { className: 'summary-row' },
-            h('span', { className: 'summary-row-label' }, 'Income so far'),
-            h('span', { className: 'summary-row-value', style: { color: 'var(--text-success)' } }, fmtCurrency(incomeReceived, currency))
-          ),
-          h('div', { className: 'summary-row' },
-            h('span', { className: 'summary-row-label' },
-              'Projected income',
-              hasIncomeRange
-                ? h('span', { className: 'summary-row-foot' }, `${fmtCurrency(projectedIncomeRange.min, currency)}\u2013${fmtCurrency(projectedIncomeRange.max, currency)}`)
-                : null
-            ),
-            h('span', { className: 'summary-row-value' }, fmtCurrency(totalProjectedIncome, currency))
-          )
-        )
-      ),
-
-      h('p', { className: 'section-title' }, 'Bills this month'),
-      allTiles.length === 0
-        ? h('p', { className: 'empty-state' }, 'Nothing scheduled this month.')
-        : h('div', { className: 'bill-checklist' },
-            allTiles.map((o) => {
-              const paid = isPaid(data, o.id, o.occDate);
-              const late = !paid && (isForcedLate(data, o.id, o.occDate) || (parseYmd(o.occDate) < today && !isDismissedLate(data, o.id, o.occDate)));
-              const dateLabel = formatDate(parseYmd(o.occDate), data.settings);
-              const accentColor = getEntryColor(o, data) || '#D85A5A';
-              return h('div', {
-                key: `${o.id}-${o.occDate}`,
-                className: `bill-check-row${paid ? ' paid' : ''}`,
-                onClick: () => setPriceModal(o)
-              },
-                h('input', {
-                  type: 'checkbox',
-                  checked: paid,
-                  onClick: (e) => e.stopPropagation(),
-                  onChange: () => togglePaid(o),
-                  'aria-label': `Mark ${o.name} paid`
-                }),
-                h('span', { className: 'bill-check-accent', style: { background: accentColor } }),
-                h('div', { className: 'bill-check-text' },
-                  h('p', { className: 'bill-check-name' },
-                    late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
-                    o.name
-                  ),
-                  h('p', { className: 'bill-check-sub' }, `${dateLabel} \u00b7 ${o.category || (FREQ_LABELS[o.freq] || o.freq)}`)
-                ),
-                h('span', { className: 'bill-check-amount' }, occAmountLabel(o, currency))
-              );
-            })
-          ),
-
-      h('p', { className: 'section-title' }, 'Next 7 days'),
-      next7List,
-
-      h('label', { className: 'advanced-toggle' },
-        h('input', {
-          type: 'checkbox',
-          checked: advancedOpen,
-          onChange: (e) => setAdvancedOpen(e.target.checked)
-        }),
-        h('span', null, 'Advanced view'),
-        h('span', { className: 'advanced-toggle-hint' }, advancedOpen ? 'Hide charts' : 'Show charts')
-      ),
-
-      advancedOpen ? h('div', { className: 'advanced-panel' },
-        h(CashFlowChart, { points: cashFlowSeries, currency }),
-        h(CategoryDonut, {
-          data: breakdownData, currency,
-          groupBy: breakdownGroupBy, setGroupBy: setBreakdownGroupBy,
-          filter: breakdownFilter, setFilter: setBreakdownFilter
-        }),
-        h(MonthSummaryCard, { summary: monthSummary, currency }),
-        h(MonthComparisonCard, { lastMonth: lastMonthTotals, thisMonth: { totalBills, totalIncome: totalProjectedIncome }, currency })
-      ) : null,
-
-      priceModal ? h(PriceOverrideModal, {
-        data, setData, occ: priceModal, currency,
-        onClose: () => setPriceModal(null)
-      }) : null
-    );
-  }
-
-  return h('div', null,
-    h('div', { className: 'home-month-header' },
-      h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
-      h('h1', { className: 'home-month-title' }, monthLabel),
-      h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
-    ),
-
-    h('div', { className: 'grid-2', style: { marginTop: '12px' } },
-      h('div', { className: 'metric-card' },
-        h('p', { className: 'metric-label' }, 'Total bills this month'),
-        h('p', { className: 'metric-value' }, fmtCurrency(totalBills, currency))
-      ),
-      h('div', { className: 'metric-card' },
-        h('p', { className: 'metric-label' }, 'Income received so far'),
-        h('p', { className: 'metric-value', style: { color: 'var(--text-success)' } }, fmtCurrency(incomeReceived, currency))
-      ),
-      h('div', { className: 'metric-card' },
-        h('p', { className: 'metric-label' }, 'Covered so far'),
-        h('p', { className: 'metric-value', style: { color: 'var(--text-warning)' } },
-          `${fmtCurrency(billsPaid, currency)} / ${fmtCurrency(totalBills, currency)}`,
-          h('span', { style: { opacity: 0.5, fontSize: '14px', fontWeight: 400, marginLeft: '6px' } },
-            `(${fmtCurrency(Math.max(0, totalBills - billsPaid), currency)} left)`)
-        )
-      ),
-      h('div', { className: 'metric-card' },
-        h('p', { className: 'metric-label' }, 'Projected for month'),
-        h('p', { className: 'metric-value' },
-          `${fmtCurrency(incomeReceived, currency)} / ${fmtCurrency(totalProjectedIncome, currency)}`,
-          hasIncomeRange ? h('span', { style: { opacity: 0.5, fontSize: '14px', fontWeight: 400, marginLeft: '6px' } },
-            `(${fmtCurrency(projectedIncomeRange.min, currency)}-${fmtCurrency(projectedIncomeRange.max, currency)})`) : null
+      h('div', { className: 'home-hero' },
+        h('p', { className: 'home-hero-label' }, 'Net so far'),
+        h('p', {
+          className: 'home-hero-value',
+          style: { color: netSoFar >= 0 ? 'var(--text-success)' : 'var(--late-red)' }
+        }, `${netSoFar >= 0 ? '+' : ''}${fmtCurrency(netSoFar, currency)}`),
+        h('p', { className: 'home-hero-proj' },
+          'Projected ',
+          h('b', { style: { color: netProjected >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
+            `${netProjected >= 0 ? '+' : ''}${fmtCurrency(netProjected, currency)}`)
         )
       )
     ),
 
-    h('div', { className: 'grid-2', style: { marginTop: '10px' } },
-      h('div', { className: 'metric-card' },
-        h('p', { className: 'metric-label' }, 'Net so far'),
-        h('p', { className: 'metric-value', style: { color: (incomeReceived - billsPaid) >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
-          `${(incomeReceived - billsPaid) >= 0 ? '+' : ''}${fmtCurrency(incomeReceived - billsPaid, currency)}`)
-      ),
-      h('div', { className: 'metric-card' },
-        h('p', { className: 'metric-label' }, 'Net projected for month'),
-        h('p', { className: 'metric-value', style: { color: (totalProjectedIncome - totalBills) >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
-          `${(totalProjectedIncome - totalBills) >= 0 ? '+' : ''}${fmtCurrency(totalProjectedIncome - totalBills, currency)}`)
-      )
-    ),
+    isCurrentMonth ? h(NextCheckCard, {
+      data, currency, nextCheck,
+      listEl: h(Renderer, Object.assign({ rows: nextCheck.bills }, listProps))
+    }) : null,
 
-    h('p', { className: 'section-title' }, 'Bills this month'),
-    allTiles.length === 0
-      ? h('p', { className: 'empty-state' }, 'Nothing scheduled this month.')
-      : h('div', { className: 'bill-tile-grid' },
-          allTiles.map((o) => {
-            const paid = isPaid(data, o.id, o.occDate);
-            const late = !paid && (isForcedLate(data, o.id, o.occDate) || (parseYmd(o.occDate) < today && !isDismissedLate(data, o.id, o.occDate)));
-            const d = parseYmd(o.occDate);
-            const dateLabel = formatDate(d, data.settings);
-            const accentColor = getEntryColor(o, data) || '#D85A5A';
-            return h('div', {
-              key: `${o.id}-${o.occDate}`,
-              className: `bill-tile${paid ? ' paid' : ''}`,
-              style: { borderLeft: `3px solid ${accentColor}` },
-              onClick: () => setPriceModal(o)
-            },
-              h('div', { className: 'bill-tile-top' },
-                h('p', { className: 'bill-tile-name' },
-                  late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
-                  o.name
-                ),
-                h('input', {
-                  type: 'checkbox',
-                  checked: paid,
-                  onClick: (e) => e.stopPropagation(),
-                  onChange: () => togglePaid(o),
-                  'aria-label': `Mark ${o.name} paid`
-                })
-              ),
-              h('p', { className: 'bill-tile-amount' }, occAmountLabel(o, currency)),
-              h('p', { className: 'bill-tile-sub' }, `${dateLabel} - ${o.category || (FREQ_LABELS[o.freq] || o.freq)}`)
-            );
-          })
+    h('section', { className: 'drop-card' },
+      h('button', {
+        className: 'drop-head',
+        onClick: () => { haptic('light'); setBillsOpen((v) => !v); },
+        'aria-expanded': billsOpen
+      },
+        h('span', { className: 'drop-head-text' },
+          h('span', { className: 'drop-head-title' }, 'Bills this month'),
+          h('span', { className: 'drop-head-sub' },
+            `${fmtCurrency(fin.billsPaid, currency)} covered \u00b7 ${fmtCurrency(leftToPay, currency)} left`)
         ),
+        h('span', { className: 'drop-head-amt' }, fmtCurrency(fin.totalBills, currency)),
+        h('span', { className: `drop-chevron${billsOpen ? ' open' : ''}` }, '\u203a')
+      ),
+      h('div', { className: 'drop-bar' },
+        h('span', { className: 'drop-bar-fill', style: { width: `${coveredPct}%` } })
+      ),
+      billsOpen ? h('div', { className: 'drop-body' },
+        fin.allTiles.length === 0
+          ? h('p', { className: 'empty-state' }, 'Nothing scheduled this month.')
+          : h(Renderer, Object.assign({ rows: fin.allTiles }, listProps))
+      ) : null
+    ),
 
     priceModal ? h(PriceOverrideModal, {
       data, setData, occ: priceModal, currency,
       onClose: () => setPriceModal(null)
-    }) : null,
-
-    h('div', { className: 'home-chart-row' },
-      h('div', { className: 'home-chart-main' },
-        h(CashFlowChart, { points: cashFlowSeries, currency })
-      ),
-      h('div', { className: 'home-chart-side' },
-        h('p', { className: 'section-title', style: { marginTop: '0', marginBottom: '8px' } }, 'Next 7 days'),
-        next7List
-      )
-    ),
-
-    h('div', { className: 'home-bottom-row' },
-      h(CategoryDonut, {
-        data: breakdownData, currency,
-        groupBy: breakdownGroupBy, setGroupBy: setBreakdownGroupBy,
-        filter: breakdownFilter, setFilter: setBreakdownFilter
-      }),
-      h('div', { className: 'home-side-cards' },
-        h(MonthSummaryCard, { summary: monthSummary, currency }),
-        h(MonthComparisonCard, { lastMonth: lastMonthTotals, thisMonth: { totalBills, totalIncome: totalProjectedIncome }, currency })
-      )
-    )
+    }) : null
   );
 }
 
-function MonthSummaryCard({ summary, currency }) {
+function MonthSummaryCard({ summary, currency, incomeReceived, projectedIncome, incomeRange }) {
   return h('div', { className: 'card' },
     h('p', { style: { margin: '0 0 10px', fontWeight: 500 } }, 'This month at a glance'),
     h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' } },
@@ -514,6 +227,18 @@ function MonthSummaryCard({ summary, currency }) {
       h('div', { className: 'row-between' },
         h('span', { style: { color: 'var(--text-secondary)' } }, `Average bill (${summary.billCount})`),
         h('span', null, fmtCurrency(summary.avgBill, currency))
+      ),
+      h('div', { className: 'row-between' },
+        h('span', { style: { color: 'var(--text-secondary)' } }, 'Income so far'),
+        h('span', { style: { color: 'var(--text-success)' } }, fmtCurrency(incomeReceived, currency))
+      ),
+      h('div', { className: 'row-between' },
+        h('span', { style: { color: 'var(--text-secondary)' } }, 'Projected income'),
+        h('span', null,
+          fmtCurrency(projectedIncome, currency),
+          incomeRange ? h('span', { style: { color: 'var(--text-tertiary)', marginLeft: '6px' } },
+            `${fmtCurrency(incomeRange.min, currency)}\u2013${fmtCurrency(incomeRange.max, currency)}`) : null
+        )
       ),
       (!summary.biggestBill && !summary.biggestIncome) ? h('p', { className: 'empty-state', style: { margin: 0 } }, 'Nothing scheduled this month yet.') : null
     )
