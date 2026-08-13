@@ -210,11 +210,13 @@ function useNextCheck(data) {
     today.setHours(0, 0, 0, 0);
     const horizon = new Date(today);
     horizon.setDate(horizon.getDate() + 62);
+    const afterToday = new Date(today);
+    afterToday.setDate(afterToday.getDate() + 1);
 
     const checks = [
-      ...expandAll(data.incomeSources, 'income', today, horizon, data),
+      ...expandAll(data.incomeSources, 'income', afterToday, horizon, data),
       ...data.oneTimeEntries
-        .filter((e) => e.oneTimeKind === 'income' && e.date && parseYmd(e.date) >= today && parseYmd(e.date) <= horizon)
+        .filter((e) => e.oneTimeKind === 'income' && e.date && parseYmd(e.date) >= afterToday && parseYmd(e.date) <= horizon)
         .map((e) => oneTimeOccurrence(data, e))
     ].sort((a, b) => a.occDate.localeCompare(b.occDate));
 
