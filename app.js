@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '3.1';
+const WEB_VERSION = '3.2';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -2066,9 +2066,13 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
   );
 }
 
-function NextCheckCard({ data, currency, nextCheck, listEl }) {
-  const { check, windowEnd, bills, due, checkAmount, overdueCount } = nextCheck;
+function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
+  const { check, windowStart, windowEnd, bills, due, checkAmount, overdueCount, period, hasPrev, hasNext } = nextCheck;
   const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
+
+  const headingText = period === 0
+    ? 'Before your next check'
+    : period === 1 ? 'The next pay period' : `${period} pay periods ahead`;
 
   const whenText = check
     ? `${check.name} \u00b7 ${dateLabel}`
@@ -2080,11 +2084,12 @@ function NextCheckCard({ data, currency, nextCheck, listEl }) {
 
   const shortfall = due - checkAmount;
   const fillPct = checkAmount > 0 ? Math.min(100, (due / checkAmount) * 100) : 0;
+  const rangeText = `${formatDate(windowStart, data.settings)} \u2013 ${formatDate(windowEnd, data.settings)}`;
 
   return h('section', { className: `nextcheck${overdueCount > 0 ? ' urgent' : ''}` },
     h('div', { className: 'nextcheck-top' },
       h('div', { className: 'nextcheck-when' },
-        h('p', { className: 'nextcheck-label' }, 'Before your next check'),
+        h('p', { className: 'nextcheck-label' }, headingText),
         h('p', { className: 'nextcheck-sub' }, whenText)
       ),
       h('div', { className: 'nextcheck-figure' },
@@ -2092,6 +2097,22 @@ function NextCheckCard({ data, currency, nextCheck, listEl }) {
         h('p', { className: 'nextcheck-note' }, noteText)
       )
     ),
+
+    (hasPrev || hasNext) ? h('div', { className: 'nextcheck-nav' },
+      h('button', {
+        className: 'nextcheck-nav-btn',
+        onClick: onPrev,
+        disabled: !hasPrev,
+        'aria-label': 'Previous pay period'
+      }, '\u2039'),
+      h('span', { className: 'nextcheck-nav-range' }, rangeText),
+      h('button', {
+        className: 'nextcheck-nav-btn',
+        onClick: onNext,
+        disabled: !hasNext,
+        'aria-label': 'Next pay period'
+      }, '\u203a')
+    ) : null,
 
     checkAmount > 0 ? h('div', { className: 'nextcheck-bar' },
       h('span', { className: `nextcheck-bar-fill${shortfall > 0 ? ' over' : ''}`, style: { width: `${fillPct}%` } })
@@ -2104,7 +2125,8 @@ function NextCheckCard({ data, currency, nextCheck, listEl }) {
     ) : null,
 
     bills.length === 0
-      ? h('p', { className: 'empty-state' }, 'Nothing due before then \u2014 you\u2019re clear.')
+      ? h('p', { className: 'empty-state' },
+          period === 0 ? 'Nothing due before then \u2014 you\u2019re clear.' : 'Nothing due in this stretch.')
       : listEl
   );
 }
@@ -2117,9 +2139,10 @@ function HomePage({ data, setData, isMobile }) {
   });
   const [priceModal, setPriceModal] = useState(null);
   const [billsOpen, setBillsOpen] = useState(false);
+  const [period, setPeriod] = useState(0);
 
   const fin = useMonthFinancials(data, cursor);
-  const nextCheck = useNextCheck(data);
+  const nextCheck = useNextCheck(data, period);
 
   const now = new Date();
   const isCurrentMonth = cursor.getFullYear() === now.getFullYear() && cursor.getMonth() === now.getMonth();
@@ -2133,6 +2156,7 @@ function HomePage({ data, setData, isMobile }) {
   }
 
   function changeMonth(delta) {
+    setPeriod(0);
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
   }
 
@@ -2168,7 +2192,9 @@ function HomePage({ data, setData, isMobile }) {
 
     isCurrentMonth ? h(NextCheckCard, {
       data, currency, nextCheck,
-      listEl: h(Renderer, Object.assign({ rows: nextCheck.bills }, listProps))
+      listEl: h(Renderer, Object.assign({ rows: nextCheck.bills }, listProps)),
+      onPrev: () => { haptic('light'); setPeriod(Math.max(0, nextCheck.period - 1)); },
+      onNext: () => { haptic('light'); setPeriod(nextCheck.period + 1); }
     }) : null,
 
     h('section', { className: 'drop-card' },
@@ -3472,12 +3498,12 @@ function useMonthFinancials(data, cursor) {
   };
 }
 
-function useNextCheck(data) {
+function useNextCheck(data, period) {
   return useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const horizon = new Date(today);
-    horizon.setDate(horizon.getDate() + 62);
+    horizon.setDate(horizon.getDate() + 400);
     const afterToday = new Date(today);
     afterToday.setDate(afterToday.getDate() + 1);
 
@@ -3488,7 +3514,8 @@ function useNextCheck(data) {
         .map((e) => oneTimeOccurrence(data, e))
     ].sort((a, b) => a.occDate.localeCompare(b.occDate));
 
-    const check = checks[0] || null;
+    const idx = Math.max(0, Math.min(period || 0, checks.length - 1));
+    const check = checks[idx] || null;
     const windowEnd = new Date(today);
     if (check) {
       const d = parseYmd(check.occDate);
@@ -3499,7 +3526,13 @@ function useNextCheck(data) {
 
     const grace = data.settings.lateGraceDays || 0;
     const windowStart = new Date(today);
-    windowStart.setDate(windowStart.getDate() - grace);
+    if (idx > 0) {
+      const prev = parseYmd(checks[idx - 1].occDate);
+      windowStart.setFullYear(prev.getFullYear(), prev.getMonth(), prev.getDate());
+      windowStart.setDate(windowStart.getDate() + 1);
+    } else {
+      windowStart.setDate(windowStart.getDate() - grace);
+    }
 
     const sourceListById = buildSourceListLookup(data);
     const oneTimeIds = new Set(data.oneTimeEntries.map((e) => e.id));
@@ -3513,7 +3546,7 @@ function useNextCheck(data) {
     ].filter((o) => !isPaid(data, o.id, o.occDate));
 
     const seen = new Set();
-    const bills = [...getLateBills(data), ...upcoming]
+    const bills = [...(idx === 0 ? getLateBills(data) : []), ...upcoming]
       .filter((o) => {
         const key = `${o.id}|${o.occDate}`;
         if (seen.has(key)) return false;
@@ -3525,13 +3558,17 @@ function useNextCheck(data) {
 
     return {
       check,
+      windowStart,
       windowEnd,
       bills,
+      period: idx,
+      hasPrev: idx > 0,
+      hasNext: idx + 1 < checks.length,
       due: bills.reduce((sum, o) => sum + o.amount, 0),
       checkAmount: check ? check.amount : 0,
       overdueCount: bills.filter((o) => parseYmd(o.occDate) < today).length
     };
-  }, [data]);
+  }, [data, period]);
 }
 
 function OverviewSwitch({ view, setView }) {

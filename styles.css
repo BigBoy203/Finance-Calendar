@@ -1460,7 +1460,8 @@ label {
   }
   .calm-pill, .calm-dot, .calm-toggle-btn, .type-tile,
   .mobile-tab, .mobile-tab-add, .mobile-header-sync-group,
-  .calm-ag-item, .calm-ag-date, .bill-check-row, .ov-switch-btn {
+  .calm-ag-item, .calm-ag-date, .bill-check-row, .ov-switch-btn,
+  .nextcheck-nav-btn {
     min-height: 0;
   }
   .card, .metric-card {
@@ -2713,6 +2714,36 @@ label {
 }
 .nextcheck.urgent .nextcheck-note {
   color: var(--late-red);
+}
+.nextcheck-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 2px;
+}
+.nextcheck-nav-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  flex-shrink: 0;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-md);
+}
+.nextcheck-nav-btn:disabled {
+  color: var(--text-tertiary);
+  opacity: 0.4;
+}
+.nextcheck-nav-range {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
 }
 .nextcheck-bar {
   height: 6px;

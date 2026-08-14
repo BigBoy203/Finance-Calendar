@@ -204,12 +204,12 @@ function useMonthFinancials(data, cursor) {
   };
 }
 
-function useNextCheck(data) {
+function useNextCheck(data, period) {
   return useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const horizon = new Date(today);
-    horizon.setDate(horizon.getDate() + 62);
+    horizon.setDate(horizon.getDate() + 400);
     const afterToday = new Date(today);
     afterToday.setDate(afterToday.getDate() + 1);
 
@@ -220,7 +220,8 @@ function useNextCheck(data) {
         .map((e) => oneTimeOccurrence(data, e))
     ].sort((a, b) => a.occDate.localeCompare(b.occDate));
 
-    const check = checks[0] || null;
+    const idx = Math.max(0, Math.min(period || 0, checks.length - 1));
+    const check = checks[idx] || null;
     const windowEnd = new Date(today);
     if (check) {
       const d = parseYmd(check.occDate);
@@ -231,7 +232,13 @@ function useNextCheck(data) {
 
     const grace = data.settings.lateGraceDays || 0;
     const windowStart = new Date(today);
-    windowStart.setDate(windowStart.getDate() - grace);
+    if (idx > 0) {
+      const prev = parseYmd(checks[idx - 1].occDate);
+      windowStart.setFullYear(prev.getFullYear(), prev.getMonth(), prev.getDate());
+      windowStart.setDate(windowStart.getDate() + 1);
+    } else {
+      windowStart.setDate(windowStart.getDate() - grace);
+    }
 
     const sourceListById = buildSourceListLookup(data);
     const oneTimeIds = new Set(data.oneTimeEntries.map((e) => e.id));
@@ -245,7 +252,7 @@ function useNextCheck(data) {
     ].filter((o) => !isPaid(data, o.id, o.occDate));
 
     const seen = new Set();
-    const bills = [...getLateBills(data), ...upcoming]
+    const bills = [...(idx === 0 ? getLateBills(data) : []), ...upcoming]
       .filter((o) => {
         const key = `${o.id}|${o.occDate}`;
         if (seen.has(key)) return false;
@@ -257,13 +264,17 @@ function useNextCheck(data) {
 
     return {
       check,
+      windowStart,
       windowEnd,
       bills,
+      period: idx,
+      hasPrev: idx > 0,
+      hasNext: idx + 1 < checks.length,
       due: bills.reduce((sum, o) => sum + o.amount, 0),
       checkAmount: check ? check.amount : 0,
       overdueCount: bills.filter((o) => parseYmd(o.occDate) < today).length
     };
-  }, [data]);
+  }, [data, period]);
 }
 
 function OverviewSwitch({ view, setView }) {
