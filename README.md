@@ -39,10 +39,13 @@ restored before anything is entered by hand.
   agenda) and **Statistics** (next 7 days, cash flow, category donut, at a
   glance, vs. last month).
 - **+** - the add window: Purchase, Bill, Subscription, or Income.
+- **Spending** - day-to-day money: what's left for daily life this month after
+  bills and what you've already spent, two-tap re-logging of things you buy
+  often, monthly budgets by category, this month's purchases, and a six-month
+  trend.
 - **Bills** - "Needs attention" at the top (anything past due or still using a
   price range), then recurring commitments grouped into Essentials,
-  Subscriptions, and Credit cards. One-time purchases aren't listed here; they
-  live on the calendar and Home.
+  Subscriptions, and Credit cards.
 - **Settings** - the gear in the header (a sidebar item on desktop).
 
 The layout switches at 768px via a media query rather than user-agent
@@ -88,8 +91,8 @@ they're concatenated in a fixed order. After editing any of them, rebuild:
 
 ```
 cat app_core.js mobile.js entryform.js wizard.js quickadd.js home.js \
-    calendar.js overview.js bills.js subscriptions.js creditcards.js \
-    allbills.js settings.js > app.js
+    calendar.js overview.js spending.js bills.js subscriptions.js \
+    creditcards.js allbills.js settings.js > app.js
 echo "" >> app.js
 echo "ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));" >> app.js
 ```

@@ -14,6 +14,7 @@
       subscriptions: [],
       oneTimeEntries: [],
       creditCards: [],
+      budgets: {},
       paidHistory: {},
       dismissedLate: {},
       forcedLate: {},

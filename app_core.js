@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '3.4';
+const WEB_VERSION = '3.5';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -266,6 +266,7 @@ function oneTimeOccurrence(data, entry) {
     amount: hasOverride ? Number(override.amount) || 0 : entryAmount(entry),
     isRange: !!entry.useAmountRange,
     hasOverride,
+    isOneTime: true,
     kind: entry.oneTimeKind === 'income' ? 'income' : 'bill'
   };
 }
@@ -475,12 +476,7 @@ function getLateBills(data) {
   const occs = expandAll(allBills, 'bill', pastRangeStart, pastRangeEnd, data);
   const late = occs.filter((o) => !isPaid(data, o.id, o.occDate) && !isDismissedLate(data, o.id, o.occDate));
 
-  const lateOneTime = data.oneTimeEntries
-    .filter((e) => e.oneTimeKind === 'payment' && e.date && parseYmd(e.date) < cutoff && parseYmd(e.date) >= pastRangeStart &&
-      !isPaid(data, e.id, e.date) && !isDismissedLate(data, e.id, e.date))
-    .map((e) => oneTimeOccurrence(data, e));
-
-  const autoLate = [...late, ...lateOneTime]
+  const autoLate = late
     .map((o) => ({ ...o, daysLate: daysBetween(parseYmd(o.occDate), today), forcedLate: false }));
 
   const autoLateKeys = new Set(autoLate.map((o) => `${o.id}|${o.occDate}`));
@@ -526,7 +522,7 @@ function lateState(data, occ) {
   const paid = isPaid(data, occ.id, occ.occDate);
   const forced = isForcedLate(data, occ.id, occ.occDate);
   const dismissed = isDismissedLate(data, occ.id, occ.occDate);
-  const late = !paid && occ.kind !== 'income'
+  const late = !paid && occ.kind !== 'income' && !occ.isOneTime
     && (forced || (parseYmd(occ.occDate) < cutoff && !dismissed));
   return { paid, forced, dismissed, late, daysLate: daysBetween(parseYmd(occ.occDate), today) };
 }
@@ -627,7 +623,9 @@ function getNeedsAttention(data) {
     .map((o) => {
       const occDate = parseYmd(o.occDate);
 
-      const late = o.kind === 'income' ? false : (isForcedLate(data, o.id, o.occDate) || (occDate < cutoff && !isPaid(data, o.id, o.occDate)));
+      const late = (o.kind === 'income' || o.isOneTime)
+        ? false
+        : (isForcedLate(data, o.id, o.occDate) || (occDate < cutoff && !isPaid(data, o.id, o.occDate)));
       return { ...o, late, daysLate: late ? daysBetween(occDate, today) : 0 };
     })
     .sort((a, b) => {
@@ -828,6 +826,7 @@ function App() {
   const NAV_ITEMS = [
     { id: 'home', label: 'Home', icon: 'home' },
     { id: 'overview', label: 'Overview', icon: 'calendar' },
+    { id: 'spending', label: 'Spending', icon: 'bag' },
     {
       id: 'allbills', label: 'Bills', icon: 'allbills',
       children: [
@@ -848,6 +847,11 @@ function App() {
       data, setData: persist, isMobile,
       onAddEntry: (date) => setQuickAdd({ date }),
       view: overviewView, setView: setOverviewView
+    });
+  } else if (page === 'spending') {
+    pageContent = h(SpendingPage, {
+      data, setData: persist, isMobile,
+      onAddEntry: (opts) => setQuickAdd(opts)
     });
   } else if (page === 'essentials') {
     pageContent = h(BillsPage, { data, setData: persist });
@@ -874,7 +878,7 @@ function App() {
 
   if (isMobile) {
     const pageTitle = ({
-      home: 'Home', overview: 'Overview',
+      home: 'Home', overview: 'Overview', spending: 'Spending',
       allbills: 'Bills', essentials: 'Essentials', creditcards: 'Credit cards',
       subscriptions: 'Subscriptions', settings: 'Settings'
     })[page] || 'Finance Calendar';
@@ -904,6 +908,7 @@ function App() {
         data,
         setData: persist,
         initialDate: quickAdd.date,
+        preset: quickAdd.preset,
         onClose: () => setQuickAdd(null)
       }) : null,
       showBackupPrompt ? h(BackupReminderModal, {
@@ -972,6 +977,7 @@ function App() {
       data,
       setData: persist,
       initialDate: quickAdd.date,
+      preset: quickAdd.preset,
       onClose: () => setQuickAdd(null)
     }) : null,
     showBackupPrompt ? h(BackupReminderModal, {
@@ -1009,6 +1015,7 @@ function getBlankData() {
     subscriptions: [],
     oneTimeEntries: [],
     creditCards: [],
+    budgets: {},
     paidHistory: {},
     dismissedLate: {},
     forcedLate: {},
@@ -1054,6 +1061,7 @@ function Icon({ name }) {
     alert: 'M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z',
     card: 'M2 7h20v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7zM2 10h20M6 15h4',
     allbills: 'M9 2h6l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2zM14 2v6h6M9 13h6M9 17h6',
+    bag: 'M6 8h12l-1 12H7L6 8zM9 8V6a3 3 0 016 0v2',
     refresh: 'M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6'
   };
   return h('svg', {

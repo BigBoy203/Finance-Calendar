@@ -28,7 +28,7 @@ function AttentionRow({ o, data, currency, onOpen }) {
       o.needsPrice ? h('span', { className: 'att-need' }, 'Needs a real price') : null
     ),
     h('span', { className: 'att-side' },
-      o.late ? h('span', { className: 'age-pill age-high' }, ageText) : null,
+      o.late ? h('span', { className: 'age-pill' }, ageText) : null,
       h('span', { className: 'att-amt' },
         `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`)
     ),

@@ -6,13 +6,15 @@ const ENTRY_TYPES = [
   { id: 'oneTimeIncome', label: 'Income', icon: '\u{1F4B0}', desc: 'Money in' }
 ];
 
-function QuickAddModal({ data, setData, initialDate, onClose }) {
+function QuickAddModal({ data, setData, initialDate, preset, onClose }) {
   const overlay = useOverlayDismiss(onClose);
   const [type, setType] = useState('oneTimePayment');
   const [form, setForm] = useState(() => blankEntry({
     date: initialDate || todayYmd(),
     freq: 'none',
-    category: 'Other'
+    name: (preset && preset.name) || '',
+    amount: (preset && preset.amount) ? String(preset.amount) : '',
+    category: (preset && preset.category) || 'Other'
   }));
 
   function update(field, value) {
@@ -48,7 +50,11 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
     } else if (type === 'subscription') {
       setData(logActivity({ ...data, subscriptions: [...data.subscriptions, entry] }, `Added subscription "${entry.name}"`));
     } else if (type === 'oneTimePayment') {
-      setData(logActivity({ ...data, oneTimeEntries: [...data.oneTimeEntries, { ...entry, freq: 'none', oneTimeKind: 'payment' }] }, `Added one-time payment "${entry.name}"`));
+      const spent = { ...data, oneTimeEntries: [...data.oneTimeEntries, { ...entry, freq: 'none', oneTimeKind: 'payment' }] };
+      if (entry.date <= todayYmd()) {
+        spent.paidHistory = { ...data.paidHistory, [`${entry.id}|${entry.date}`]: true };
+      }
+      setData(logActivity(spent, `Logged "${entry.name}"`));
     } else if (type === 'oneTimeIncome') {
       setData(logActivity({ ...data, oneTimeEntries: [...data.oneTimeEntries, { ...entry, freq: 'none', oneTimeKind: 'income' }] }, `Added one-time income "${entry.name}"`));
     }

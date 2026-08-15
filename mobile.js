@@ -30,12 +30,14 @@ const MOBILE_TABS = [
   { id: 'home', label: 'Home', icon: 'home' },
   { id: 'overview', label: 'Overview', icon: 'calendar' },
   { id: 'add', label: 'Add', icon: 'plus', isAdd: true },
+  { id: 'spending', label: 'Spending', icon: 'bag' },
   { id: 'allbills', label: 'Bills', icon: 'allbills' }
 ];
 
 const TAB_FOR_PAGE = {
   home: 'home',
   overview: 'overview',
+  spending: 'spending',
   allbills: 'allbills',
   essentials: 'allbills',
   creditcards: 'allbills',
