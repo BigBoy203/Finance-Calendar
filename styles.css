@@ -1477,8 +1477,13 @@ label {
   .mobile-tab, .mobile-tab-add, .mobile-header-sync-group,
   .calm-ag-item, .calm-ag-date, .bill-check-row, .ov-switch-btn,
   .nextcheck-nav-btn, .att-row, .att-more,
-  .budget-row, .spend-unbudgeted-row, .spend-row {
+  .budget-row, .spend-unbudgeted-row, .spend-row,
+  .pick-chip, .qa-type {
     min-height: 0;
+  }
+  .qa-actions {
+    margin: 0 -16px -16px;
+    padding: 10px 16px 16px;
   }
   .card, .metric-card {
     padding: 14px;
@@ -1943,8 +1948,8 @@ label {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 2px;
-  padding: 14px 10px;
+  gap: 6px;
+  padding: 12px 10px;
   border-radius: 12px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-secondary);
@@ -1955,10 +1960,8 @@ label {
   background: var(--accent-bg);
   border-color: var(--accent);
 }
-.type-tile-icon { font-size: 22px; line-height: 1; margin-bottom: 4px; }
+.type-tile-icon { font-size: 20px; line-height: 1; }
 .type-tile-name { font-size: 13px; font-weight: 600; }
-.type-tile-desc { font-size: 10px; color: var(--text-tertiary); }
-.type-tile.selected .type-tile-desc { color: var(--accent-text); }
 
 @media (max-width: 768px) {
   .calendar-page.calm {
@@ -3039,6 +3042,12 @@ label {
   gap: 10px;
 }
 
+.spend-caption {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
 .spend-section-total {
   font-size: 13px;
   color: var(--text-secondary);
@@ -3337,4 +3346,194 @@ label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.qa-modal {
+  position: relative;
+  gap: 16px;
+}
+
+.qa-x {
+  position: sticky;
+  top: 0;
+  align-self: flex-end;
+  margin-bottom: -40px;
+  z-index: 2;
+}
+
+.qa-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.qa-type {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  padding: 4px 40px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.qa-emoji {
+  font-size: 40px;
+  line-height: 1.1;
+}
+
+.qa-type-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.qa-type-caret {
+  font-size: 16px;
+  color: var(--text-tertiary);
+  transform: rotate(90deg);
+  transition: transform 0.15s ease;
+}
+
+.qa-type-caret.open {
+  transform: rotate(-90deg);
+}
+
+.qa-type-desc {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.qa-amount {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-lg);
+}
+
+.qa-amount-sym {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+.qa-amount-input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: none;
+  border: none;
+}
+
+.qa-amount-input:focus {
+  outline: none;
+}
+
+.qa-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.qa-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.pick-chip {
+  padding: 8px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border-secondary);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.pick-chip.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.qa-date-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.qa-date-input {
+  flex: 1;
+  min-width: 150px;
+  height: 40px;
+}
+
+.qa-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 0.5px solid var(--border-tertiary);
+}
+
+.qa-option .checkbox-row {
+  margin: 0;
+}
+
+.qa-reveal {
+  margin: 8px 0 2px 30px;
+}
+
+.qa-actions {
+  position: sticky;
+  bottom: 0;
+  margin: 0 -1.25rem -1.25rem;
+  padding: 10px 1.25rem 1.25rem;
+  background: var(--bg-primary);
+}
+
+.qa-foot {
+  display: flex;
+  gap: 10px;
+}
+
+.qa-foot button {
+  flex: 1;
+  min-height: 44px;
+}
+
+.qa-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.qa-foot .primary:disabled {
+  opacity: 0.4;
+  cursor: default;
 }

@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '3.5';
+const WEB_VERSION = '3.6';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -59,6 +59,12 @@ function parseYmd(s) {
 
 function todayYmd() {
   return ymd(new Date());
+}
+
+function yesterdayYmd() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return ymd(d);
 }
 
 function formatDate(date, settings, opts) {

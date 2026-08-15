@@ -19,7 +19,7 @@ function spendingHistory(data, cursor) {
   const buckets = [];
   for (let back = SPEND_HISTORY_MONTHS - 1; back >= 0; back--) {
     const d = new Date(cursor.getFullYear(), cursor.getMonth() - back, 1);
-    buckets.push({ key: ymd(d).slice(0, 7), label: MONTH_NAMES[d.getMonth()].slice(0, 1), total: 0 });
+    buckets.push({ key: ymd(d).slice(0, 7), label: MONTH_NAMES[d.getMonth()].slice(0, 3), total: 0 });
   }
   const byKey = {};
   buckets.forEach((b) => { byKey[b.key] = b; });
@@ -83,7 +83,7 @@ function BudgetModal({ categories, budget, onSave, onRemove, onClose }) {
     h('div', { className: 'modal-content as-window' },
       h('div', { className: 'modal-window-head' },
         h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } },
-          editing ? `${budget.category} budget` : 'New monthly budget'),
+          editing ? `${budget.category} — monthly budget` : 'New monthly budget'),
         h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
           h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
             h('path', { d: 'M6 6l12 12M18 6L6 18' })
@@ -144,8 +144,8 @@ function BudgetRow({ row, currency, daysLeft, onOpen }) {
     ),
     h('span', { className: `budget-meta${over ? ' over' : ''}` },
       over
-        ? `${fmtCurrency(-left, currency)} over budget`
-        : `${fmtCurrency(left, currency)} left${showPerDay ? ` · ${fmtCurrency(perDay, currency)} a day` : ''}`)
+        ? `${fmtCurrency(-left, currency)} over this month`
+        : `${fmtCurrency(left, currency)} left${showPerDay ? ` \u00b7 ${fmtCurrency(perDay, currency)} a day for ${daysLeft} more ${daysLeft === 1 ? 'day' : 'days'}` : ' this month'}`)
   );
 }
 
@@ -287,9 +287,16 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
         `You buy ${dueAgain.name} about every ${dueAgain.gap} ${dueAgain.gap === 1 ? 'day' : 'days'} \u2014 it has been ${dueAgain.daysSince}.`)
     : null;
 
+  const resetsOn = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
   const budgetSection = h('section', { className: 'spend-section' },
     h('div', { className: 'row-between' },
-      h('p', { className: 'section-title', style: { margin: 0 } }, 'Budgets'),
+      h('div', null,
+        h('p', { className: 'section-title', style: { margin: 0 } }, 'Monthly budgets'),
+        h('p', { className: 'spend-caption' },
+          budgeted.length > 0
+            ? `${monthLabel} \u00b7 starts over ${formatDate(resetsOn, data.settings)}`
+            : 'One amount per category, for a whole month')
+      ),
       budgeted.length > 0
         ? h('span', { className: 'spend-section-total' },
             `${fmtCurrency(budgetSpent, currency)} of ${fmtCurrency(budgetTotal, currency)}`)
@@ -364,7 +371,10 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const historyMax = Math.max(...history.map((b) => b.total), 1);
   const hasHistory = history.some((b) => b.total > 0);
   const trendSection = !hasHistory ? null : h('section', { className: 'spend-section' },
-    h('p', { className: 'section-title', style: { margin: 0 } }, 'Trend'),
+    h('div', null,
+      h('p', { className: 'section-title', style: { margin: 0 } }, 'Day-to-day spending by month'),
+      h('p', { className: 'spend-caption' }, `Totals for the last ${SPEND_HISTORY_MONTHS} months`)
+    ),
     h('div', { className: 'spend-bars' },
       history.map((b, i) => h('div', { key: b.key, className: `spend-bar-col${i === history.length - 1 ? ' current' : ''}` },
         h('span', { className: 'spend-bar-value' }, b.total > 0 ? fmtCompact(b.total, currency) : ''),
