@@ -222,6 +222,7 @@ function useNextCheck(data, period) {
 
     const idx = Math.max(0, Math.min(period || 0, checks.length - 1));
     const check = checks[idx] || null;
+    const estimate = estimatedIncome(data, check);
     const windowEnd = new Date(today);
     if (check) {
       const d = parseYmd(check.occDate);
@@ -271,7 +272,8 @@ function useNextCheck(data, period) {
       hasPrev: idx > 0,
       hasNext: idx + 1 < checks.length,
       due: bills.reduce((sum, o) => sum + o.amount, 0),
-      checkAmount: check ? check.amount : 0,
+      checkAmount: estimate ? estimate.amount : (check ? check.amount : 0),
+      estimate,
       overdueCount: bills.filter((o) => parseYmd(o.occDate) < today).length
     };
   }, [data, period]);
@@ -279,20 +281,20 @@ function useNextCheck(data, period) {
 
 function OverviewSwitch({ view, setView }) {
   return h('div', { className: 'ov-switch', role: 'tablist' },
-    ['calendar', 'overview'].map((id) => h('button', {
-      key: id,
-      className: `ov-switch-btn${view === id ? ' on' : ''}`,
-      onClick: () => { haptic('light'); setView(id); },
+    [{ id: 'calendar', label: 'Calendar' }, { id: 'stats', label: 'Statistics' }].map((t) => h('button', {
+      key: t.id,
+      className: `ov-switch-btn${view === t.id ? ' on' : ''}`,
+      onClick: () => { haptic('light'); setView(t.id); },
       role: 'tab',
-      'aria-selected': view === id
-    }, id === 'calendar' ? 'Calendar' : 'Overview'))
+      'aria-selected': view === t.id
+    }, t.label))
   );
 }
 
 function OverviewPage({ data, setData, isMobile, onAddEntry, view, setView }) {
   const body = view === 'calendar'
     ? h(CalendarPage, { data, setData, isMobile, onAddEntry })
-    : h(MonthOverview, { data, setData, isMobile });
+    : h(StatisticsPage, { data, setData, isMobile });
 
   if (isMobile) return body;
 
@@ -302,7 +304,7 @@ function OverviewPage({ data, setData, isMobile, onAddEntry, view, setView }) {
   );
 }
 
-function MonthOverview({ data, setData, isMobile }) {
+function StatisticsPage({ data, setData, isMobile }) {
   const currency = data.settings.currency;
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
@@ -407,7 +409,7 @@ function MonthOverview({ data, setData, isMobile }) {
   }) : null;
 
   if (isMobile) {
-    return h('div', { className: 'month-overview' },
+    return h('div', { className: 'stats-page' },
       monthHeader,
       h('p', { className: 'section-title' }, 'Next 7 days'),
       next7List,
@@ -416,7 +418,7 @@ function MonthOverview({ data, setData, isMobile }) {
     );
   }
 
-  return h('div', { className: 'month-overview' },
+  return h('div', { className: 'stats-page' },
     monthHeader,
     h('div', { className: 'home-chart-row' },
       h('div', { className: 'home-chart-main' }, chart),

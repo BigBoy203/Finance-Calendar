@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '3.2';
+const WEB_VERSION = '3.3';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -147,12 +147,28 @@ function entryAmountLabel(entry, currency) {
   return fmtCurrency(entry.amount, currency);
 }
 
+function defaultRepeatUntil(dateStr) {
+  return ymd(addIntervals(dateStr ? parseYmd(dateStr) : new Date(), 'yearly', 1));
+}
+
+function repeatLabel(entry, settings) {
+  const base = FREQ_LABELS[entry.freq] || entry.freq || 'one-time';
+  if (!entry.repeatUntil || !entry.freq || entry.freq === 'none') return base;
+  return `${base} until ${formatDate(parseYmd(entry.repeatUntil), settings)}`;
+}
+
 function expandEntry(entry, rangeStart, rangeEnd) {
   const occurrences = [];
   if (!entry.date) return occurrences;
   let cur = parseYmd(entry.date);
-  const end = new Date(rangeEnd);
+  let end = new Date(rangeEnd);
   const freq = entry.freq || 'none';
+
+  if (entry.repeatUntil && freq !== 'none') {
+    const until = parseYmd(entry.repeatUntil);
+    if (until < end) end = until;
+    if (end < rangeStart) return occurrences;
+  }
 
   if (freq === 'none') {
 
@@ -552,6 +568,32 @@ function getNeedsAttention(data) {
     });
 }
 
+function recordedPaychecks(data, entry) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const removed = data.removedOccurrences || {};
+  return expandEntry(entry, getEarliestTrackedDate(data), today)
+    .filter((occ) => !removed[`${entry.id}|${occ.occDate}`])
+    .map((occ) => getOverride(data, entry.id, occ.occDate))
+    .filter(hasAmountOverride)
+    .map((o) => Number(o.amount) || 0);
+}
+
+function averagePaycheck(data, entry) {
+  const amounts = recordedPaychecks(data, entry);
+  if (amounts.length < 2) return { amount: 0, count: amounts.length, ready: false };
+  return { amount: amounts.reduce((sum, n) => sum + n, 0) / amounts.length, count: amounts.length, ready: true };
+}
+
+function estimatedIncome(data, occ) {
+  if (!occ || !data.settings.avgPaycheckEnabled) return null;
+  if (hasAmountOverride(getOverride(data, occ.id, occ.occDate))) return null;
+  const entry = (data.incomeSources || []).find((e) => e.id === occ.id);
+  if (!entry) return null;
+  const avg = averagePaycheck(data, entry);
+  return avg.ready ? avg : null;
+}
+
 const ACCENTS = [
   { id: 'blue', label: 'Blue', hex: '#378ADD' },
   { id: 'teal', label: 'Teal', hex: '#1D9E75' },
@@ -703,7 +745,6 @@ function App() {
   if (!data.onboardingComplete) {
     return h(OnboardingWizard, {
       data,
-      isMobile,
       onComplete: (next) => {
         persist({
           ...next,
@@ -745,13 +786,13 @@ function App() {
   } else if (page === 'late') {
     pageContent = h(LatePage, { data, setData: persist, lateBills });
   } else if (page === 'essentials') {
-    pageContent = h(BillsPage, { data, setData: persist, onAddEntry: (date) => setQuickAdd({ date }) });
+    pageContent = h(BillsPage, { data, setData: persist });
   } else if (page === 'subscriptions') {
-    pageContent = h(SubscriptionsPage, { data, setData: persist, onAddEntry: (date) => setQuickAdd({ date }) });
+    pageContent = h(SubscriptionsPage, { data, setData: persist });
   } else if (page === 'creditcards') {
     pageContent = h(CreditCardsPage, { data, setData: persist });
   } else if (page === 'allbills') {
-    pageContent = h(AllBillsPage, { data, setData: persist, needsAttention, isMobile, setPage, onAddEntry: (date) => setQuickAdd({ date }) });
+    pageContent = h(AllBillsPage, { data, setData: persist, needsAttention, isMobile, setPage });
   } else if (page === 'settings') {
     pageContent = h(SettingsPage, { data, setData: persist, onRestart: () => persist({ ...getBlankData(), onboardingComplete: false }) });
   }
@@ -974,7 +1015,6 @@ function getBlankData() {
       autoDeductCardPayments: true,
       installDate: null,
       dateFormat: 'short',
-      showWeekNumbers: false,
       density: 'comfortable',
       customCss: '',
       sectionColors: {
@@ -987,6 +1027,7 @@ function getBlankData() {
       },
       backupReminderEnabled: true,
       hapticsEnabled: true,
+      avgPaycheckEnabled: false,
       lastBackupReminderShown: null
     }
   };

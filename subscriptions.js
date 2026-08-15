@@ -1,5 +1,5 @@
 
-function SubscriptionsPage({ data, setData, onAddEntry }) {
+function SubscriptionsPage({ data, setData }) {
   const currency = data.settings.currency;
   const [editing, setEditing] = useState(null);
 
@@ -52,7 +52,7 @@ function SubscriptionsPage({ data, setData, onAddEntry }) {
             return h('div', { key: e.id, className: 'list-item clickable', onClick: () => openEdit(e) },
               h('div', null,
                 h('p', { className: 'list-item-name' }, e.name),
-                h('p', { className: 'list-item-sub' }, `${dateLabel} - ${FREQ_LABELS[e.freq] || e.freq}${e.category ? ' - ' + e.category : ''}`)
+                h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}${e.category ? ' - ' + e.category : ''}`)
               ),
               h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
                 h('span', { className: 'list-item-amount' }, entryAmountLabel(e, currency)),

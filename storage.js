@@ -32,7 +32,6 @@
         autoDeductCardPayments: true,
         installDate: null,
         dateFormat: 'short',
-        showWeekNumbers: false,
         density: 'comfortable',
         customCss: '',
         sectionColors: {
@@ -43,8 +42,9 @@
           oneTimePayments: '#D8845A',
           oneTimeIncome: '#4FAE6B'
         },
-
         backupReminderEnabled: true,
+        hapticsEnabled: true,
+        avgPaycheckEnabled: false,
         lastBackupReminderShown: null
       }
     };

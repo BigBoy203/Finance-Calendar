@@ -25,7 +25,6 @@ function LatePage({ data, setData, lateBills }) {
   }
 
   function ageClass(days) {
-    if (days < 0) return 'age-low';
     return days >= 14 ? 'age-high' : 'age-low';
   }
 

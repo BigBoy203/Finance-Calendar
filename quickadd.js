@@ -36,6 +36,7 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
     haptic('success');
     const entry = {
       ...form,
+      repeatUntil: form.freq === 'none' ? '' : form.repeatUntil,
       amount: form.amount === '' ? 0 : parseFloat(form.amount) || 0,
       amountMin: form.amountMin === '' ? 0 : parseFloat(form.amountMin) || 0,
       amountMax: form.amountMax === '' ? 0 : parseFloat(form.amountMax) || 0
@@ -59,6 +60,7 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
     : type === 'oneTimeIncome' ? ONE_TIME_INCOME_CATEGORIES
     : null;
   const showFreq = type === 'bill' || type === 'subscription';
+  const recurring = showFreq && form.freq !== 'none';
   const dateLabel = type === 'oneTimeIncome' ? 'Date received' : (type === 'oneTimePayment' ? 'Date paid' : 'Due date');
 
   return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
@@ -127,6 +129,10 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
           h('select', { value: form.freq, onChange: (e) => update('freq', e.target.value) },
             FREQS.map((f) => h('option', { key: f, value: f }, FREQ_LABELS[f])))
         ) : null,
+        (recurring && form.repeatUntil) ? h('div', { className: 'setup-field' },
+          h('label', null, 'Repeat ends'),
+          h('input', { type: 'date', value: form.repeatUntil, onChange: (e) => update('repeatUntil', e.target.value) })
+        ) : null,
         categories ? h('div', { className: 'setup-field' },
           h('label', null, 'Category'),
           h('select', { value: form.category, onChange: (e) => update('category', e.target.value) },
@@ -137,11 +143,14 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
       h('div', { className: 'setup-entry-links' },
         h('button', { className: 'setup-link', onClick: () => update('useAmountRange', !form.useAmountRange) },
           form.useAmountRange ? 'Fixed amount' : 'Amount range'),
-        showFreq ? h(React.Fragment, null,
-          h('span', { className: 'setup-link-dot' }, '·'),
-          h('button', { className: 'setup-link', onClick: () => update('useDateRange', !form.useDateRange) },
-            form.useDateRange ? 'Single date' : 'Date range')
-        ) : null
+        showFreq
+          ? h('button', { className: 'setup-link', onClick: () => update('useDateRange', !form.useDateRange) },
+              form.useDateRange ? 'Single date' : 'Date range')
+          : null,
+        recurring
+          ? h('button', { className: 'setup-link', onClick: () => update('repeatUntil', form.repeatUntil ? '' : defaultRepeatUntil(form.date)) },
+              form.repeatUntil ? 'Repeats forever' : 'End repeat')
+          : null
       ),
 
       h('div', { className: 'row-between', style: { marginTop: '4px' } },

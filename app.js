@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '3.2';
+const WEB_VERSION = '3.3';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -147,12 +147,28 @@ function entryAmountLabel(entry, currency) {
   return fmtCurrency(entry.amount, currency);
 }
 
+function defaultRepeatUntil(dateStr) {
+  return ymd(addIntervals(dateStr ? parseYmd(dateStr) : new Date(), 'yearly', 1));
+}
+
+function repeatLabel(entry, settings) {
+  const base = FREQ_LABELS[entry.freq] || entry.freq || 'one-time';
+  if (!entry.repeatUntil || !entry.freq || entry.freq === 'none') return base;
+  return `${base} until ${formatDate(parseYmd(entry.repeatUntil), settings)}`;
+}
+
 function expandEntry(entry, rangeStart, rangeEnd) {
   const occurrences = [];
   if (!entry.date) return occurrences;
   let cur = parseYmd(entry.date);
-  const end = new Date(rangeEnd);
+  let end = new Date(rangeEnd);
   const freq = entry.freq || 'none';
+
+  if (entry.repeatUntil && freq !== 'none') {
+    const until = parseYmd(entry.repeatUntil);
+    if (until < end) end = until;
+    if (end < rangeStart) return occurrences;
+  }
 
   if (freq === 'none') {
 
@@ -552,6 +568,32 @@ function getNeedsAttention(data) {
     });
 }
 
+function recordedPaychecks(data, entry) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const removed = data.removedOccurrences || {};
+  return expandEntry(entry, getEarliestTrackedDate(data), today)
+    .filter((occ) => !removed[`${entry.id}|${occ.occDate}`])
+    .map((occ) => getOverride(data, entry.id, occ.occDate))
+    .filter(hasAmountOverride)
+    .map((o) => Number(o.amount) || 0);
+}
+
+function averagePaycheck(data, entry) {
+  const amounts = recordedPaychecks(data, entry);
+  if (amounts.length < 2) return { amount: 0, count: amounts.length, ready: false };
+  return { amount: amounts.reduce((sum, n) => sum + n, 0) / amounts.length, count: amounts.length, ready: true };
+}
+
+function estimatedIncome(data, occ) {
+  if (!occ || !data.settings.avgPaycheckEnabled) return null;
+  if (hasAmountOverride(getOverride(data, occ.id, occ.occDate))) return null;
+  const entry = (data.incomeSources || []).find((e) => e.id === occ.id);
+  if (!entry) return null;
+  const avg = averagePaycheck(data, entry);
+  return avg.ready ? avg : null;
+}
+
 const ACCENTS = [
   { id: 'blue', label: 'Blue', hex: '#378ADD' },
   { id: 'teal', label: 'Teal', hex: '#1D9E75' },
@@ -703,7 +745,6 @@ function App() {
   if (!data.onboardingComplete) {
     return h(OnboardingWizard, {
       data,
-      isMobile,
       onComplete: (next) => {
         persist({
           ...next,
@@ -745,13 +786,13 @@ function App() {
   } else if (page === 'late') {
     pageContent = h(LatePage, { data, setData: persist, lateBills });
   } else if (page === 'essentials') {
-    pageContent = h(BillsPage, { data, setData: persist, onAddEntry: (date) => setQuickAdd({ date }) });
+    pageContent = h(BillsPage, { data, setData: persist });
   } else if (page === 'subscriptions') {
-    pageContent = h(SubscriptionsPage, { data, setData: persist, onAddEntry: (date) => setQuickAdd({ date }) });
+    pageContent = h(SubscriptionsPage, { data, setData: persist });
   } else if (page === 'creditcards') {
     pageContent = h(CreditCardsPage, { data, setData: persist });
   } else if (page === 'allbills') {
-    pageContent = h(AllBillsPage, { data, setData: persist, needsAttention, isMobile, setPage, onAddEntry: (date) => setQuickAdd({ date }) });
+    pageContent = h(AllBillsPage, { data, setData: persist, needsAttention, isMobile, setPage });
   } else if (page === 'settings') {
     pageContent = h(SettingsPage, { data, setData: persist, onRestart: () => persist({ ...getBlankData(), onboardingComplete: false }) });
   }
@@ -974,7 +1015,6 @@ function getBlankData() {
       autoDeductCardPayments: true,
       installDate: null,
       dateFormat: 'short',
-      showWeekNumbers: false,
       density: 'comfortable',
       customCss: '',
       sectionColors: {
@@ -987,6 +1027,7 @@ function getBlankData() {
       },
       backupReminderEnabled: true,
       hapticsEnabled: true,
+      avgPaycheckEnabled: false,
       lastBackupReminderShown: null
     }
   };
@@ -1053,8 +1094,7 @@ const TAB_FOR_PAGE = {
   allbills: 'allbills',
   essentials: 'allbills',
   creditcards: 'allbills',
-  subscriptions: 'allbills',
-  settings: 'settings'
+  subscriptions: 'allbills'
 };
 
 function MobileTabBar({ page, setPage, onAdd, lateCount, needsAttentionCount }) {
@@ -1171,6 +1211,7 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
     if (!form.name.trim()) return;
     onSubmit({
       ...form,
+      repeatUntil: form.freq === 'none' ? '' : form.repeatUntil,
       amount: form.amount === '' ? 0 : parseFloat(form.amount) || 0,
       amountMin: form.amountMin === '' ? 0 : parseFloat(form.amountMin) || 0,
       amountMax: form.amountMax === '' ? 0 : parseFloat(form.amountMax) || 0
@@ -1178,6 +1219,7 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
   }
 
   const useFreq = showFreq !== false;
+  const recurring = useFreq && form.freq !== 'none';
 
   return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
     h('div', { className: 'modal-content as-window' },
@@ -1229,6 +1271,10 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
           h('select', { value: form.freq, onChange: (e) => update('freq', e.target.value) },
             FREQS.map((f) => h('option', { key: f, value: f }, FREQ_LABELS[f])))
         ) : null,
+        (recurring && form.repeatUntil) ? h('div', { className: 'setup-field' },
+          h('label', null, 'Repeat ends'),
+          h('input', { type: 'date', value: form.repeatUntil, onChange: (e) => update('repeatUntil', e.target.value) })
+        ) : null,
         categories ? h('div', { className: 'setup-field' },
           h('label', null, 'Category'),
           h('select', { value: form.category, onChange: (e) => update('category', e.target.value) },
@@ -1238,9 +1284,12 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
       h('div', { className: 'setup-entry-links' },
         h('button', { className: 'setup-link', onClick: () => update('useAmountRange', !form.useAmountRange) },
           form.useAmountRange ? 'Fixed amount' : 'Amount range'),
-        h('span', { className: 'setup-link-dot' }, '·'),
         h('button', { className: 'setup-link', onClick: () => update('useDateRange', !form.useDateRange) },
-          form.useDateRange ? 'Single date' : 'Date range')
+          form.useDateRange ? 'Single date' : 'Date range'),
+        recurring
+          ? h('button', { className: 'setup-link', onClick: () => update('repeatUntil', form.repeatUntil ? '' : defaultRepeatUntil(form.date)) },
+              form.repeatUntil ? 'Repeats forever' : 'End repeat')
+          : null
       ),
       h('div', { className: 'setup-field' },
         h('label', null, 'Calendar color'),
@@ -1279,6 +1328,7 @@ function entryToFormShape(entry) {
     dateEnd: entry.dateEnd || '',
     useDateRange: !!entry.useDateRange,
     freq: entry.freq || 'monthly',
+    repeatUntil: entry.repeatUntil || '',
     category: entry.category || '',
     color: entry.color || '',
     oneTimeKind: entry.oneTimeKind
@@ -1361,17 +1411,14 @@ function blankEntry(defaults) {
     dateEnd: '',
     useDateRange: false,
     freq: 'monthly',
+    repeatUntil: '',
     category: '',
     color: '',
     ...defaults
   };
 }
 
-function presetEntry(preset, defaults) {
-  return blankEntry({ ...preset, amount: '', ...defaults });
-}
-
-function OnboardingWizard({ data, isMobile, onComplete }) {
+function OnboardingWizard({ data, onComplete }) {
   const [phase, setPhase] = useState('welcome');
   const [step, setStep] = useState(0);
   const [importError, setImportError] = useState(null);
@@ -1511,7 +1558,7 @@ function OnboardingWizard({ data, isMobile, onComplete }) {
       categories: MAJOR_CATEGORIES,
       namePlaceholder: 'e.g. Rent',
       suggestions: COMMON_MAJOR_BILLS,
-      onAddPreset: (p) => { haptic('light'); setMajorBills([...majorBills, presetEntry(p)]); },
+      onAddPreset: (p) => { haptic('light'); setMajorBills([...majorBills, blankEntry(p)]); },
       onChange: (id, field, value) => updateRow(majorBills, setMajorBills, id, field, value),
       onAdd: () => addRow(majorBills, setMajorBills, { category: 'Other' }),
       onRemove: (id) => removeRow(majorBills, setMajorBills, id),
@@ -1525,7 +1572,7 @@ function OnboardingWizard({ data, isMobile, onComplete }) {
       categories: MINOR_CATEGORIES,
       namePlaceholder: 'e.g. Spotify',
       suggestions: COMMON_SUBSCRIPTIONS,
-      onAddPreset: (p) => { haptic('light'); setSubscriptions([...subscriptions, presetEntry(p)]); },
+      onAddPreset: (p) => { haptic('light'); setSubscriptions([...subscriptions, blankEntry(p)]); },
       onChange: (id, field, value) => updateRow(subscriptions, setSubscriptions, id, field, value),
       onAdd: () => addRow(subscriptions, setSubscriptions, { freq: 'monthly', category: 'Streaming' }),
       onRemove: (id) => removeRow(subscriptions, setSubscriptions, id),
@@ -1691,6 +1738,7 @@ function EntryList({ rows, categories, namePlaceholder, suggestions, onAddPreset
 }
 
 function EntryCard({ row, categories, namePlaceholder, dateLabel, onChange, onRemove }) {
+  const recurring = row.freq !== 'none';
   return h('div', { className: 'setup-entry' },
     h('div', { className: 'setup-entry-head' },
       h('input', {
@@ -1742,6 +1790,12 @@ function EntryCard({ row, categories, namePlaceholder, dateLabel, onChange, onRe
         h('select', { value: row.freq, onChange: (e) => onChange('freq', e.target.value) },
           FREQS.map((f) => h('option', { key: f, value: f }, FREQ_LABELS[f])))
       ),
+      (recurring && row.repeatUntil)
+        ? h('div', { className: 'setup-field' },
+            h('label', null, 'Repeat ends'),
+            h('input', { type: 'date', value: row.repeatUntil, onChange: (e) => onChange('repeatUntil', e.target.value) })
+          )
+        : null,
       categories
         ? h('div', { className: 'setup-field' },
             h('label', null, 'Category'),
@@ -1753,9 +1807,12 @@ function EntryCard({ row, categories, namePlaceholder, dateLabel, onChange, onRe
     h('div', { className: 'setup-entry-links' },
       h('button', { className: 'setup-link', onClick: () => onChange('useAmountRange', !row.useAmountRange) },
         row.useAmountRange ? 'Fixed amount' : 'Amount range'),
-      h('span', { className: 'setup-link-dot' }, '\u00b7'),
       h('button', { className: 'setup-link', onClick: () => onChange('useDateRange', !row.useDateRange) },
-        row.useDateRange ? 'Single date' : 'Date range')
+        row.useDateRange ? 'Single date' : 'Date range'),
+      recurring
+        ? h('button', { className: 'setup-link', onClick: () => onChange('repeatUntil', row.repeatUntil ? '' : defaultRepeatUntil(row.date)) },
+            row.repeatUntil ? 'Repeats forever' : 'End repeat')
+        : null
     )
   );
 }
@@ -1873,6 +1930,7 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
     haptic('success');
     const entry = {
       ...form,
+      repeatUntil: form.freq === 'none' ? '' : form.repeatUntil,
       amount: form.amount === '' ? 0 : parseFloat(form.amount) || 0,
       amountMin: form.amountMin === '' ? 0 : parseFloat(form.amountMin) || 0,
       amountMax: form.amountMax === '' ? 0 : parseFloat(form.amountMax) || 0
@@ -1896,6 +1954,7 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
     : type === 'oneTimeIncome' ? ONE_TIME_INCOME_CATEGORIES
     : null;
   const showFreq = type === 'bill' || type === 'subscription';
+  const recurring = showFreq && form.freq !== 'none';
   const dateLabel = type === 'oneTimeIncome' ? 'Date received' : (type === 'oneTimePayment' ? 'Date paid' : 'Due date');
 
   return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
@@ -1964,6 +2023,10 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
           h('select', { value: form.freq, onChange: (e) => update('freq', e.target.value) },
             FREQS.map((f) => h('option', { key: f, value: f }, FREQ_LABELS[f])))
         ) : null,
+        (recurring && form.repeatUntil) ? h('div', { className: 'setup-field' },
+          h('label', null, 'Repeat ends'),
+          h('input', { type: 'date', value: form.repeatUntil, onChange: (e) => update('repeatUntil', e.target.value) })
+        ) : null,
         categories ? h('div', { className: 'setup-field' },
           h('label', null, 'Category'),
           h('select', { value: form.category, onChange: (e) => update('category', e.target.value) },
@@ -1974,11 +2037,14 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
       h('div', { className: 'setup-entry-links' },
         h('button', { className: 'setup-link', onClick: () => update('useAmountRange', !form.useAmountRange) },
           form.useAmountRange ? 'Fixed amount' : 'Amount range'),
-        showFreq ? h(React.Fragment, null,
-          h('span', { className: 'setup-link-dot' }, '·'),
-          h('button', { className: 'setup-link', onClick: () => update('useDateRange', !form.useDateRange) },
-            form.useDateRange ? 'Single date' : 'Date range')
-        ) : null
+        showFreq
+          ? h('button', { className: 'setup-link', onClick: () => update('useDateRange', !form.useDateRange) },
+              form.useDateRange ? 'Single date' : 'Date range')
+          : null,
+        recurring
+          ? h('button', { className: 'setup-link', onClick: () => update('repeatUntil', form.repeatUntil ? '' : defaultRepeatUntil(form.date)) },
+              form.repeatUntil ? 'Repeats forever' : 'End repeat')
+          : null
       ),
 
       h('div', { className: 'row-between', style: { marginTop: '4px' } },
@@ -2067,7 +2133,7 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
 }
 
 function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
-  const { check, windowStart, windowEnd, bills, due, checkAmount, overdueCount, period, hasPrev, hasNext } = nextCheck;
+  const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext } = nextCheck;
   const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
 
   const headingText = period === 0
@@ -2122,6 +2188,10 @@ function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
       shortfall > 0
         ? `${fmtCurrency(shortfall, currency)} more than that check covers`
         : `${fmtCurrency(-shortfall, currency)} of it left over`
+    ) : null,
+
+    estimate ? h('p', { className: 'nextcheck-est' },
+      `Check estimated at ${fmtCurrency(estimate.amount, currency)} — average of your last ${estimate.count} recorded paychecks`
     ) : null,
 
     bills.length === 0
@@ -2596,7 +2666,6 @@ function LatePage({ data, setData, lateBills }) {
   }
 
   function ageClass(days) {
-    if (days < 0) return 'age-low';
     return days >= 14 ? 'age-high' : 'age-low';
   }
 
@@ -2660,15 +2729,6 @@ function fmtCompact(amount, currency) {
     return `${sym}${k >= 10 ? Math.round(k) : k.toFixed(1)}k`;
   }
   return `${sym}${n}`;
-}
-
-function getISOWeekNumber(date) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = (d.getUTCDay() + 6) % 7;
-  d.setUTCDate(d.getUTCDate() - dayNum + 3);
-  const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
-  const diff = (d - firstThursday) / 86400000;
-  return 1 + Math.round(diff / 7);
 }
 
 function getDateRangeSpans(data, allBills, gridStart, gridEnd) {
@@ -2858,7 +2918,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
   const dowLabels = [];
   for (let i = 0; i < 7; i++) dowLabels.push(DOW_FULL[(firstDow + i) % 7]);
 
-  const showWeekNumbers = !!data.settings.showWeekNumbers;
   const selectedOccs = selectedDay ? (occByDate[selectedDay] || []) : [];
 
   const rangeSegments = useMemo(() => {
@@ -3082,17 +3141,12 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
       onTouchEnd: isMobile ? onTouchEnd : undefined
     },
     h('div', { className: 'calendar-week-row dow-row' },
-      showWeekNumbers ? h('div', { className: 'week-number-gutter' }) : null,
       h('div', { className: 'calendar-grid dow-grid' },
         dowLabels.map((dn) => h('div', { key: dn, className: 'calendar-dow' }, dn))
       )
     ),
 
     h('div', { className: 'calendar-body', style: { '--week-count': weeks.length } },
-      showWeekNumbers ? h('div', { className: 'week-number-col' },
-        weeks.map((week, wi) => h('div', { key: wi, className: 'week-number-gutter' }, getISOWeekNumber(week[0])))
-      ) : null,
-
       h('div', { className: 'calendar-grid-wrap' },
         h('div', { className: 'calendar-grid months' },
           weeks.map((week, wi) =>
@@ -3516,6 +3570,7 @@ function useNextCheck(data, period) {
 
     const idx = Math.max(0, Math.min(period || 0, checks.length - 1));
     const check = checks[idx] || null;
+    const estimate = estimatedIncome(data, check);
     const windowEnd = new Date(today);
     if (check) {
       const d = parseYmd(check.occDate);
@@ -3565,7 +3620,8 @@ function useNextCheck(data, period) {
       hasPrev: idx > 0,
       hasNext: idx + 1 < checks.length,
       due: bills.reduce((sum, o) => sum + o.amount, 0),
-      checkAmount: check ? check.amount : 0,
+      checkAmount: estimate ? estimate.amount : (check ? check.amount : 0),
+      estimate,
       overdueCount: bills.filter((o) => parseYmd(o.occDate) < today).length
     };
   }, [data, period]);
@@ -3573,20 +3629,20 @@ function useNextCheck(data, period) {
 
 function OverviewSwitch({ view, setView }) {
   return h('div', { className: 'ov-switch', role: 'tablist' },
-    ['calendar', 'overview'].map((id) => h('button', {
-      key: id,
-      className: `ov-switch-btn${view === id ? ' on' : ''}`,
-      onClick: () => { haptic('light'); setView(id); },
+    [{ id: 'calendar', label: 'Calendar' }, { id: 'stats', label: 'Statistics' }].map((t) => h('button', {
+      key: t.id,
+      className: `ov-switch-btn${view === t.id ? ' on' : ''}`,
+      onClick: () => { haptic('light'); setView(t.id); },
       role: 'tab',
-      'aria-selected': view === id
-    }, id === 'calendar' ? 'Calendar' : 'Overview'))
+      'aria-selected': view === t.id
+    }, t.label))
   );
 }
 
 function OverviewPage({ data, setData, isMobile, onAddEntry, view, setView }) {
   const body = view === 'calendar'
     ? h(CalendarPage, { data, setData, isMobile, onAddEntry })
-    : h(MonthOverview, { data, setData, isMobile });
+    : h(StatisticsPage, { data, setData, isMobile });
 
   if (isMobile) return body;
 
@@ -3596,7 +3652,7 @@ function OverviewPage({ data, setData, isMobile, onAddEntry, view, setView }) {
   );
 }
 
-function MonthOverview({ data, setData, isMobile }) {
+function StatisticsPage({ data, setData, isMobile }) {
   const currency = data.settings.currency;
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
@@ -3701,7 +3757,7 @@ function MonthOverview({ data, setData, isMobile }) {
   }) : null;
 
   if (isMobile) {
-    return h('div', { className: 'month-overview' },
+    return h('div', { className: 'stats-page' },
       monthHeader,
       h('p', { className: 'section-title' }, 'Next 7 days'),
       next7List,
@@ -3710,7 +3766,7 @@ function MonthOverview({ data, setData, isMobile }) {
     );
   }
 
-  return h('div', { className: 'month-overview' },
+  return h('div', { className: 'stats-page' },
     monthHeader,
     h('div', { className: 'home-chart-row' },
       h('div', { className: 'home-chart-main' }, chart),
@@ -3727,7 +3783,7 @@ function MonthOverview({ data, setData, isMobile }) {
   );
 }
 
-function BillsPage({ data, setData, onAddEntry }) {
+function BillsPage({ data, setData }) {
   const currency = data.settings.currency;
   const [editing, setEditing] = useState(null);
 
@@ -3771,7 +3827,7 @@ function BillsPage({ data, setData, onAddEntry }) {
             return h('div', { key: e.id, className: 'list-item clickable', onClick: () => openEdit(e) },
               h('div', null,
                 h('p', { className: 'list-item-name' }, e.name),
-                h('p', { className: 'list-item-sub' }, `${dateLabel} - ${FREQ_LABELS[e.freq] || e.freq}${e.category ? ' - ' + e.category : ''}`)
+                h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}${e.category ? ' - ' + e.category : ''}`)
               ),
               h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
                 h('span', { className: 'list-item-amount' }, entryAmountLabel(e, currency)),
@@ -3797,7 +3853,7 @@ function BillsPage({ data, setData, onAddEntry }) {
   );
 }
 
-function SubscriptionsPage({ data, setData, onAddEntry }) {
+function SubscriptionsPage({ data, setData }) {
   const currency = data.settings.currency;
   const [editing, setEditing] = useState(null);
 
@@ -3850,7 +3906,7 @@ function SubscriptionsPage({ data, setData, onAddEntry }) {
             return h('div', { key: e.id, className: 'list-item clickable', onClick: () => openEdit(e) },
               h('div', null,
                 h('p', { className: 'list-item-name' }, e.name),
-                h('p', { className: 'list-item-sub' }, `${dateLabel} - ${FREQ_LABELS[e.freq] || e.freq}${e.category ? ' - ' + e.category : ''}`)
+                h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}${e.category ? ' - ' + e.category : ''}`)
               ),
               h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
                 h('span', { className: 'list-item-amount' }, entryAmountLabel(e, currency)),
@@ -4160,7 +4216,7 @@ function ProjectionModal({ card, data, currency, onClose }) {
   );
 }
 
-function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddEntry }) {
+function AllBillsPage({ data, setData, needsAttention, isMobile, setPage }) {
   const currency = data.settings.currency;
 
   const [attentionCollapsed, setAttentionCollapsed] = useState(() => needsAttention.length === 0);
@@ -4172,14 +4228,11 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
   const upcomingAttention = needsAttention.filter((o) => !o.late);
 
   function deleteEntry(o) {
-    if (o.kind !== 'bill' && o.kind !== 'income') return;
     let next = null;
     if (o.sourceList === 'majorBills') {
       next = { ...data, majorBills: data.majorBills.filter((e) => e.id !== o.id) };
     } else if (o.sourceList === 'subscriptions') {
       next = { ...data, subscriptions: data.subscriptions.filter((e) => e.id !== o.id) };
-    } else if (o.sourceList === 'oneTimeEntries') {
-      next = { ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== o.id) };
     }
 
     if (next) setData(logActivity(next, `Deleted "${o.name}"`));
@@ -4200,25 +4253,14 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
   const unified = useMemo(() => {
     const rows = [];
 
-    data.majorBills.forEach((e) => rows.push({ ...e, sourceList: 'majorBills', sourceLabel: 'Essential', kind: 'bill' }));
-    data.subscriptions.forEach((e) => rows.push({ ...e, sourceList: 'subscriptions', sourceLabel: 'Subscription', kind: 'bill' }));
-    getCreditCardPaymentEntries(data).forEach((e) => rows.push({ ...e, sourceList: 'creditCards', sourceLabel: 'Credit card', kind: 'bill' }));
-
-    (data.oneTimeEntries || []).forEach((e) => {
-      if (e.oneTimeKind === 'income') return;
-      rows.push({ ...e, sourceList: 'oneTimeEntries', sourceLabel: 'Day to day', kind: 'bill' });
-    });
+    data.majorBills.forEach((e) => rows.push({ ...e, sourceList: 'majorBills' }));
+    data.subscriptions.forEach((e) => rows.push({ ...e, sourceList: 'subscriptions' }));
+    getCreditCardPaymentEntries(data).forEach((e) => rows.push({ ...e, sourceList: 'creditCards' }));
 
     return rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   }, [data]);
 
-  const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards', 'oneTimeEntries'];
-  const SOURCE_GROUP_LABELS = {
-    majorBills: 'Essentials',
-    subscriptions: 'Subscriptions',
-    creditCards: 'Credit cards',
-    oneTimeEntries: 'Day to day'
-  };
+  const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards'];
 
   const SUBPAGE_FOR_GROUP = {
     majorBills: 'essentials',
@@ -4238,10 +4280,7 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
   const groupMonthlyTotals = useMemo(() => {
     const totals = {};
     grouped.forEach(([key, rows]) => {
-      totals[key] = rows.reduce((sum, e) => {
-        if (e.kind === 'income') return sum;
-        return sum + (entryAmount(e) || 0);
-      }, 0);
+      totals[key] = rows.reduce((sum, e) => sum + (entryAmount(e) || 0), 0);
     });
     return totals;
   }, [grouped]);
@@ -4325,7 +4364,6 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
                 rows.map((e) => {
                   const d = e.date ? parseYmd(e.date) : null;
                   const dateLabel = d ? formatDate(d, data.settings) : '';
-                  const freqLabel = e.freq && e.freq !== 'none' ? FREQ_LABELS[e.freq] : 'one-time';
                   const editable = e.sourceList !== 'creditCards';
                   return h('div', {
                     key: `${e.sourceList}-${e.id}`,
@@ -4334,13 +4372,10 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
                   },
                     h('div', null,
                       h('p', { className: 'list-item-name' }, e.name),
-                      h('p', { className: 'list-item-sub' }, `${dateLabel} - ${freqLabel}${e.category ? ' - ' + e.category : ''}`)
+                      h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}${e.category ? ' - ' + e.category : ''}`)
                     ),
                     h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
-                      h('span', {
-                        className: 'list-item-amount',
-                        style: { color: e.kind === 'income' ? 'var(--text-success)' : 'inherit' }
-                      }, `${e.kind === 'income' ? '+' : ''}${entryAmountLabel(e, currency)}`),
+                      h('span', { className: 'list-item-amount' }, entryAmountLabel(e, currency)),
                       editable ? h('button', {
                         className: 'x-btn',
                         onClick: (ev) => { ev.stopPropagation(); deleteEntry(e); },
@@ -4527,7 +4562,7 @@ function SettingsPage({ data, setData, onRestart }) {
   let tabContent;
   if (tab === 'general') {
     tabContent = h(GeneralTab, {
-      data, setData, currency, updateSetting,
+      data, currency, updateSetting,
       onAddIncome: openAddIncome, onEditIncome: openEditIncome, onDeleteIncome: deleteIncome
     });
   } else if (tab === 'colors') {
@@ -4558,7 +4593,7 @@ function SettingsPage({ data, setData, onRestart }) {
   );
 }
 
-function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEditIncome, onDeleteIncome }) {
+function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, onDeleteIncome }) {
   return h('div', null,
 
     h('div', { className: 'card' },
@@ -4575,7 +4610,7 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
               return h('div', { key: e.id, className: 'list-item clickable', onClick: () => onEditIncome(e) },
                 h('div', null,
                   h('p', { className: 'list-item-name' }, e.name),
-                  h('p', { className: 'list-item-sub' }, `${dateLabel} - ${FREQ_LABELS[e.freq] || e.freq}`)
+                  h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}`)
                 ),
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
                   h('span', { className: 'list-item-amount', style: { color: 'var(--text-success)' } }, `+${entryAmountLabel(e, currency)}`),
@@ -4890,6 +4925,43 @@ function SyncModal({ data, setData, onClose }) {
   );
 }
 
+function ExperimentalCard({ data, updateSetting }) {
+  const on = data.settings.avgPaycheckEnabled === true;
+  const currency = data.settings.currency;
+
+  return h('div', { className: 'card', style: { marginTop: '12px' } },
+    h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Experimental'),
+    h('p', { style: { margin: '0 0 10px', fontSize: '13px', color: 'var(--text-secondary)' } },
+      'Still being tried out — turn it off any time.'),
+    h('div', { className: 'checkbox-row' },
+      h('input', {
+        type: 'checkbox',
+        id: 'avg-paycheck',
+        checked: on,
+        onChange: (e) => updateSetting('avgPaycheckEnabled', e.target.checked)
+      }),
+      h('label', { htmlFor: 'avg-paycheck', style: { margin: 0 } }, 'Estimate the next paycheck from past ones')
+    ),
+    h('p', { style: { margin: '6px 0 0', fontSize: '13px', color: 'var(--text-secondary)' } },
+      'Once an income source has two or more paychecks with a real amount recorded, upcoming checks use that ' +
+      'average instead of the usual amount. Record a real amount with "Set price" on a paycheck that has already landed.'),
+    on ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' } },
+      data.incomeSources.length === 0
+        ? h('p', { className: 'empty-state' }, 'No income sources to average yet.')
+        : data.incomeSources.map((e) => {
+            const avg = averagePaycheck(data, e);
+            return h('div', { key: e.id, className: 'row-between', style: { fontSize: '13px' } },
+              h('span', null, e.name),
+              avg.ready
+                ? h('span', null, `${fmtCurrency(avg.amount, currency)} avg of ${avg.count}`)
+                : h('span', { style: { color: 'var(--text-tertiary)' } },
+                    `${avg.count} of 2 recorded — using ${entryAmountLabel(e, currency)}`)
+            );
+          })
+    ) : null
+  );
+}
+
 function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setConfirming }) {
   const [importWarning, setImportWarning] = useState(false);
   const [importError, setImportError] = useState(null);
@@ -4951,6 +5023,8 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
         )
       )
     ),
+
+    h(ExperimentalCard, { data, updateSetting }),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
       h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Custom CSS'),

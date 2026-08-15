@@ -12,15 +12,6 @@ function fmtCompact(amount, currency) {
   return `${sym}${n}`;
 }
 
-function getISOWeekNumber(date) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = (d.getUTCDay() + 6) % 7;
-  d.setUTCDate(d.getUTCDate() - dayNum + 3);
-  const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
-  const diff = (d - firstThursday) / 86400000;
-  return 1 + Math.round(diff / 7);
-}
-
 function getDateRangeSpans(data, allBills, gridStart, gridEnd) {
   const spans = [];
 
@@ -208,7 +199,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
   const dowLabels = [];
   for (let i = 0; i < 7; i++) dowLabels.push(DOW_FULL[(firstDow + i) % 7]);
 
-  const showWeekNumbers = !!data.settings.showWeekNumbers;
   const selectedOccs = selectedDay ? (occByDate[selectedDay] || []) : [];
 
   const rangeSegments = useMemo(() => {
@@ -432,17 +422,12 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
       onTouchEnd: isMobile ? onTouchEnd : undefined
     },
     h('div', { className: 'calendar-week-row dow-row' },
-      showWeekNumbers ? h('div', { className: 'week-number-gutter' }) : null,
       h('div', { className: 'calendar-grid dow-grid' },
         dowLabels.map((dn) => h('div', { key: dn, className: 'calendar-dow' }, dn))
       )
     ),
 
     h('div', { className: 'calendar-body', style: { '--week-count': weeks.length } },
-      showWeekNumbers ? h('div', { className: 'week-number-col' },
-        weeks.map((week, wi) => h('div', { key: wi, className: 'week-number-gutter' }, getISOWeekNumber(week[0])))
-      ) : null,
-
       h('div', { className: 'calendar-grid-wrap' },
         h('div', { className: 'calendar-grid months' },
           weeks.map((week, wi) =>

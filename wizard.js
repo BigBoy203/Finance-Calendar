@@ -35,17 +35,14 @@ function blankEntry(defaults) {
     dateEnd: '',
     useDateRange: false,
     freq: 'monthly',
+    repeatUntil: '',
     category: '',
     color: '',
     ...defaults
   };
 }
 
-function presetEntry(preset, defaults) {
-  return blankEntry({ ...preset, amount: '', ...defaults });
-}
-
-function OnboardingWizard({ data, isMobile, onComplete }) {
+function OnboardingWizard({ data, onComplete }) {
   const [phase, setPhase] = useState('welcome');
   const [step, setStep] = useState(0);
   const [importError, setImportError] = useState(null);
@@ -185,7 +182,7 @@ function OnboardingWizard({ data, isMobile, onComplete }) {
       categories: MAJOR_CATEGORIES,
       namePlaceholder: 'e.g. Rent',
       suggestions: COMMON_MAJOR_BILLS,
-      onAddPreset: (p) => { haptic('light'); setMajorBills([...majorBills, presetEntry(p)]); },
+      onAddPreset: (p) => { haptic('light'); setMajorBills([...majorBills, blankEntry(p)]); },
       onChange: (id, field, value) => updateRow(majorBills, setMajorBills, id, field, value),
       onAdd: () => addRow(majorBills, setMajorBills, { category: 'Other' }),
       onRemove: (id) => removeRow(majorBills, setMajorBills, id),
@@ -199,7 +196,7 @@ function OnboardingWizard({ data, isMobile, onComplete }) {
       categories: MINOR_CATEGORIES,
       namePlaceholder: 'e.g. Spotify',
       suggestions: COMMON_SUBSCRIPTIONS,
-      onAddPreset: (p) => { haptic('light'); setSubscriptions([...subscriptions, presetEntry(p)]); },
+      onAddPreset: (p) => { haptic('light'); setSubscriptions([...subscriptions, blankEntry(p)]); },
       onChange: (id, field, value) => updateRow(subscriptions, setSubscriptions, id, field, value),
       onAdd: () => addRow(subscriptions, setSubscriptions, { freq: 'monthly', category: 'Streaming' }),
       onRemove: (id) => removeRow(subscriptions, setSubscriptions, id),
@@ -365,6 +362,7 @@ function EntryList({ rows, categories, namePlaceholder, suggestions, onAddPreset
 }
 
 function EntryCard({ row, categories, namePlaceholder, dateLabel, onChange, onRemove }) {
+  const recurring = row.freq !== 'none';
   return h('div', { className: 'setup-entry' },
     h('div', { className: 'setup-entry-head' },
       h('input', {
@@ -416,6 +414,12 @@ function EntryCard({ row, categories, namePlaceholder, dateLabel, onChange, onRe
         h('select', { value: row.freq, onChange: (e) => onChange('freq', e.target.value) },
           FREQS.map((f) => h('option', { key: f, value: f }, FREQ_LABELS[f])))
       ),
+      (recurring && row.repeatUntil)
+        ? h('div', { className: 'setup-field' },
+            h('label', null, 'Repeat ends'),
+            h('input', { type: 'date', value: row.repeatUntil, onChange: (e) => onChange('repeatUntil', e.target.value) })
+          )
+        : null,
       categories
         ? h('div', { className: 'setup-field' },
             h('label', null, 'Category'),
@@ -427,9 +431,12 @@ function EntryCard({ row, categories, namePlaceholder, dateLabel, onChange, onRe
     h('div', { className: 'setup-entry-links' },
       h('button', { className: 'setup-link', onClick: () => onChange('useAmountRange', !row.useAmountRange) },
         row.useAmountRange ? 'Fixed amount' : 'Amount range'),
-      h('span', { className: 'setup-link-dot' }, '\u00b7'),
       h('button', { className: 'setup-link', onClick: () => onChange('useDateRange', !row.useDateRange) },
-        row.useDateRange ? 'Single date' : 'Date range')
+        row.useDateRange ? 'Single date' : 'Date range'),
+      recurring
+        ? h('button', { className: 'setup-link', onClick: () => onChange('repeatUntil', row.repeatUntil ? '' : defaultRepeatUntil(row.date)) },
+            row.repeatUntil ? 'Repeats forever' : 'End repeat')
+        : null
     )
   );
 }

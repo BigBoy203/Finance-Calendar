@@ -127,7 +127,7 @@ function SettingsPage({ data, setData, onRestart }) {
   let tabContent;
   if (tab === 'general') {
     tabContent = h(GeneralTab, {
-      data, setData, currency, updateSetting,
+      data, currency, updateSetting,
       onAddIncome: openAddIncome, onEditIncome: openEditIncome, onDeleteIncome: deleteIncome
     });
   } else if (tab === 'colors') {
@@ -158,7 +158,7 @@ function SettingsPage({ data, setData, onRestart }) {
   );
 }
 
-function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEditIncome, onDeleteIncome }) {
+function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, onDeleteIncome }) {
   return h('div', null,
 
     h('div', { className: 'card' },
@@ -175,7 +175,7 @@ function GeneralTab({ data, setData, currency, updateSetting, onAddIncome, onEdi
               return h('div', { key: e.id, className: 'list-item clickable', onClick: () => onEditIncome(e) },
                 h('div', null,
                   h('p', { className: 'list-item-name' }, e.name),
-                  h('p', { className: 'list-item-sub' }, `${dateLabel} - ${FREQ_LABELS[e.freq] || e.freq}`)
+                  h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}`)
                 ),
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
                   h('span', { className: 'list-item-amount', style: { color: 'var(--text-success)' } }, `+${entryAmountLabel(e, currency)}`),
@@ -490,6 +490,43 @@ function SyncModal({ data, setData, onClose }) {
   );
 }
 
+function ExperimentalCard({ data, updateSetting }) {
+  const on = data.settings.avgPaycheckEnabled === true;
+  const currency = data.settings.currency;
+
+  return h('div', { className: 'card', style: { marginTop: '12px' } },
+    h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Experimental'),
+    h('p', { style: { margin: '0 0 10px', fontSize: '13px', color: 'var(--text-secondary)' } },
+      'Still being tried out — turn it off any time.'),
+    h('div', { className: 'checkbox-row' },
+      h('input', {
+        type: 'checkbox',
+        id: 'avg-paycheck',
+        checked: on,
+        onChange: (e) => updateSetting('avgPaycheckEnabled', e.target.checked)
+      }),
+      h('label', { htmlFor: 'avg-paycheck', style: { margin: 0 } }, 'Estimate the next paycheck from past ones')
+    ),
+    h('p', { style: { margin: '6px 0 0', fontSize: '13px', color: 'var(--text-secondary)' } },
+      'Once an income source has two or more paychecks with a real amount recorded, upcoming checks use that ' +
+      'average instead of the usual amount. Record a real amount with "Set price" on a paycheck that has already landed.'),
+    on ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' } },
+      data.incomeSources.length === 0
+        ? h('p', { className: 'empty-state' }, 'No income sources to average yet.')
+        : data.incomeSources.map((e) => {
+            const avg = averagePaycheck(data, e);
+            return h('div', { key: e.id, className: 'row-between', style: { fontSize: '13px' } },
+              h('span', null, e.name),
+              avg.ready
+                ? h('span', null, `${fmtCurrency(avg.amount, currency)} avg of ${avg.count}`)
+                : h('span', { style: { color: 'var(--text-tertiary)' } },
+                    `${avg.count} of 2 recorded — using ${entryAmountLabel(e, currency)}`)
+            );
+          })
+    ) : null
+  );
+}
+
 function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setConfirming }) {
   const [importWarning, setImportWarning] = useState(false);
   const [importError, setImportError] = useState(null);
@@ -551,6 +588,8 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
         )
       )
     ),
+
+    h(ExperimentalCard, { data, updateSetting }),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
       h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Custom CSS'),

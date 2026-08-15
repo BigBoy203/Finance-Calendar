@@ -77,7 +77,7 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
 }
 
 function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
-  const { check, windowStart, windowEnd, bills, due, checkAmount, overdueCount, period, hasPrev, hasNext } = nextCheck;
+  const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext } = nextCheck;
   const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
 
   const headingText = period === 0
@@ -132,6 +132,10 @@ function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
       shortfall > 0
         ? `${fmtCurrency(shortfall, currency)} more than that check covers`
         : `${fmtCurrency(-shortfall, currency)} of it left over`
+    ) : null,
+
+    estimate ? h('p', { className: 'nextcheck-est' },
+      `Check estimated at ${fmtCurrency(estimate.amount, currency)} — average of your last ${estimate.count} recorded paychecks`
     ) : null,
 
     bills.length === 0

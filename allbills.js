@@ -1,5 +1,5 @@
 
-function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddEntry }) {
+function AllBillsPage({ data, setData, needsAttention, isMobile, setPage }) {
   const currency = data.settings.currency;
 
   const [attentionCollapsed, setAttentionCollapsed] = useState(() => needsAttention.length === 0);
@@ -11,14 +11,11 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
   const upcomingAttention = needsAttention.filter((o) => !o.late);
 
   function deleteEntry(o) {
-    if (o.kind !== 'bill' && o.kind !== 'income') return;
     let next = null;
     if (o.sourceList === 'majorBills') {
       next = { ...data, majorBills: data.majorBills.filter((e) => e.id !== o.id) };
     } else if (o.sourceList === 'subscriptions') {
       next = { ...data, subscriptions: data.subscriptions.filter((e) => e.id !== o.id) };
-    } else if (o.sourceList === 'oneTimeEntries') {
-      next = { ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== o.id) };
     }
 
     if (next) setData(logActivity(next, `Deleted "${o.name}"`));
@@ -39,25 +36,14 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
   const unified = useMemo(() => {
     const rows = [];
 
-    data.majorBills.forEach((e) => rows.push({ ...e, sourceList: 'majorBills', sourceLabel: 'Essential', kind: 'bill' }));
-    data.subscriptions.forEach((e) => rows.push({ ...e, sourceList: 'subscriptions', sourceLabel: 'Subscription', kind: 'bill' }));
-    getCreditCardPaymentEntries(data).forEach((e) => rows.push({ ...e, sourceList: 'creditCards', sourceLabel: 'Credit card', kind: 'bill' }));
-
-    (data.oneTimeEntries || []).forEach((e) => {
-      if (e.oneTimeKind === 'income') return;
-      rows.push({ ...e, sourceList: 'oneTimeEntries', sourceLabel: 'Day to day', kind: 'bill' });
-    });
+    data.majorBills.forEach((e) => rows.push({ ...e, sourceList: 'majorBills' }));
+    data.subscriptions.forEach((e) => rows.push({ ...e, sourceList: 'subscriptions' }));
+    getCreditCardPaymentEntries(data).forEach((e) => rows.push({ ...e, sourceList: 'creditCards' }));
 
     return rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   }, [data]);
 
-  const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards', 'oneTimeEntries'];
-  const SOURCE_GROUP_LABELS = {
-    majorBills: 'Essentials',
-    subscriptions: 'Subscriptions',
-    creditCards: 'Credit cards',
-    oneTimeEntries: 'Day to day'
-  };
+  const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards'];
 
   const SUBPAGE_FOR_GROUP = {
     majorBills: 'essentials',
@@ -77,10 +63,7 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
   const groupMonthlyTotals = useMemo(() => {
     const totals = {};
     grouped.forEach(([key, rows]) => {
-      totals[key] = rows.reduce((sum, e) => {
-        if (e.kind === 'income') return sum;
-        return sum + (entryAmount(e) || 0);
-      }, 0);
+      totals[key] = rows.reduce((sum, e) => sum + (entryAmount(e) || 0), 0);
     });
     return totals;
   }, [grouped]);
@@ -164,7 +147,6 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
                 rows.map((e) => {
                   const d = e.date ? parseYmd(e.date) : null;
                   const dateLabel = d ? formatDate(d, data.settings) : '';
-                  const freqLabel = e.freq && e.freq !== 'none' ? FREQ_LABELS[e.freq] : 'one-time';
                   const editable = e.sourceList !== 'creditCards';
                   return h('div', {
                     key: `${e.sourceList}-${e.id}`,
@@ -173,13 +155,10 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage, onAddE
                   },
                     h('div', null,
                       h('p', { className: 'list-item-name' }, e.name),
-                      h('p', { className: 'list-item-sub' }, `${dateLabel} - ${freqLabel}${e.category ? ' - ' + e.category : ''}`)
+                      h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}${e.category ? ' - ' + e.category : ''}`)
                     ),
                     h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
-                      h('span', {
-                        className: 'list-item-amount',
-                        style: { color: e.kind === 'income' ? 'var(--text-success)' : 'inherit' }
-                      }, `${e.kind === 'income' ? '+' : ''}${entryAmountLabel(e, currency)}`),
+                      h('span', { className: 'list-item-amount' }, entryAmountLabel(e, currency)),
                       editable ? h('button', {
                         className: 'x-btn',
                         onClick: (ev) => { ev.stopPropagation(); deleteEntry(e); },

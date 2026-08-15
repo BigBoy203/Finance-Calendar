@@ -10,6 +10,7 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
     if (!form.name.trim()) return;
     onSubmit({
       ...form,
+      repeatUntil: form.freq === 'none' ? '' : form.repeatUntil,
       amount: form.amount === '' ? 0 : parseFloat(form.amount) || 0,
       amountMin: form.amountMin === '' ? 0 : parseFloat(form.amountMin) || 0,
       amountMax: form.amountMax === '' ? 0 : parseFloat(form.amountMax) || 0
@@ -17,6 +18,7 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
   }
 
   const useFreq = showFreq !== false;
+  const recurring = useFreq && form.freq !== 'none';
 
   return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
     h('div', { className: 'modal-content as-window' },
@@ -68,6 +70,10 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
           h('select', { value: form.freq, onChange: (e) => update('freq', e.target.value) },
             FREQS.map((f) => h('option', { key: f, value: f }, FREQ_LABELS[f])))
         ) : null,
+        (recurring && form.repeatUntil) ? h('div', { className: 'setup-field' },
+          h('label', null, 'Repeat ends'),
+          h('input', { type: 'date', value: form.repeatUntil, onChange: (e) => update('repeatUntil', e.target.value) })
+        ) : null,
         categories ? h('div', { className: 'setup-field' },
           h('label', null, 'Category'),
           h('select', { value: form.category, onChange: (e) => update('category', e.target.value) },
@@ -77,9 +83,12 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
       h('div', { className: 'setup-entry-links' },
         h('button', { className: 'setup-link', onClick: () => update('useAmountRange', !form.useAmountRange) },
           form.useAmountRange ? 'Fixed amount' : 'Amount range'),
-        h('span', { className: 'setup-link-dot' }, '·'),
         h('button', { className: 'setup-link', onClick: () => update('useDateRange', !form.useDateRange) },
-          form.useDateRange ? 'Single date' : 'Date range')
+          form.useDateRange ? 'Single date' : 'Date range'),
+        recurring
+          ? h('button', { className: 'setup-link', onClick: () => update('repeatUntil', form.repeatUntil ? '' : defaultRepeatUntil(form.date)) },
+              form.repeatUntil ? 'Repeats forever' : 'End repeat')
+          : null
       ),
       h('div', { className: 'setup-field' },
         h('label', null, 'Calendar color'),
@@ -118,6 +127,7 @@ function entryToFormShape(entry) {
     dateEnd: entry.dateEnd || '',
     useDateRange: !!entry.useDateRange,
     freq: entry.freq || 'monthly',
+    repeatUntil: entry.repeatUntil || '',
     category: entry.category || '',
     color: entry.color || '',
     oneTimeKind: entry.oneTimeKind

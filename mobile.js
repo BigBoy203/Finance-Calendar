@@ -41,8 +41,7 @@ const TAB_FOR_PAGE = {
   allbills: 'allbills',
   essentials: 'allbills',
   creditcards: 'allbills',
-  subscriptions: 'allbills',
-  settings: 'settings'
+  subscriptions: 'allbills'
 };
 
 function MobileTabBar({ page, setPage, onAdd, lateCount, needsAttentionCount }) {
