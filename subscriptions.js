@@ -67,6 +67,7 @@ function SubscriptionsPage({ data, setData }) {
         ),
 
     editing ? h(EntryFormModal, {
+      data,
       title: editing._isNew ? 'Add subscription' : 'Edit subscription',
       entry: editing,
       categories: MINOR_CATEGORIES,

@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '3.3';
+const WEB_VERSION = '3.4';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -18,6 +18,18 @@ function haptic(kind) {
     const patterns = { light: 8, medium: 15, success: [10, 40, 10], warn: [20, 60, 20], heavy: 25 };
     navigator.vibrate(patterns[kind] || patterns.light);
   } catch (e) {}
+}
+
+function useOverlayDismiss(onClose) {
+  const startedOnOverlay = useRef(false);
+  return {
+    onPointerDown: (e) => { startedOnOverlay.current = e.target === e.currentTarget; },
+    onClick: (e) => {
+      const dismiss = startedOnOverlay.current && e.target === e.currentTarget;
+      startedOnOverlay.current = false;
+      if (dismiss) onClose();
+    }
+  };
 }
 
 function uid() {
@@ -200,17 +212,22 @@ function expandEntry(entry, rangeStart, rangeEnd) {
 function expandAll(entries, kind, rangeStart, rangeEnd, data) {
   const all = [];
   const removed = (data && data.removedOccurrences) || {};
+  const todayStr = todayYmd();
   entries.forEach((entry) => {
+    const estimate = (data && kind === 'income') ? incomeEstimate(data, entry) : null;
     expandEntry(entry, rangeStart, rangeEnd).forEach((occ) => {
       if (removed[`${entry.id}|${occ.occDate}`]) return;
       const override = data ? getOverride(data, entry.id, occ.occDate) : null;
       const hasOverride = hasAmountOverride(override);
+      const isEstimate = !!estimate && !hasOverride && occ.occDate > todayStr;
       all.push({
         ...occ,
         kind,
-        amount: hasOverride ? Number(override.amount) || 0 : entryAmount(entry),
+        amount: hasOverride ? Number(override.amount) || 0 : (isEstimate ? estimate.amount : entryAmount(entry)),
         isRange: !!entry.useAmountRange,
-        hasOverride
+        hasOverride,
+        isEstimate,
+        estimateCount: isEstimate ? estimate.count : 0
       });
     });
   });
@@ -256,6 +273,9 @@ function oneTimeOccurrence(data, entry) {
 function occAmountLabel(occ, currency) {
   if (occ.hasOverride) {
     return fmtCurrency(occ.amount, currency);
+  }
+  if (occ.isEstimate) {
+    return `\u2248${fmtCurrency(occ.amount, currency)}`;
   }
   if (occ.isRange) {
     const min = Number(occ.amountMin) || 0;
@@ -492,6 +512,54 @@ function getLateBills(data) {
   return [...autoLate, ...forced].sort((a, b) => b.daysLate - a.daysLate);
 }
 
+function resolveSourceList(data) {
+  const byId = buildSourceListLookup(data);
+  const oneTimeIds = new Set(data.oneTimeEntries.map((e) => e.id));
+  return (occ) => byId[occ.id] || (oneTimeIds.has(occ.id) ? 'oneTimeEntries' : undefined);
+}
+
+function lateState(data, occ) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const cutoff = new Date(today);
+  cutoff.setDate(cutoff.getDate() - (data.settings.lateGraceDays || 0));
+  const paid = isPaid(data, occ.id, occ.occDate);
+  const forced = isForcedLate(data, occ.id, occ.occDate);
+  const dismissed = isDismissedLate(data, occ.id, occ.occDate);
+  const late = !paid && occ.kind !== 'income'
+    && (forced || (parseYmd(occ.occDate) < cutoff && !dismissed));
+  return { paid, forced, dismissed, late, daysLate: daysBetween(parseYmd(occ.occDate), today) };
+}
+
+function getAttentionItems(data) {
+  const listFor = resolveSourceList(data);
+  const byKey = new Map();
+
+  getLateBills(data).forEach((o) => {
+    byKey.set(`${o.id}|${o.occDate}`, { ...o, sourceList: listFor(o), late: true, needsPrice: false });
+  });
+
+  getNeedsAttention(data).forEach((o) => {
+    const key = `${o.id}|${o.occDate}`;
+    const prev = byKey.get(key);
+    byKey.set(key, {
+      ...(prev || {}),
+      ...o,
+      sourceList: listFor(o),
+      needsPrice: true,
+      late: !!(o.late || (prev && prev.late)),
+      forcedLate: !!(o.forcedLate || (prev && prev.forcedLate)),
+      daysLate: Math.max(o.daysLate || 0, (prev && prev.daysLate) || 0)
+    });
+  });
+
+  return [...byKey.values()].sort((a, b) => {
+    if (a.late !== b.late) return a.late ? -1 : 1;
+    if (a.late) return b.daysLate - a.daysLate;
+    return a.occDate.localeCompare(b.occDate);
+  });
+}
+
 function buildEntryLookup(data) {
   const map = {};
   data.majorBills.forEach((e) => { map[e.id] = e; });
@@ -568,28 +636,31 @@ function getNeedsAttention(data) {
     });
 }
 
-function recordedPaychecks(data, entry) {
+const _averageCache = new WeakMap();
+
+function averagePaycheck(data, entry) {
+  const key = `${entry.id}|${entry.date}|${entry.freq}|${entry.repeatUntil || ''}`;
+  let cached = _averageCache.get(data);
+  if (!cached) { cached = {}; _averageCache.set(data, cached); }
+  if (cached[key]) return cached[key];
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const removed = data.removedOccurrences || {};
-  return expandEntry(entry, getEarliestTrackedDate(data), today)
+  const amounts = expandEntry(entry, getEarliestTrackedDate(data), today)
     .filter((occ) => !removed[`${entry.id}|${occ.occDate}`])
     .map((occ) => getOverride(data, entry.id, occ.occDate))
     .filter(hasAmountOverride)
     .map((o) => Number(o.amount) || 0);
+
+  cached[key] = amounts.length < 2
+    ? { amount: 0, count: amounts.length, ready: false }
+    : { amount: amounts.reduce((sum, n) => sum + n, 0) / amounts.length, count: amounts.length, ready: true };
+  return cached[key];
 }
 
-function averagePaycheck(data, entry) {
-  const amounts = recordedPaychecks(data, entry);
-  if (amounts.length < 2) return { amount: 0, count: amounts.length, ready: false };
-  return { amount: amounts.reduce((sum, n) => sum + n, 0) / amounts.length, count: amounts.length, ready: true };
-}
-
-function estimatedIncome(data, occ) {
-  if (!occ || !data.settings.avgPaycheckEnabled) return null;
-  if (hasAmountOverride(getOverride(data, occ.id, occ.occDate))) return null;
-  const entry = (data.incomeSources || []).find((e) => e.id === occ.id);
-  if (!entry) return null;
+function incomeEstimate(data, entry) {
+  if (!entry.useAvgEstimate || !entry.useAmountRange) return null;
   const avg = averagePaycheck(data, entry);
   return avg.ready ? avg : null;
 }
@@ -625,7 +696,6 @@ function App() {
   }, [data && data.settings && data.settings.hapticsEnabled]);
 
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
-  const [desktopInfo, setDesktopInfo] = useState(false);
   const [syncModal, setSyncModal] = useState(false);
   const [syncBanner, setSyncBanner] = useState(null);
   const isMobile = useIsMobile();
@@ -723,8 +793,7 @@ function App() {
     return stamped;
   }, []);
 
-  const lateBills = useMemo(() => (data && data.onboardingComplete ? getLateBills(data) : []), [data]);
-  const needsAttention = useMemo(() => (data && data.onboardingComplete ? getNeedsAttention(data) : []), [data]);
+  const attention = useMemo(() => (data && data.onboardingComplete ? getAttentionItems(data) : []), [data]);
 
   if (loading) {
     return h('div', { className: 'main-content' }, h('p', null, 'Loading...'));
@@ -759,9 +828,8 @@ function App() {
   const NAV_ITEMS = [
     { id: 'home', label: 'Home', icon: 'home' },
     { id: 'overview', label: 'Overview', icon: 'calendar' },
-    { id: 'late', label: 'Late payments', icon: 'alert' },
     {
-      id: 'allbills', label: 'All bills', icon: 'allbills',
+      id: 'allbills', label: 'Bills', icon: 'allbills',
       children: [
         { id: 'essentials', label: 'Essentials', icon: 'list' },
         { id: 'creditcards', label: 'Credit cards', icon: 'card' },
@@ -771,8 +839,6 @@ function App() {
     { id: 'settings', label: 'Settings', icon: 'settings' }
   ];
 
-  const lateTotal = lateBills.reduce((sum, o) => sum + o.amount, 0);
-  const needsAttentionCount = needsAttention.length;
 
   let pageContent;
   if (page === 'home') {
@@ -783,8 +849,6 @@ function App() {
       onAddEntry: (date) => setQuickAdd({ date }),
       view: overviewView, setView: setOverviewView
     });
-  } else if (page === 'late') {
-    pageContent = h(LatePage, { data, setData: persist, lateBills });
   } else if (page === 'essentials') {
     pageContent = h(BillsPage, { data, setData: persist });
   } else if (page === 'subscriptions') {
@@ -792,7 +856,7 @@ function App() {
   } else if (page === 'creditcards') {
     pageContent = h(CreditCardsPage, { data, setData: persist });
   } else if (page === 'allbills') {
-    pageContent = h(AllBillsPage, { data, setData: persist, needsAttention, isMobile, setPage });
+    pageContent = h(AllBillsPage, { data, setData: persist, attention, isMobile, setPage });
   } else if (page === 'settings') {
     pageContent = h(SettingsPage, { data, setData: persist, onRestart: () => persist({ ...getBlankData(), onboardingComplete: false }) });
   }
@@ -810,8 +874,8 @@ function App() {
 
   if (isMobile) {
     const pageTitle = ({
-      home: 'Home', overview: 'Overview', late: 'Late payments',
-      allbills: 'Expenses', essentials: 'Essentials', creditcards: 'Credit cards',
+      home: 'Home', overview: 'Overview',
+      allbills: 'Bills', essentials: 'Essentials', creditcards: 'Credit cards',
       subscriptions: 'Subscriptions', settings: 'Settings'
     })[page] || 'Finance Calendar';
 
@@ -834,8 +898,7 @@ function App() {
         page,
         setPage,
         onAdd: () => setQuickAdd({ date: todayYmd() }),
-        lateCount: lateBills.length,
-        needsAttentionCount
+        attentionCount: attention.length
       }),
       quickAdd ? h(QuickAddModal, {
         data,
@@ -864,10 +927,7 @@ function App() {
             onClick: () => setPage(item.id)
           },
             h(Icon, { name: item.icon }),
-            item.label,
-            item.id === 'late' && lateTotal > 0
-              ? h('span', { className: 'nav-badge' }, fmtCurrency(lateTotal, data.settings.currency))
-              : null
+            item.label
           );
         }
 
@@ -879,8 +939,8 @@ function App() {
           },
             h(Icon, { name: item.icon }),
             item.label,
-            needsAttentionCount > 0
-              ? h('span', { className: 'nav-badge round attention' }, needsAttentionCount)
+            attention.length > 0
+              ? h('span', { className: 'nav-badge round attention' }, attention.length)
               : null,
             h('span', { className: `sidebar-caret${billsExpanded ? ' open' : ''}` }, '\u203a')
           ),
@@ -903,18 +963,11 @@ function App() {
           onClick: () => setSyncModal(true),
           'aria-label': 'Sync data',
           title: 'Sync your data'
-        }, h(Icon, { name: 'refresh' })),
-        h('button', {
-          className: 'sidebar-foot-btn',
-          onClick: () => setDesktopInfo(true),
-          'aria-label': 'About the desktop app',
-          title: 'Get the desktop app'
-        }, h(Icon, { name: 'download' }))
+        }, h(Icon, { name: 'refresh' }))
       )
     ),
     h('div', { className: 'main-content' }, syncBannerEl, pageContent),
     syncModal ? h(SyncModal, { data, setData: persist, onClose: () => setSyncModal(false) }) : null,
-    desktopInfo ? h(DesktopInfoModal, { onClose: () => setDesktopInfo(false) }) : null,
     quickAdd ? h(QuickAddModal, {
       data,
       setData: persist,
@@ -928,56 +981,15 @@ function App() {
   );
 }
 
-function DesktopInfoModal({ onClose }) {
-  const benefits = [
-    ['Saves to a real file', 'Your data lives in a file on your computer, not just this browser\u2019s storage - nothing to accidentally clear.'],
-    ['Trade mode', 'A full Trading tab with live prices, holdings, watchlist, and charts. Web-only for now, desktop-exclusive. (WIP)'],
-    ['Works offline', 'No internet needed once installed - it\u2019s a real app, not a website.'],
-    ['No backup nagging', 'Because it autosaves to disk, there\u2019s no weekly \u201cdownload a backup\u201d reminder.']
-  ];
-  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
-    h('div', { className: 'modal-content as-window' },
-      h('div', { className: 'row-between' },
-        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Desktop app'),
-        h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')
-      ),
-      h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } },
-        'The Windows desktop version does everything the web version does, plus:'),
-      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-        benefits.map(([title, body], i) =>
-          h('div', { key: i, className: 'desktop-benefit' },
-            h('p', { style: { margin: 0, fontSize: '14px', fontWeight: 500 } }, title),
-            h('p', { style: { margin: '2px 0 0', fontSize: '12px', color: 'var(--text-secondary)' } }, body)
-          )
-        )
-      ),
-      h('div', { className: 'row-between', style: { marginTop: '4px' } },
-        h('button', { onClick: onClose }, 'Maybe later'),
-        h('a', {
-          className: 'primary',
-          href: 'downloads/FinanceCalendar.exe',
-          download: 'FinanceCalendar.exe',
-          style: { textDecoration: 'none' }
-        }, 'Download for Windows')
-      )
-    )
-  );
-}
-
 function BackupReminderModal({ onDownloadBackup, onDismiss }) {
-  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onDismiss(); } },
+  const overlay = useOverlayDismiss(onDismiss);
+  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
     h('div', { className: 'modal-content as-window' },
       h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Weekly backup reminder'),
       h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
-        'This web version keeps your data in this browser only. It\u2019s a good habit to download a backup ',
+        'Your data lives in this browser only. It\u2019s a good habit to download a backup ',
         'every so often, in case this browser\u2019s data ever gets cleared.'),
       h('button', { className: 'primary', onClick: onDownloadBackup }, 'Download backup (.json)'),
-      h('a', {
-        className: 'backup-modal-exe-link',
-        href: 'downloads/FinanceCalendar.exe',
-        download: 'FinanceCalendar.exe',
-        onClick: onDismiss
-      }, 'Or get the desktop app, which saves to a file on your computer automatically'),
       h('div', { className: 'row-between', style: { marginTop: '4px' } },
         h('button', { onClick: onDismiss }, 'Remind me later'),
         h('span', null)
@@ -1027,7 +1039,6 @@ function getBlankData() {
       },
       backupReminderEnabled: true,
       hapticsEnabled: true,
-      avgPaycheckEnabled: false,
       lastBackupReminderShown: null
     }
   };
@@ -1043,7 +1054,6 @@ function Icon({ name }) {
     alert: 'M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z',
     card: 'M2 7h20v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7zM2 10h20M6 15h4',
     allbills: 'M9 2h6l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2zM14 2v6h6M9 13h6M9 17h6',
-    download: 'M12 3v12M7 10l5 5 5-5M5 21h14',
     refresh: 'M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6'
   };
   return h('svg', {

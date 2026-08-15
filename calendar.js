@@ -115,16 +115,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     setSelectedDay(null);
   }
 
-  function occAmount(o) {
-    if (o.hasOverride) return Number(o.amount) || 0;
-    if (o.isRange) {
-      const min = Number(o.amountMin) || 0;
-      const max = Number(o.amountMax) || 0;
-      return (min + max) / 2;
-    }
-    return Number(o.amount) || 0;
-  }
-
   const daySummary = useMemo(() => {
     const map = {};
     Object.keys(occByDate).forEach((dateStr) => {
@@ -132,7 +122,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
       let outflow = 0;
       const colors = [];
       items.forEach((o) => {
-        const amt = occAmount(o) || 0;
+        const amt = Number(o.amount) || 0;
         if (o.kind === 'income') {
           outflow -= amt;
           colors.push({ c: getEntryColor(o, data) || '#4FAE6B', income: true });
@@ -358,9 +348,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
                   ? h('span', { className: 'calm-ag-today-empty' }, 'Nothing today')
                   : items.map((o, i) => {
                   const income = o.kind === 'income';
-                  const paid = !income && isPaid(data, o.id, o.occDate);
-                  const late = !paid && !income &&
-                    (isForcedLate(data, o.id, o.occDate) || (parseYmd(o.occDate) < today && !isDismissedLate(data, o.id, o.occDate)));
+                  const { paid, late } = lateState(data, o);
                   const color = income ? (getEntryColor(o, data) || '#4FAE6B') : (getEntryColor(o, data) || '#D85A5A');
                   return h('button', {
                     key: `${o.id}-${o.occDate}-${i}`,
@@ -437,8 +425,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
 
               const occs = (occByDate[dateStr] || []).filter((o) => !rangeEntryIds.has(o.id));
               const isToday = dateStr === todayStr;
-              const isPast = cd < today;
-              const isSelected = selectedDay === dateStr;
 
               return h('div', {
                 key: dateStr,
@@ -455,12 +441,12 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
                       const bg = getEntryColor(o, data) || '#4FAE6B';
                       style = { background: bg, color: readableTextOn(bg) };
                     } else {
-                      const paid = isPaid(data, o.id, o.occDate);
+                      const { paid, late } = lateState(data, o);
                       if (paid) {
                         extraClass = ' paid';
                         style = { background: 'var(--bg-secondary)', color: 'var(--text-secondary)' };
                       } else {
-                        lateFlag = isForcedLate(data, o.id, o.occDate) || (isPast && !isDismissedLate(data, o.id, o.occDate));
+                        lateFlag = late;
                         const bg = getEntryColor(o, data) || '#D85A5A';
                         style = { background: bg, color: readableTextOn(bg) };
                       }
@@ -520,6 +506,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
 
 function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAddEntry }) {
   const sheet = useSheetDismiss(onClose);
+  const overlay = useOverlayDismiss(onClose);
   const [priceModal, setPriceModal] = useState(null);
   const [editing, setEditing] = useState(null);
   const [confirmRemove, setConfirmRemove] = useState(null);
@@ -566,7 +553,7 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
 
   const dateLabel = formatDate(parseYmd(dateStr), data.settings, { weekday: true, year: true });
 
-  return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+  return h('div', Object.assign({ className: 'modal-overlay' }, overlay),
     h('div', { className: 'modal-content day-modal' },
       h('div', { className: 'sheet-grabber', ...sheet, 'aria-label': 'Close' }),
       h('div', { className: 'row-between' },
@@ -621,7 +608,7 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
       }) : null,
 
       editing ? h(EntryFormModal, Object.assign(
-        { entry: editing.form, onSubmit: handleEditSubmit, onClose: () => setEditing(null), submitLabel: 'Save' },
+        { data, entry: editing.form, onSubmit: handleEditSubmit, onClose: () => setEditing(null), submitLabel: 'Save' },
         getEditModalConfig(editing.sourceList, editing.form)
       )) : null
     )

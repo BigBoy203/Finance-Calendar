@@ -44,7 +44,6 @@
         },
         backupReminderEnabled: true,
         hapticsEnabled: true,
-        avgPaycheckEnabled: false,
         lastBackupReminderShown: null
       }
     };

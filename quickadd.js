@@ -7,6 +7,7 @@ const ENTRY_TYPES = [
 ];
 
 function QuickAddModal({ data, setData, initialDate, onClose }) {
+  const overlay = useOverlayDismiss(onClose);
   const [type, setType] = useState('oneTimePayment');
   const [form, setForm] = useState(() => blankEntry({
     date: initialDate || todayYmd(),
@@ -63,7 +64,7 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
   const recurring = showFreq && form.freq !== 'none';
   const dateLabel = type === 'oneTimeIncome' ? 'Date received' : (type === 'oneTimePayment' ? 'Date paid' : 'Due date');
 
-  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
     h('div', { className: 'modal-content as-window' },
       h('div', { className: 'modal-window-head' },
         h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Add expense'),

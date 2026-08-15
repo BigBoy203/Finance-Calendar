@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '3.3';
+const WEB_VERSION = '3.4';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -18,6 +18,18 @@ function haptic(kind) {
     const patterns = { light: 8, medium: 15, success: [10, 40, 10], warn: [20, 60, 20], heavy: 25 };
     navigator.vibrate(patterns[kind] || patterns.light);
   } catch (e) {}
+}
+
+function useOverlayDismiss(onClose) {
+  const startedOnOverlay = useRef(false);
+  return {
+    onPointerDown: (e) => { startedOnOverlay.current = e.target === e.currentTarget; },
+    onClick: (e) => {
+      const dismiss = startedOnOverlay.current && e.target === e.currentTarget;
+      startedOnOverlay.current = false;
+      if (dismiss) onClose();
+    }
+  };
 }
 
 function uid() {
@@ -200,17 +212,22 @@ function expandEntry(entry, rangeStart, rangeEnd) {
 function expandAll(entries, kind, rangeStart, rangeEnd, data) {
   const all = [];
   const removed = (data && data.removedOccurrences) || {};
+  const todayStr = todayYmd();
   entries.forEach((entry) => {
+    const estimate = (data && kind === 'income') ? incomeEstimate(data, entry) : null;
     expandEntry(entry, rangeStart, rangeEnd).forEach((occ) => {
       if (removed[`${entry.id}|${occ.occDate}`]) return;
       const override = data ? getOverride(data, entry.id, occ.occDate) : null;
       const hasOverride = hasAmountOverride(override);
+      const isEstimate = !!estimate && !hasOverride && occ.occDate > todayStr;
       all.push({
         ...occ,
         kind,
-        amount: hasOverride ? Number(override.amount) || 0 : entryAmount(entry),
+        amount: hasOverride ? Number(override.amount) || 0 : (isEstimate ? estimate.amount : entryAmount(entry)),
         isRange: !!entry.useAmountRange,
-        hasOverride
+        hasOverride,
+        isEstimate,
+        estimateCount: isEstimate ? estimate.count : 0
       });
     });
   });
@@ -256,6 +273,9 @@ function oneTimeOccurrence(data, entry) {
 function occAmountLabel(occ, currency) {
   if (occ.hasOverride) {
     return fmtCurrency(occ.amount, currency);
+  }
+  if (occ.isEstimate) {
+    return `\u2248${fmtCurrency(occ.amount, currency)}`;
   }
   if (occ.isRange) {
     const min = Number(occ.amountMin) || 0;
@@ -492,6 +512,54 @@ function getLateBills(data) {
   return [...autoLate, ...forced].sort((a, b) => b.daysLate - a.daysLate);
 }
 
+function resolveSourceList(data) {
+  const byId = buildSourceListLookup(data);
+  const oneTimeIds = new Set(data.oneTimeEntries.map((e) => e.id));
+  return (occ) => byId[occ.id] || (oneTimeIds.has(occ.id) ? 'oneTimeEntries' : undefined);
+}
+
+function lateState(data, occ) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const cutoff = new Date(today);
+  cutoff.setDate(cutoff.getDate() - (data.settings.lateGraceDays || 0));
+  const paid = isPaid(data, occ.id, occ.occDate);
+  const forced = isForcedLate(data, occ.id, occ.occDate);
+  const dismissed = isDismissedLate(data, occ.id, occ.occDate);
+  const late = !paid && occ.kind !== 'income'
+    && (forced || (parseYmd(occ.occDate) < cutoff && !dismissed));
+  return { paid, forced, dismissed, late, daysLate: daysBetween(parseYmd(occ.occDate), today) };
+}
+
+function getAttentionItems(data) {
+  const listFor = resolveSourceList(data);
+  const byKey = new Map();
+
+  getLateBills(data).forEach((o) => {
+    byKey.set(`${o.id}|${o.occDate}`, { ...o, sourceList: listFor(o), late: true, needsPrice: false });
+  });
+
+  getNeedsAttention(data).forEach((o) => {
+    const key = `${o.id}|${o.occDate}`;
+    const prev = byKey.get(key);
+    byKey.set(key, {
+      ...(prev || {}),
+      ...o,
+      sourceList: listFor(o),
+      needsPrice: true,
+      late: !!(o.late || (prev && prev.late)),
+      forcedLate: !!(o.forcedLate || (prev && prev.forcedLate)),
+      daysLate: Math.max(o.daysLate || 0, (prev && prev.daysLate) || 0)
+    });
+  });
+
+  return [...byKey.values()].sort((a, b) => {
+    if (a.late !== b.late) return a.late ? -1 : 1;
+    if (a.late) return b.daysLate - a.daysLate;
+    return a.occDate.localeCompare(b.occDate);
+  });
+}
+
 function buildEntryLookup(data) {
   const map = {};
   data.majorBills.forEach((e) => { map[e.id] = e; });
@@ -568,28 +636,31 @@ function getNeedsAttention(data) {
     });
 }
 
-function recordedPaychecks(data, entry) {
+const _averageCache = new WeakMap();
+
+function averagePaycheck(data, entry) {
+  const key = `${entry.id}|${entry.date}|${entry.freq}|${entry.repeatUntil || ''}`;
+  let cached = _averageCache.get(data);
+  if (!cached) { cached = {}; _averageCache.set(data, cached); }
+  if (cached[key]) return cached[key];
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const removed = data.removedOccurrences || {};
-  return expandEntry(entry, getEarliestTrackedDate(data), today)
+  const amounts = expandEntry(entry, getEarliestTrackedDate(data), today)
     .filter((occ) => !removed[`${entry.id}|${occ.occDate}`])
     .map((occ) => getOverride(data, entry.id, occ.occDate))
     .filter(hasAmountOverride)
     .map((o) => Number(o.amount) || 0);
+
+  cached[key] = amounts.length < 2
+    ? { amount: 0, count: amounts.length, ready: false }
+    : { amount: amounts.reduce((sum, n) => sum + n, 0) / amounts.length, count: amounts.length, ready: true };
+  return cached[key];
 }
 
-function averagePaycheck(data, entry) {
-  const amounts = recordedPaychecks(data, entry);
-  if (amounts.length < 2) return { amount: 0, count: amounts.length, ready: false };
-  return { amount: amounts.reduce((sum, n) => sum + n, 0) / amounts.length, count: amounts.length, ready: true };
-}
-
-function estimatedIncome(data, occ) {
-  if (!occ || !data.settings.avgPaycheckEnabled) return null;
-  if (hasAmountOverride(getOverride(data, occ.id, occ.occDate))) return null;
-  const entry = (data.incomeSources || []).find((e) => e.id === occ.id);
-  if (!entry) return null;
+function incomeEstimate(data, entry) {
+  if (!entry.useAvgEstimate || !entry.useAmountRange) return null;
   const avg = averagePaycheck(data, entry);
   return avg.ready ? avg : null;
 }
@@ -625,7 +696,6 @@ function App() {
   }, [data && data.settings && data.settings.hapticsEnabled]);
 
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
-  const [desktopInfo, setDesktopInfo] = useState(false);
   const [syncModal, setSyncModal] = useState(false);
   const [syncBanner, setSyncBanner] = useState(null);
   const isMobile = useIsMobile();
@@ -723,8 +793,7 @@ function App() {
     return stamped;
   }, []);
 
-  const lateBills = useMemo(() => (data && data.onboardingComplete ? getLateBills(data) : []), [data]);
-  const needsAttention = useMemo(() => (data && data.onboardingComplete ? getNeedsAttention(data) : []), [data]);
+  const attention = useMemo(() => (data && data.onboardingComplete ? getAttentionItems(data) : []), [data]);
 
   if (loading) {
     return h('div', { className: 'main-content' }, h('p', null, 'Loading...'));
@@ -759,9 +828,8 @@ function App() {
   const NAV_ITEMS = [
     { id: 'home', label: 'Home', icon: 'home' },
     { id: 'overview', label: 'Overview', icon: 'calendar' },
-    { id: 'late', label: 'Late payments', icon: 'alert' },
     {
-      id: 'allbills', label: 'All bills', icon: 'allbills',
+      id: 'allbills', label: 'Bills', icon: 'allbills',
       children: [
         { id: 'essentials', label: 'Essentials', icon: 'list' },
         { id: 'creditcards', label: 'Credit cards', icon: 'card' },
@@ -771,8 +839,6 @@ function App() {
     { id: 'settings', label: 'Settings', icon: 'settings' }
   ];
 
-  const lateTotal = lateBills.reduce((sum, o) => sum + o.amount, 0);
-  const needsAttentionCount = needsAttention.length;
 
   let pageContent;
   if (page === 'home') {
@@ -783,8 +849,6 @@ function App() {
       onAddEntry: (date) => setQuickAdd({ date }),
       view: overviewView, setView: setOverviewView
     });
-  } else if (page === 'late') {
-    pageContent = h(LatePage, { data, setData: persist, lateBills });
   } else if (page === 'essentials') {
     pageContent = h(BillsPage, { data, setData: persist });
   } else if (page === 'subscriptions') {
@@ -792,7 +856,7 @@ function App() {
   } else if (page === 'creditcards') {
     pageContent = h(CreditCardsPage, { data, setData: persist });
   } else if (page === 'allbills') {
-    pageContent = h(AllBillsPage, { data, setData: persist, needsAttention, isMobile, setPage });
+    pageContent = h(AllBillsPage, { data, setData: persist, attention, isMobile, setPage });
   } else if (page === 'settings') {
     pageContent = h(SettingsPage, { data, setData: persist, onRestart: () => persist({ ...getBlankData(), onboardingComplete: false }) });
   }
@@ -810,8 +874,8 @@ function App() {
 
   if (isMobile) {
     const pageTitle = ({
-      home: 'Home', overview: 'Overview', late: 'Late payments',
-      allbills: 'Expenses', essentials: 'Essentials', creditcards: 'Credit cards',
+      home: 'Home', overview: 'Overview',
+      allbills: 'Bills', essentials: 'Essentials', creditcards: 'Credit cards',
       subscriptions: 'Subscriptions', settings: 'Settings'
     })[page] || 'Finance Calendar';
 
@@ -834,8 +898,7 @@ function App() {
         page,
         setPage,
         onAdd: () => setQuickAdd({ date: todayYmd() }),
-        lateCount: lateBills.length,
-        needsAttentionCount
+        attentionCount: attention.length
       }),
       quickAdd ? h(QuickAddModal, {
         data,
@@ -864,10 +927,7 @@ function App() {
             onClick: () => setPage(item.id)
           },
             h(Icon, { name: item.icon }),
-            item.label,
-            item.id === 'late' && lateTotal > 0
-              ? h('span', { className: 'nav-badge' }, fmtCurrency(lateTotal, data.settings.currency))
-              : null
+            item.label
           );
         }
 
@@ -879,8 +939,8 @@ function App() {
           },
             h(Icon, { name: item.icon }),
             item.label,
-            needsAttentionCount > 0
-              ? h('span', { className: 'nav-badge round attention' }, needsAttentionCount)
+            attention.length > 0
+              ? h('span', { className: 'nav-badge round attention' }, attention.length)
               : null,
             h('span', { className: `sidebar-caret${billsExpanded ? ' open' : ''}` }, '\u203a')
           ),
@@ -903,18 +963,11 @@ function App() {
           onClick: () => setSyncModal(true),
           'aria-label': 'Sync data',
           title: 'Sync your data'
-        }, h(Icon, { name: 'refresh' })),
-        h('button', {
-          className: 'sidebar-foot-btn',
-          onClick: () => setDesktopInfo(true),
-          'aria-label': 'About the desktop app',
-          title: 'Get the desktop app'
-        }, h(Icon, { name: 'download' }))
+        }, h(Icon, { name: 'refresh' }))
       )
     ),
     h('div', { className: 'main-content' }, syncBannerEl, pageContent),
     syncModal ? h(SyncModal, { data, setData: persist, onClose: () => setSyncModal(false) }) : null,
-    desktopInfo ? h(DesktopInfoModal, { onClose: () => setDesktopInfo(false) }) : null,
     quickAdd ? h(QuickAddModal, {
       data,
       setData: persist,
@@ -928,56 +981,15 @@ function App() {
   );
 }
 
-function DesktopInfoModal({ onClose }) {
-  const benefits = [
-    ['Saves to a real file', 'Your data lives in a file on your computer, not just this browser\u2019s storage - nothing to accidentally clear.'],
-    ['Trade mode', 'A full Trading tab with live prices, holdings, watchlist, and charts. Web-only for now, desktop-exclusive. (WIP)'],
-    ['Works offline', 'No internet needed once installed - it\u2019s a real app, not a website.'],
-    ['No backup nagging', 'Because it autosaves to disk, there\u2019s no weekly \u201cdownload a backup\u201d reminder.']
-  ];
-  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
-    h('div', { className: 'modal-content as-window' },
-      h('div', { className: 'row-between' },
-        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Desktop app'),
-        h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')
-      ),
-      h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } },
-        'The Windows desktop version does everything the web version does, plus:'),
-      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-        benefits.map(([title, body], i) =>
-          h('div', { key: i, className: 'desktop-benefit' },
-            h('p', { style: { margin: 0, fontSize: '14px', fontWeight: 500 } }, title),
-            h('p', { style: { margin: '2px 0 0', fontSize: '12px', color: 'var(--text-secondary)' } }, body)
-          )
-        )
-      ),
-      h('div', { className: 'row-between', style: { marginTop: '4px' } },
-        h('button', { onClick: onClose }, 'Maybe later'),
-        h('a', {
-          className: 'primary',
-          href: 'downloads/FinanceCalendar.exe',
-          download: 'FinanceCalendar.exe',
-          style: { textDecoration: 'none' }
-        }, 'Download for Windows')
-      )
-    )
-  );
-}
-
 function BackupReminderModal({ onDownloadBackup, onDismiss }) {
-  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onDismiss(); } },
+  const overlay = useOverlayDismiss(onDismiss);
+  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
     h('div', { className: 'modal-content as-window' },
       h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Weekly backup reminder'),
       h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
-        'This web version keeps your data in this browser only. It\u2019s a good habit to download a backup ',
+        'Your data lives in this browser only. It\u2019s a good habit to download a backup ',
         'every so often, in case this browser\u2019s data ever gets cleared.'),
       h('button', { className: 'primary', onClick: onDownloadBackup }, 'Download backup (.json)'),
-      h('a', {
-        className: 'backup-modal-exe-link',
-        href: 'downloads/FinanceCalendar.exe',
-        download: 'FinanceCalendar.exe',
-        onClick: onDismiss
-      }, 'Or get the desktop app, which saves to a file on your computer automatically'),
       h('div', { className: 'row-between', style: { marginTop: '4px' } },
         h('button', { onClick: onDismiss }, 'Remind me later'),
         h('span', null)
@@ -1027,7 +1039,6 @@ function getBlankData() {
       },
       backupReminderEnabled: true,
       hapticsEnabled: true,
-      avgPaycheckEnabled: false,
       lastBackupReminderShown: null
     }
   };
@@ -1043,7 +1054,6 @@ function Icon({ name }) {
     alert: 'M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z',
     card: 'M2 7h20v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7zM2 10h20M6 15h4',
     allbills: 'M9 2h6l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2zM14 2v6h6M9 13h6M9 17h6',
-    download: 'M12 3v12M7 10l5 5 5-5M5 21h14',
     refresh: 'M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6'
   };
   return h('svg', {
@@ -1083,21 +1093,19 @@ const MOBILE_TABS = [
   { id: 'home', label: 'Home', icon: 'home' },
   { id: 'overview', label: 'Overview', icon: 'calendar' },
   { id: 'add', label: 'Add', icon: 'plus', isAdd: true },
-  { id: 'late', label: 'Late', icon: 'alert' },
-  { id: 'allbills', label: 'Expenses', icon: 'allbills' }
+  { id: 'allbills', label: 'Bills', icon: 'allbills' }
 ];
 
 const TAB_FOR_PAGE = {
   home: 'home',
   overview: 'overview',
-  late: 'late',
   allbills: 'allbills',
   essentials: 'allbills',
   creditcards: 'allbills',
   subscriptions: 'allbills'
 };
 
-function MobileTabBar({ page, setPage, onAdd, lateCount, needsAttentionCount }) {
+function MobileTabBar({ page, setPage, onAdd, attentionCount }) {
   const activeTab = TAB_FOR_PAGE[page] || page;
   return h('nav', { className: 'mobile-tabbar' },
     MOBILE_TABS.map((tab) => {
@@ -1115,9 +1123,7 @@ function MobileTabBar({ page, setPage, onAdd, lateCount, needsAttentionCount }) 
         );
       }
       const active = activeTab === tab.id;
-      let badge = null;
-      if (tab.id === 'late' && lateCount > 0) badge = lateCount;
-      if (tab.id === 'allbills' && needsAttentionCount > 0) badge = needsAttentionCount;
+      const badge = (tab.id === 'allbills' && attentionCount > 0) ? attentionCount : null;
       return h('button', {
         key: tab.id,
         className: `mobile-tab${active ? ' active' : ''}`,
@@ -1200,8 +1206,9 @@ function useSheetDismiss(onClose) {
   return { onTouchStart, onTouchMove, onTouchEnd, onClick: onClose };
 }
 
-function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitLabel, onSubmit, onClose }) {
+function EntryFormModal({ data, title, entry, categories, dateLabel, showFreq, isIncome, submitLabel, onSubmit, onClose }) {
   const [form, setForm] = useState(() => ({ ...entry }));
+  const overlay = useOverlayDismiss(onClose);
 
   function update(field, value) {
     setForm({ ...form, [field]: value });
@@ -1212,6 +1219,7 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
     onSubmit({
       ...form,
       repeatUntil: form.freq === 'none' ? '' : form.repeatUntil,
+      useAvgEstimate: canEstimate && form.useAvgEstimate,
       amount: form.amount === '' ? 0 : parseFloat(form.amount) || 0,
       amountMin: form.amountMin === '' ? 0 : parseFloat(form.amountMin) || 0,
       amountMax: form.amountMax === '' ? 0 : parseFloat(form.amountMax) || 0
@@ -1220,8 +1228,10 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
 
   const useFreq = showFreq !== false;
   const recurring = useFreq && form.freq !== 'none';
+  const canEstimate = !!isIncome && !!form.useAmountRange;
+  const avg = canEstimate ? averagePaycheck(data, form) : null;
 
-  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
     h('div', { className: 'modal-content as-window' },
       h('div', { className: 'modal-window-head' },
         h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, title),
@@ -1291,6 +1301,23 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
               form.repeatUntil ? 'Repeats forever' : 'End repeat')
           : null
       ),
+      canEstimate ? h('div', { className: 'setup-field' },
+        h('label', null, 'Paycheck estimate'),
+        h('div', { className: 'checkbox-row', style: { margin: 0 } },
+          h('input', {
+            type: 'checkbox',
+            id: 'use-avg-estimate',
+            checked: !!form.useAvgEstimate,
+            onChange: (e) => update('useAvgEstimate', e.target.checked)
+          }),
+          h('label', { htmlFor: 'use-avg-estimate', style: { margin: 0 } }, 'Estimate future checks from past ones')
+        ),
+        h('p', { className: 'setup-hint' },
+          avg.ready
+            ? `Average of your last ${avg.count} recorded checks: ${fmtCurrency(avg.amount, data.settings.currency)}. Upcoming dates use it instead of the range.`
+            : `Experimental \u2014 needs two checks with a recorded amount and you have ${avg.count}. Until then upcoming dates keep using the middle of the range.`)
+      ) : null,
+
       h('div', { className: 'setup-field' },
         h('label', null, 'Calendar color'),
         h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
@@ -1329,6 +1356,7 @@ function entryToFormShape(entry) {
     useDateRange: !!entry.useDateRange,
     freq: entry.freq || 'monthly',
     repeatUntil: entry.repeatUntil || '',
+    useAvgEstimate: !!entry.useAvgEstimate,
     category: entry.category || '',
     color: entry.color || '',
     oneTimeKind: entry.oneTimeKind
@@ -1343,7 +1371,7 @@ function getEditModalConfig(sourceList, entry) {
     return { title: 'Edit subscription', categories: MINOR_CATEGORIES, dateLabel: 'Billing date', showFreq: true };
   }
   if (sourceList === 'incomeSources') {
-    return { title: 'Edit income source', categories: null, dateLabel: 'Next pay date', showFreq: true };
+    return { title: 'Edit income source', categories: null, dateLabel: 'Next pay date', showFreq: true, isIncome: true };
   }
 
   const isIncome = entry && entry.oneTimeKind === 'income';
@@ -1377,7 +1405,7 @@ function applyEditedEntry(data, sourceList, cleaned) {
 
 const MAJOR_CATEGORIES = ['Rent/mortgage', 'Power', 'Water', 'Gas', 'Insurance', 'Car payment', 'Phone', 'Internet', 'Credit card', 'Other'];
 const MINOR_CATEGORIES = ['Streaming', 'Gaming', 'Cloud storage', 'Memberships', 'Other'];
-const ONE_TIME_PAYMENT_CATEGORIES = ['Rent/mortgage', 'Power', 'Water', 'Gas', 'Insurance', 'Car payment', 'Phone', 'Internet', 'Credit card', 'Shopping', 'Medical', 'Travel', 'Gift', 'Other'];
+const ONE_TIME_PAYMENT_CATEGORIES = ['Groceries', 'Food & drink', 'Gas', 'Shopping', 'Household', 'Health', 'Transport', 'Entertainment', 'Pets', 'Gifts', 'Travel', 'Other'];
 const ONE_TIME_INCOME_CATEGORIES = ['Paycheck', 'Bonus', 'Gift', 'Refund', 'Side income', 'Other'];
 
 const COMMON_MAJOR_BILLS = [
@@ -1412,6 +1440,7 @@ function blankEntry(defaults) {
     useDateRange: false,
     freq: 'monthly',
     repeatUntil: '',
+    useAvgEstimate: false,
     category: '',
     color: '',
     ...defaults
@@ -1901,6 +1930,7 @@ const ENTRY_TYPES = [
 ];
 
 function QuickAddModal({ data, setData, initialDate, onClose }) {
+  const overlay = useOverlayDismiss(onClose);
   const [type, setType] = useState('oneTimePayment');
   const [form, setForm] = useState(() => blankEntry({
     date: initialDate || todayYmd(),
@@ -1957,7 +1987,7 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
   const recurring = showFreq && form.freq !== 'none';
   const dateLabel = type === 'oneTimeIncome' ? 'Date received' : (type === 'oneTimePayment' ? 'Date paid' : 'Due date');
 
-  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
     h('div', { className: 'modal-content as-window' },
       h('div', { className: 'modal-window-head' },
         h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Add expense'),
@@ -2057,19 +2087,10 @@ function QuickAddModal({ data, setData, initialDate, onClose }) {
 
 const DONUT_COLORS = ['#D85A5A', '#D8A857', '#8B6FD6', '#4FAE6B', '#D8845A', '#5AA8D8', '#C75AA8', '#7A8C5A'];
 
-function billRowState(data, o, today) {
-  const paid = isPaid(data, o.id, o.occDate);
-  const late = !paid && (isForcedLate(data, o.id, o.occDate)
-    || (parseYmd(o.occDate) < today && !isDismissedLate(data, o.id, o.occDate)));
-  return { paid, late };
-}
-
 function BillChecklist({ rows, data, currency, onToggle, onOpen }) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
   return h('div', { className: 'bill-checklist' },
     rows.map((o) => {
-      const { paid, late } = billRowState(data, o, today);
+      const { paid, late } = lateState(data, o);
       const accentColor = getEntryColor(o, data) || '#D85A5A';
       return h('div', {
         key: `${o.id}-${o.occDate}`,
@@ -2099,11 +2120,9 @@ function BillChecklist({ rows, data, currency, onToggle, onOpen }) {
 }
 
 function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
   return h('div', { className: 'bill-tile-grid' },
     rows.map((o) => {
-      const { paid, late } = billRowState(data, o, today);
+      const { paid, late } = lateState(data, o);
       const accentColor = getEntryColor(o, data) || '#D85A5A';
       return h('div', {
         key: `${o.id}-${o.occDate}`,
@@ -2524,6 +2543,7 @@ function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setF
 }
 
 function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
+  const overlay = useOverlayDismiss(onClose);
   const existing = getOverride(data, occ.id, occ.occDate);
   const [price, setPrice] = useState(existing && existing.amount !== undefined ? String(existing.amount) : '');
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -2555,12 +2575,28 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
     onClose();
   }
 
-  const forcedLate = isForcedLate(data, occ.id, occ.occDate);
+  const { paid, forced, late } = lateState(data, occ);
+
+  function togglePaid() {
+    haptic(paid ? 'light' : 'success');
+    let next = togglePaidStatus(data, occ.id, occ.occDate);
+    next = logActivity(next, `${paid ? 'Unmarked' : 'Marked'} "${occ.name}" as paid`);
+    setData(next);
+  }
+
   function toggleLate() {
     haptic('warn');
     let next = toggleForcedLate(data, occ.id, occ.occDate);
-    next = logActivity(next, `${forcedLate ? 'Unmarked' : 'Marked'} "${occ.name}" as late`);
+    next = logActivity(next, `${forced ? 'Unmarked' : 'Marked'} "${occ.name}" as late`);
     setData(next);
+  }
+
+  function dismissLate() {
+    haptic('light');
+    const key = `${occ.id}|${occ.occDate}`;
+    setData(logActivity(
+      { ...data, dismissedLate: { ...data.dismissedLate, [key]: true } },
+      `Dismissed late status for "${occ.name}"`));
   }
 
   function removeThisOccurrence() {
@@ -2583,7 +2619,7 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
     ? `${fmtCurrency(occ.amountMin, currency)}-${fmtCurrency(occ.amountMax, currency)}`
     : fmtCurrency(entryAmount(occ), currency);
 
-  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
     h('div', { className: 'modal-content as-window price-modal' },
       h('div', { className: 'modal-window-head' },
         h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, occ.name),
@@ -2614,13 +2650,38 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
 
       h('div', { className: 'price-actions' },
         occ.kind !== 'income'
-          ? h('button', { className: `price-action-row${forcedLate ? ' active' : ''}`, onClick: toggleLate },
+          ? h('button', { className: `price-action-row${paid ? ' active' : ''}`, onClick: togglePaid },
               h('div', null,
-                h('span', { className: 'price-action-title' }, forcedLate ? 'Marked late' : 'Mark late'),
-                h('span', { className: 'price-action-sub' }, forcedLate ? 'Tap to clear' : 'Flag this date as late')
+                h('span', { className: 'price-action-title' }, paid ? 'Paid' : 'Mark as paid'),
+                h('span', { className: 'price-action-sub' }, paid ? 'Tap to undo' : 'Check it off for this date')
               ),
-              h('span', { className: 'price-action-chevron' }, forcedLate ? '\u2713' : '\u203a')
+              h('span', { className: 'price-action-chevron' }, paid ? '\u2713' : '\u203a')
             )
+          : null,
+        occ.kind !== 'income'
+          ? (forced
+              ? h('button', { className: 'price-action-row active', onClick: toggleLate },
+                  h('div', null,
+                    h('span', { className: 'price-action-title' }, 'Marked late'),
+                    h('span', { className: 'price-action-sub' }, 'Tap to clear')
+                  ),
+                  h('span', { className: 'price-action-chevron' }, '\u2713')
+                )
+              : late
+                ? h('button', { className: 'price-action-row', onClick: dismissLate },
+                    h('div', null,
+                      h('span', { className: 'price-action-title' }, 'Dismiss late warning'),
+                      h('span', { className: 'price-action-sub' }, 'Stop flagging this date as late')
+                    ),
+                    h('span', { className: 'price-action-chevron' }, '\u203a')
+                  )
+                : h('button', { className: 'price-action-row', onClick: toggleLate },
+                    h('div', null,
+                      h('span', { className: 'price-action-title' }, 'Mark late'),
+                      h('span', { className: 'price-action-sub' }, 'Flag this date as late')
+                    ),
+                    h('span', { className: 'price-action-chevron' }, '\u203a')
+                  ))
           : null,
         h('button', { className: 'price-action-row danger', onClick: () => confirmRemove ? removeThisOccurrence() : setConfirmRemove(true) },
           h('div', null,
@@ -2637,84 +2698,6 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
         h('button', { className: 'primary', onClick: save }, 'Save')
       )
     )
-  );
-}
-
-function LatePage({ data, setData, lateBills }) {
-  const currency = data.settings.currency;
-  const [priceModal, setPriceModal] = useState(null);
-
-  const total = lateBills.reduce((sum, o) => sum + o.amount, 0);
-
-  function togglePaid(o) {
-    const wasPaid = isPaid(data, o.id, o.occDate);
-    let next = togglePaidStatus(data, o.id, o.occDate);
-    next = logActivity(next, `${wasPaid ? 'Unmarked' : 'Marked'} "${o.name}" as paid`);
-    setData(next);
-  }
-
-  function dismissLate(o) {
-    let next;
-    if (o.forcedLate) {
-      next = toggleForcedLate(data, o.id, o.occDate);
-      next = logActivity(next, `Unmarked "${o.name}" as late`);
-    } else {
-      const key = `${o.id}|${o.occDate}`;
-      next = logActivity({ ...data, dismissedLate: { ...data.dismissedLate, [key]: true } }, `Dismissed late status for "${o.name}"`);
-    }
-    setData(next);
-  }
-
-  function ageClass(days) {
-    return days >= 14 ? 'age-high' : 'age-low';
-  }
-
-  function ageLabel(days) {
-    if (days < 0) return `due in ${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'}`;
-    if (days === 0) return 'due today';
-    if (days === 1) return '1 day late';
-    return `${days} days late`;
-  }
-
-  return h('div', null,
-    h('h2', null, 'Late payments'),
-    h('p', { style: { color: 'var(--text-secondary)', fontSize: '14px', marginTop: '4px' } },
-      'Bills past their due date (plus any grace period) that haven\u2019t been marked paid show up here.'),
-
-    h('div', { className: 'late-banner' },
-      h('div', null,
-        h('p', { className: 'late-banner-label' }, 'Total currently overdue'),
-        h('p', { className: 'late-banner-amount' }, fmtCurrency(total, currency))
-      ),
-      h(Icon, { name: 'alert' })
-    ),
-
-    lateBills.length === 0
-      ? h('p', { className: 'empty-state' }, 'Nothing overdue right now - you\u2019re all caught up.')
-      : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-          lateBills.map((o) => {
-            const d = parseYmd(o.occDate);
-            const dateLabel = formatDate(d, data.settings, { year: true });
-            return h('div', { key: `${o.id}-${o.occDate}`, className: 'list-item late-list-item' },
-              h('div', null,
-                h('p', { className: 'list-item-name' }, o.name),
-                h('p', { className: 'list-item-sub' }, `Was due ${dateLabel} - ${occAmountLabel(o, currency)}${o.category ? ' - ' + o.category : ''}`),
-                o.forcedLate ? h('span', { className: 'badge badge-danger', style: { marginTop: '2px', display: 'inline-block' } }, 'Marked late') : null
-              ),
-              h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-                h('span', { className: `age-pill ${ageClass(o.daysLate)}` }, ageLabel(o.daysLate)),
-                h('button', { onClick: () => setPriceModal(o) }, 'Set price'),
-                h('button', { className: 'primary', onClick: () => togglePaid(o) }, 'Pay now (ASAP)'),
-                h('button', { className: 'danger-text', onClick: () => dismissLate(o) }, o.forcedLate ? 'Unmark late' : 'Dismiss')
-              )
-            );
-          })
-        ),
-
-    priceModal ? h(PriceOverrideModal, {
-      data, setData, occ: priceModal, currency,
-      onClose: () => setPriceModal(null)
-    }) : null
   );
 }
 
@@ -2834,16 +2817,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     setSelectedDay(null);
   }
 
-  function occAmount(o) {
-    if (o.hasOverride) return Number(o.amount) || 0;
-    if (o.isRange) {
-      const min = Number(o.amountMin) || 0;
-      const max = Number(o.amountMax) || 0;
-      return (min + max) / 2;
-    }
-    return Number(o.amount) || 0;
-  }
-
   const daySummary = useMemo(() => {
     const map = {};
     Object.keys(occByDate).forEach((dateStr) => {
@@ -2851,7 +2824,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
       let outflow = 0;
       const colors = [];
       items.forEach((o) => {
-        const amt = occAmount(o) || 0;
+        const amt = Number(o.amount) || 0;
         if (o.kind === 'income') {
           outflow -= amt;
           colors.push({ c: getEntryColor(o, data) || '#4FAE6B', income: true });
@@ -3077,9 +3050,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
                   ? h('span', { className: 'calm-ag-today-empty' }, 'Nothing today')
                   : items.map((o, i) => {
                   const income = o.kind === 'income';
-                  const paid = !income && isPaid(data, o.id, o.occDate);
-                  const late = !paid && !income &&
-                    (isForcedLate(data, o.id, o.occDate) || (parseYmd(o.occDate) < today && !isDismissedLate(data, o.id, o.occDate)));
+                  const { paid, late } = lateState(data, o);
                   const color = income ? (getEntryColor(o, data) || '#4FAE6B') : (getEntryColor(o, data) || '#D85A5A');
                   return h('button', {
                     key: `${o.id}-${o.occDate}-${i}`,
@@ -3156,8 +3127,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
 
               const occs = (occByDate[dateStr] || []).filter((o) => !rangeEntryIds.has(o.id));
               const isToday = dateStr === todayStr;
-              const isPast = cd < today;
-              const isSelected = selectedDay === dateStr;
 
               return h('div', {
                 key: dateStr,
@@ -3174,12 +3143,12 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
                       const bg = getEntryColor(o, data) || '#4FAE6B';
                       style = { background: bg, color: readableTextOn(bg) };
                     } else {
-                      const paid = isPaid(data, o.id, o.occDate);
+                      const { paid, late } = lateState(data, o);
                       if (paid) {
                         extraClass = ' paid';
                         style = { background: 'var(--bg-secondary)', color: 'var(--text-secondary)' };
                       } else {
-                        lateFlag = isForcedLate(data, o.id, o.occDate) || (isPast && !isDismissedLate(data, o.id, o.occDate));
+                        lateFlag = late;
                         const bg = getEntryColor(o, data) || '#D85A5A';
                         style = { background: bg, color: readableTextOn(bg) };
                       }
@@ -3239,6 +3208,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
 
 function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAddEntry }) {
   const sheet = useSheetDismiss(onClose);
+  const overlay = useOverlayDismiss(onClose);
   const [priceModal, setPriceModal] = useState(null);
   const [editing, setEditing] = useState(null);
   const [confirmRemove, setConfirmRemove] = useState(null);
@@ -3285,7 +3255,7 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
 
   const dateLabel = formatDate(parseYmd(dateStr), data.settings, { weekday: true, year: true });
 
-  return h('div', { className: 'modal-overlay', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+  return h('div', Object.assign({ className: 'modal-overlay' }, overlay),
     h('div', { className: 'modal-content day-modal' },
       h('div', { className: 'sheet-grabber', ...sheet, 'aria-label': 'Close' }),
       h('div', { className: 'row-between' },
@@ -3340,7 +3310,7 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
       }) : null,
 
       editing ? h(EntryFormModal, Object.assign(
-        { entry: editing.form, onSubmit: handleEditSubmit, onClose: () => setEditing(null), submitLabel: 'Save' },
+        { data, entry: editing.form, onSubmit: handleEditSubmit, onClose: () => setEditing(null), submitLabel: 'Save' },
         getEditModalConfig(editing.sourceList, editing.form)
       )) : null
     )
@@ -3570,7 +3540,7 @@ function useNextCheck(data, period) {
 
     const idx = Math.max(0, Math.min(period || 0, checks.length - 1));
     const check = checks[idx] || null;
-    const estimate = estimatedIncome(data, check);
+    const estimate = (check && check.isEstimate) ? { amount: check.amount, count: check.estimateCount } : null;
     const windowEnd = new Date(today);
     if (check) {
       const d = parseYmd(check.occDate);
@@ -3589,9 +3559,7 @@ function useNextCheck(data, period) {
       windowStart.setDate(windowStart.getDate() - grace);
     }
 
-    const sourceListById = buildSourceListLookup(data);
-    const oneTimeIds = new Set(data.oneTimeEntries.map((e) => e.id));
-    const listFor = (o) => sourceListById[o.id] || (oneTimeIds.has(o.id) ? 'oneTimeEntries' : undefined);
+    const listFor = resolveSourceList(data);
 
     const upcoming = [
       ...expandAll(getAllBillLikeEntries(data), 'bill', windowStart, windowEnd, data),
@@ -3620,7 +3588,7 @@ function useNextCheck(data, period) {
       hasPrev: idx > 0,
       hasNext: idx + 1 < checks.length,
       due: bills.reduce((sum, o) => sum + o.amount, 0),
-      checkAmount: estimate ? estimate.amount : (check ? check.amount : 0),
+      checkAmount: check ? check.amount : 0,
       estimate,
       overdueCount: bills.filter((o) => parseYmd(o.occDate) < today).length
     };
@@ -3842,6 +3810,7 @@ function BillsPage({ data, setData }) {
         ),
 
     editing ? h(EntryFormModal, {
+      data,
       title: editing._isNew ? 'Add bill' : 'Edit bill',
       entry: editing,
       categories: MAJOR_CATEGORIES,
@@ -3921,6 +3890,7 @@ function SubscriptionsPage({ data, setData }) {
         ),
 
     editing ? h(EntryFormModal, {
+      data,
       title: editing._isNew ? 'Add subscription' : 'Edit subscription',
       entry: editing,
       categories: MINOR_CATEGORIES,
@@ -3951,6 +3921,7 @@ function blankCreditCard() {
 function CreditCardsPage({ data, setData }) {
   const currency = data.settings.currency;
   const [showForm, setShowForm] = useState(false);
+  const formOverlay = useOverlayDismiss(() => setShowForm(false));
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(() => blankCreditCard());
   const [projectionCard, setProjectionCard] = useState(null);
@@ -4073,7 +4044,7 @@ function CreditCardsPage({ data, setData }) {
       onClose: () => setProjectionCard(null)
     }) : null,
 
-    showForm ? h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) setShowForm(false); } },
+    showForm ? h('div', Object.assign({ className: 'modal-overlay as-window' }, formOverlay),
       h('div', { className: 'modal-content as-window' },
         h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, editingId ? 'Edit credit card' : 'Add credit card'),
         h('div', null,
@@ -4143,6 +4114,7 @@ function CreditCardsPage({ data, setData }) {
 }
 
 function ProjectionModal({ card, data, currency, onClose }) {
+  const overlay = useOverlayDismiss(onClose);
   const points = useMemo(() => getCardProjection(card, data, 12), [card, data]);
   const late = isCardPaymentLate(card, data);
 
@@ -4161,7 +4133,7 @@ function ProjectionModal({ card, data, currency, onClose }) {
   const maxBar = Math.max(...barPoints.map((p) => p.interest + p.principalPaid), 1);
   const barW = (W - PAD * 2) / Math.max(1, barPoints.length) - 4;
 
-  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
     h('div', { className: 'modal-content', style: { width: '420px' } },
       h('div', { className: 'row-between' },
         h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, `${card.name} - projection`),
@@ -4216,16 +4188,53 @@ function ProjectionModal({ card, data, currency, onClose }) {
   );
 }
 
-function AllBillsPage({ data, setData, needsAttention, isMobile, setPage }) {
+function attentionSummary(items, currency) {
+  const late = items.filter((o) => o.late);
+  const priced = items.filter((o) => !o.late && o.needsPrice);
+  const lateTotal = late.reduce((sum, o) => sum + o.amount, 0);
+
+  if (late.length && priced.length) {
+    return `${fmtCurrency(lateTotal, currency)} past due across ${late.length} ${late.length === 1 ? 'bill' : 'bills'}, and ${priced.length} more ${priced.length === 1 ? 'needs' : 'need'} a real price.`;
+  }
+  if (late.length) {
+    return `${fmtCurrency(lateTotal, currency)} past due across ${late.length} ${late.length === 1 ? 'bill' : 'bills'} — tap one to pay it off or dismiss it.`;
+  }
+  if (priced.length) {
+    return `${priced.length} ${priced.length === 1 ? 'entry still uses' : 'entries still use'} a price range — add the real amount to keep your totals honest.`;
+  }
+  return 'All clear — everything is paid and every amount is filled in.';
+}
+
+function AttentionRow({ o, data, currency, onOpen }) {
+  const dateLabel = formatDate(parseYmd(o.occDate), data.settings, { year: true });
+  const ageText = o.daysLate === 0 ? 'due today' : `${o.daysLate} ${o.daysLate === 1 ? 'day' : 'days'} late`;
+
+  return h('button', { className: `att-row${o.late ? ' late' : ''}`, onClick: () => onOpen(o) },
+    h('span', { className: 'att-text' },
+      h('span', { className: 'att-name' }, o.name),
+      h('span', { className: 'att-sub' },
+        `${o.late ? 'Was due' : 'Due'} ${dateLabel}${o.category ? ' · ' + o.category : ''}`),
+      o.needsPrice ? h('span', { className: 'att-need' }, 'Needs a real price') : null
+    ),
+    h('span', { className: 'att-side' },
+      o.late ? h('span', { className: 'age-pill age-high' }, ageText) : null,
+      h('span', { className: 'att-amt' },
+        `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`)
+    ),
+    h('span', { className: 'att-chevron' }, '›')
+  );
+}
+
+const ATTENTION_PREVIEW = 5;
+
+function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
   const currency = data.settings.currency;
 
-  const [attentionCollapsed, setAttentionCollapsed] = useState(() => needsAttention.length === 0);
-  const [showInfo, setShowInfo] = useState(false);
+  const [attentionCollapsed, setAttentionCollapsed] = useState(() => attention.length === 0);
+  const [showAllAttention, setShowAllAttention] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [priceModal, setPriceModal] = useState(null);
   const [categoryFilter, setCategoryFilter] = useState('all');
-
-  const lateAttention = needsAttention.filter((o) => o.late);
-  const upcomingAttention = needsAttention.filter((o) => !o.late);
 
   function deleteEntry(o) {
     let next = null;
@@ -4285,35 +4294,36 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage }) {
     return totals;
   }, [grouped]);
 
+  const lateCount = attention.filter((o) => o.late).length;
+  const visibleAttention = showAllAttention ? attention : attention.slice(0, ATTENTION_PREVIEW);
+
   const attentionBlock = h('div', { className: 'attention-section' },
       h('div', { className: 'row-between attention-header', onClick: () => setAttentionCollapsed(!attentionCollapsed) },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
           h(Icon, { name: 'alert' }),
           h('p', { style: { margin: 0, fontWeight: 500 } }, 'Needs attention'),
-          lateAttention.length > 0 ? h('span', { className: 'nav-badge round' }, lateAttention.length) : null
+          attention.length > 0
+            ? h('span', { className: `nav-badge round${lateCount > 0 ? '' : ' attention'}` }, attention.length)
+            : null
         ),
         h('button', { onClick: (e) => { e.stopPropagation(); setAttentionCollapsed(!attentionCollapsed); } },
           attentionCollapsed ? 'Expand' : 'Minimize')
       ),
       !attentionCollapsed ? h('div', { style: { marginTop: '10px' } },
         h('div', { className: 'info-banner' },
-          h('p', { style: { margin: 0, fontSize: '13px' } },
-            `These bills and paychecks use a price range instead of a fixed amount. Bills are flagged here starting ${data.settings.needsAttentionLookaheadDays} day${data.settings.needsAttentionLookaheadDays === 1 ? '' : 's'} before they're due, and income starting ${data.settings.incomeNeedsAttentionLookaheadDays} day${data.settings.incomeNeedsAttentionLookaheadDays === 1 ? '' : 's'} before. Fill in the actual amount once you know it - totals and projections stay more accurate when these are kept up to date. `,
-            h('button', { className: 'toggle-link', onClick: () => setShowInfo(!showInfo) }, showInfo ? 'Hide details' : 'Why does this matter?')
-          ),
-          showInfo ? h('p', { style: { margin: '8px 0 0', fontSize: '13px' } },
-            'Until a real amount is entered, range-based bills and income use their midpoint for totals on Home and the Calendar. ',
-            'If a bill is past due and still showing a range, it also appears in Late payments using that midpoint - entering the real ',
-            'amount here updates both places without changing the usual range for future occurrences. Income is never marked late - ',
-            'it simply keeps showing here until a real amount is entered. Both lookahead windows are adjustable in Settings.'
-          ) : null
+          h('p', { style: { margin: 0, fontSize: '13px' } }, attentionSummary(attention, currency))
         ),
-        needsAttention.length === 0
-          ? h('p', { className: 'empty-state' }, 'Nothing needs a price right now.')
-          : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' } },
-              lateAttention.map((o) => h(AttentionRow, { key: `${o.id}-${o.occDate}`, o, data, setData, currency })),
-              upcomingAttention.map((o) => h(AttentionRow, { key: `${o.id}-${o.occDate}`, o, data, setData, currency }))
+        attention.length > 0
+          ? h('div', { className: 'att-list' },
+              visibleAttention.map((o) => h(AttentionRow, {
+                key: `${o.id}-${o.occDate}`, o, data, currency, onOpen: setPriceModal
+              })),
+              attention.length > ATTENTION_PREVIEW
+                ? h('button', { className: 'att-more', onClick: () => setShowAllAttention(!showAllAttention) },
+                    showAllAttention ? 'Show less' : `Show all ${attention.length}`)
+                : null
             )
+          : null
       ) : null
     );
 
@@ -4339,14 +4349,14 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage }) {
                 className: 'bill-filter-edit',
                 onClick: (e) => { e.stopPropagation(); setPage(SUBPAGE_FOR_GROUP[key]); },
                 'aria-label': `Edit ${SOURCE_GROUP_LABELS[key]}`
-              }, '\u203a')
+              }, '›')
             : null
         )
       )
     );
 
   return h('div', null,
-    isMobile ? null : h('h2', null, 'All bills'),
+    isMobile ? null : h('h2', null, 'Bills'),
 
     attentionBlock,
     filterBlock,
@@ -4380,7 +4390,7 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage }) {
                         className: 'x-btn',
                         onClick: (ev) => { ev.stopPropagation(); deleteEntry(e); },
                         'aria-label': `Delete ${e.name}`
-                      }, '\u00d7') : null
+                      }, '×') : null
                     )
                   );
                 })
@@ -4389,48 +4399,15 @@ function AllBillsPage({ data, setData, needsAttention, isMobile, setPage }) {
           )
         ),
 
+    priceModal ? h(PriceOverrideModal, {
+      data, setData, occ: priceModal, currency,
+      onClose: () => setPriceModal(null)
+    }) : null,
+
     editing ? h(EntryFormModal, Object.assign(
-      { entry: editing.form, onSubmit: handleEditSubmit, onClose: () => setEditing(null), submitLabel: 'Save' },
+      { data, entry: editing.form, onSubmit: handleEditSubmit, onClose: () => setEditing(null), submitLabel: 'Save' },
       getEditModalConfig(editing.sourceList, editing.form)
     )) : null
-  );
-}
-
-function AttentionRow({ o, data, setData, currency }) {
-  const [price, setPrice] = useState('');
-
-  function save() {
-    const val = parseFloat(price);
-    if (isNaN(val)) return;
-    const key = `${o.id}|${o.occDate}`;
-    let next = { ...data, overrides: { ...data.overrides, [key]: { amount: val } } };
-    next = logActivity(next, `Set price for "${o.name}" to ${fmtCurrency(val, currency)}`);
-    setData(next);
-  }
-
-  const d = parseYmd(o.occDate);
-  const dateLabel = formatDate(d, data.settings, { year: true });
-  const forcedLate = isForcedLate(data, o.id, o.occDate);
-  const ageText = o.daysLate < 0 ? `due in ${Math.abs(o.daysLate)}d` : `${o.daysLate} days late`;
-  const isIncome = o.kind === 'income';
-
-  return h('div', { className: 'list-item', style: o.late ? { borderColor: 'var(--late-red)' } : null },
-    h('div', null,
-      h('p', { className: 'list-item-name' }, o.name),
-      h('p', { className: 'list-item-sub' },
-        `${o.late ? 'Was due' : 'Due'} ${dateLabel} - usual range `,
-        h('span', { style: { color: isIncome ? 'var(--text-success)' : 'inherit' } },
-          `${isIncome ? '+' : ''}${fmtCurrency(o.amountMin, currency)}-${isIncome ? '+' : ''}${fmtCurrency(o.amountMax, currency)}`)),
-      forcedLate ? h('span', { className: 'badge badge-danger', style: { marginTop: '2px', display: 'inline-block' } }, 'Marked late') : null
-    ),
-    h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-      o.late ? h('span', { className: 'age-pill age-high' }, ageText) : null,
-      h('input', {
-        type: 'number', placeholder: 'Actual price', value: price,
-        onChange: (e) => setPrice(e.target.value), style: { width: '110px' }
-      }),
-      h('button', { className: 'primary', onClick: save }, 'Save')
-    )
   );
 }
 
@@ -4582,10 +4559,12 @@ function SettingsPage({ data, setData, onRestart }) {
     tabContent,
 
     editingIncome ? h(EntryFormModal, {
+      data,
       title: editingIncome._isNew ? 'Add income source' : 'Edit income source',
       entry: editingIncome,
       categories: null,
       dateLabel: 'Next pay date',
+      isIncome: true,
       submitLabel: editingIncome._isNew ? 'Add' : 'Save',
       onSubmit: handleIncomeSubmit,
       onClose: () => setEditingIncome(null)
@@ -4607,10 +4586,15 @@ function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, 
             data.incomeSources.map((e) => {
               const d = parseYmd(e.date);
               const dateLabel = formatDate(d, data.settings);
+              const avg = (e.useAvgEstimate && e.useAmountRange) ? averagePaycheck(data, e) : null;
               return h('div', { key: e.id, className: 'list-item clickable', onClick: () => onEditIncome(e) },
                 h('div', null,
                   h('p', { className: 'list-item-name' }, e.name),
-                  h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}`)
+                  h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}`),
+                  avg ? h('p', { className: 'list-item-note' },
+                    avg.ready
+                      ? `\u2248${fmtCurrency(avg.amount, currency)} estimated \u00b7 average of your last ${avg.count} checks`
+                      : `Estimating \u2014 ${avg.count} of 2 checks recorded so far`) : null
                 ),
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
                   h('span', { className: 'list-item-amount', style: { color: 'var(--text-success)' } }, `+${entryAmountLabel(e, currency)}`),
@@ -4778,6 +4762,7 @@ function SyncCard({ data, setData, embedded }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [conflict, setConflict] = useState(null);
+  const conflictOverlay = useOverlayDismiss(() => setConflict(null));
   const supportsFile = Sync.supportsFileSystem;
 
   useEffect(() => {
@@ -4895,7 +4880,7 @@ function SyncCard({ data, setData, embedded }) {
 
     msg ? h('p', { style: { margin: '10px 0 0', fontSize: '13px', color: msg.ok ? 'var(--text-success)' : 'var(--late-red)' } }, msg.text) : null,
 
-    conflict ? h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) setConflict(null); } },
+    conflict ? h('div', Object.assign({ className: 'modal-overlay as-window' }, conflictOverlay),
       h('div', { className: 'modal-content as-window' },
         h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, 'That file is older'),
         h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
@@ -4910,7 +4895,8 @@ function SyncCard({ data, setData, embedded }) {
 }
 
 function SyncModal({ data, setData, onClose }) {
-  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+  const overlay = useOverlayDismiss(onClose);
+  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
     h('div', { className: 'modal-content as-window' },
       h('div', { className: 'modal-window-head' },
         h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, 'Sync'),
@@ -4925,45 +4911,9 @@ function SyncModal({ data, setData, onClose }) {
   );
 }
 
-function ExperimentalCard({ data, updateSetting }) {
-  const on = data.settings.avgPaycheckEnabled === true;
-  const currency = data.settings.currency;
-
-  return h('div', { className: 'card', style: { marginTop: '12px' } },
-    h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Experimental'),
-    h('p', { style: { margin: '0 0 10px', fontSize: '13px', color: 'var(--text-secondary)' } },
-      'Still being tried out — turn it off any time.'),
-    h('div', { className: 'checkbox-row' },
-      h('input', {
-        type: 'checkbox',
-        id: 'avg-paycheck',
-        checked: on,
-        onChange: (e) => updateSetting('avgPaycheckEnabled', e.target.checked)
-      }),
-      h('label', { htmlFor: 'avg-paycheck', style: { margin: 0 } }, 'Estimate the next paycheck from past ones')
-    ),
-    h('p', { style: { margin: '6px 0 0', fontSize: '13px', color: 'var(--text-secondary)' } },
-      'Once an income source has two or more paychecks with a real amount recorded, upcoming checks use that ' +
-      'average instead of the usual amount. Record a real amount with "Set price" on a paycheck that has already landed.'),
-    on ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' } },
-      data.incomeSources.length === 0
-        ? h('p', { className: 'empty-state' }, 'No income sources to average yet.')
-        : data.incomeSources.map((e) => {
-            const avg = averagePaycheck(data, e);
-            return h('div', { key: e.id, className: 'row-between', style: { fontSize: '13px' } },
-              h('span', null, e.name),
-              avg.ready
-                ? h('span', null, `${fmtCurrency(avg.amount, currency)} avg of ${avg.count}`)
-                : h('span', { style: { color: 'var(--text-tertiary)' } },
-                    `${avg.count} of 2 recorded — using ${entryAmountLabel(e, currency)}`)
-            );
-          })
-    ) : null
-  );
-}
-
 function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setConfirming }) {
   const [importWarning, setImportWarning] = useState(false);
+  const importOverlay = useOverlayDismiss(() => setImportWarning(false));
   const [importError, setImportError] = useState(null);
   const [importSuccess, setImportSuccess] = useState(false);
   const [exportError, setExportError] = useState(null);
@@ -5024,8 +4974,6 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
       )
     ),
 
-    h(ExperimentalCard, { data, updateSetting }),
-
     h('div', { className: 'card', style: { marginTop: '12px' } },
       h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Custom CSS'),
       h('p', { style: { margin: '0 0 8px', fontSize: '13px', color: 'var(--text-secondary)' } },
@@ -5079,7 +5027,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
       )
     ),
 
-    importWarning ? h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) setImportWarning(false); } },
+    importWarning ? h('div', Object.assign({ className: 'modal-overlay as-window' }, importOverlay),
       h('div', { className: 'modal-content as-window' },
         h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px', color: 'var(--late-red)' } }, '\u26a0\ufe0f This will delete all your current data'),
         h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
@@ -5110,7 +5058,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
       h('div', null,
         h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Finance Calendar'),
         h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
-          'Stores all data locally on this computer in a JSON file - nothing is sent anywhere.')
+          'Stores all data locally on this device - nothing is sent anywhere.')
       )
     )
   );

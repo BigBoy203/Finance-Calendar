@@ -18,6 +18,7 @@ function blankCreditCard() {
 function CreditCardsPage({ data, setData }) {
   const currency = data.settings.currency;
   const [showForm, setShowForm] = useState(false);
+  const formOverlay = useOverlayDismiss(() => setShowForm(false));
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(() => blankCreditCard());
   const [projectionCard, setProjectionCard] = useState(null);
@@ -140,7 +141,7 @@ function CreditCardsPage({ data, setData }) {
       onClose: () => setProjectionCard(null)
     }) : null,
 
-    showForm ? h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) setShowForm(false); } },
+    showForm ? h('div', Object.assign({ className: 'modal-overlay as-window' }, formOverlay),
       h('div', { className: 'modal-content as-window' },
         h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, editingId ? 'Edit credit card' : 'Add credit card'),
         h('div', null,
@@ -210,6 +211,7 @@ function CreditCardsPage({ data, setData }) {
 }
 
 function ProjectionModal({ card, data, currency, onClose }) {
+  const overlay = useOverlayDismiss(onClose);
   const points = useMemo(() => getCardProjection(card, data, 12), [card, data]);
   const late = isCardPaymentLate(card, data);
 
@@ -228,7 +230,7 @@ function ProjectionModal({ card, data, currency, onClose }) {
   const maxBar = Math.max(...barPoints.map((p) => p.interest + p.principalPaid), 1);
   const barW = (W - PAD * 2) / Math.max(1, barPoints.length) - 4;
 
-  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
     h('div', { className: 'modal-content', style: { width: '420px' } },
       h('div', { className: 'row-between' },
         h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, `${card.name} - projection`),

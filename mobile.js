@@ -30,21 +30,19 @@ const MOBILE_TABS = [
   { id: 'home', label: 'Home', icon: 'home' },
   { id: 'overview', label: 'Overview', icon: 'calendar' },
   { id: 'add', label: 'Add', icon: 'plus', isAdd: true },
-  { id: 'late', label: 'Late', icon: 'alert' },
-  { id: 'allbills', label: 'Expenses', icon: 'allbills' }
+  { id: 'allbills', label: 'Bills', icon: 'allbills' }
 ];
 
 const TAB_FOR_PAGE = {
   home: 'home',
   overview: 'overview',
-  late: 'late',
   allbills: 'allbills',
   essentials: 'allbills',
   creditcards: 'allbills',
   subscriptions: 'allbills'
 };
 
-function MobileTabBar({ page, setPage, onAdd, lateCount, needsAttentionCount }) {
+function MobileTabBar({ page, setPage, onAdd, attentionCount }) {
   const activeTab = TAB_FOR_PAGE[page] || page;
   return h('nav', { className: 'mobile-tabbar' },
     MOBILE_TABS.map((tab) => {
@@ -62,9 +60,7 @@ function MobileTabBar({ page, setPage, onAdd, lateCount, needsAttentionCount }) 
         );
       }
       const active = activeTab === tab.id;
-      let badge = null;
-      if (tab.id === 'late' && lateCount > 0) badge = lateCount;
-      if (tab.id === 'allbills' && needsAttentionCount > 0) badge = needsAttentionCount;
+      const badge = (tab.id === 'allbills' && attentionCount > 0) ? attentionCount : null;
       return h('button', {
         key: tab.id,
         className: `mobile-tab${active ? ' active' : ''}`,

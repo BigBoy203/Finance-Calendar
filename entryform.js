@@ -1,6 +1,7 @@
 
-function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitLabel, onSubmit, onClose }) {
+function EntryFormModal({ data, title, entry, categories, dateLabel, showFreq, isIncome, submitLabel, onSubmit, onClose }) {
   const [form, setForm] = useState(() => ({ ...entry }));
+  const overlay = useOverlayDismiss(onClose);
 
   function update(field, value) {
     setForm({ ...form, [field]: value });
@@ -11,6 +12,7 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
     onSubmit({
       ...form,
       repeatUntil: form.freq === 'none' ? '' : form.repeatUntil,
+      useAvgEstimate: canEstimate && form.useAvgEstimate,
       amount: form.amount === '' ? 0 : parseFloat(form.amount) || 0,
       amountMin: form.amountMin === '' ? 0 : parseFloat(form.amountMin) || 0,
       amountMax: form.amountMax === '' ? 0 : parseFloat(form.amountMax) || 0
@@ -19,8 +21,10 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
 
   const useFreq = showFreq !== false;
   const recurring = useFreq && form.freq !== 'none';
+  const canEstimate = !!isIncome && !!form.useAmountRange;
+  const avg = canEstimate ? averagePaycheck(data, form) : null;
 
-  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
     h('div', { className: 'modal-content as-window' },
       h('div', { className: 'modal-window-head' },
         h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, title),
@@ -90,6 +94,23 @@ function EntryFormModal({ title, entry, categories, dateLabel, showFreq, submitL
               form.repeatUntil ? 'Repeats forever' : 'End repeat')
           : null
       ),
+      canEstimate ? h('div', { className: 'setup-field' },
+        h('label', null, 'Paycheck estimate'),
+        h('div', { className: 'checkbox-row', style: { margin: 0 } },
+          h('input', {
+            type: 'checkbox',
+            id: 'use-avg-estimate',
+            checked: !!form.useAvgEstimate,
+            onChange: (e) => update('useAvgEstimate', e.target.checked)
+          }),
+          h('label', { htmlFor: 'use-avg-estimate', style: { margin: 0 } }, 'Estimate future checks from past ones')
+        ),
+        h('p', { className: 'setup-hint' },
+          avg.ready
+            ? `Average of your last ${avg.count} recorded checks: ${fmtCurrency(avg.amount, data.settings.currency)}. Upcoming dates use it instead of the range.`
+            : `Experimental \u2014 needs two checks with a recorded amount and you have ${avg.count}. Until then upcoming dates keep using the middle of the range.`)
+      ) : null,
+
       h('div', { className: 'setup-field' },
         h('label', null, 'Calendar color'),
         h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
@@ -128,6 +149,7 @@ function entryToFormShape(entry) {
     useDateRange: !!entry.useDateRange,
     freq: entry.freq || 'monthly',
     repeatUntil: entry.repeatUntil || '',
+    useAvgEstimate: !!entry.useAvgEstimate,
     category: entry.category || '',
     color: entry.color || '',
     oneTimeKind: entry.oneTimeKind
@@ -142,7 +164,7 @@ function getEditModalConfig(sourceList, entry) {
     return { title: 'Edit subscription', categories: MINOR_CATEGORIES, dateLabel: 'Billing date', showFreq: true };
   }
   if (sourceList === 'incomeSources') {
-    return { title: 'Edit income source', categories: null, dateLabel: 'Next pay date', showFreq: true };
+    return { title: 'Edit income source', categories: null, dateLabel: 'Next pay date', showFreq: true, isIncome: true };
   }
 
   const isIncome = entry && entry.oneTimeKind === 'income';

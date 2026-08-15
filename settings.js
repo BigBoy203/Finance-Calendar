@@ -147,10 +147,12 @@ function SettingsPage({ data, setData, onRestart }) {
     tabContent,
 
     editingIncome ? h(EntryFormModal, {
+      data,
       title: editingIncome._isNew ? 'Add income source' : 'Edit income source',
       entry: editingIncome,
       categories: null,
       dateLabel: 'Next pay date',
+      isIncome: true,
       submitLabel: editingIncome._isNew ? 'Add' : 'Save',
       onSubmit: handleIncomeSubmit,
       onClose: () => setEditingIncome(null)
@@ -172,10 +174,15 @@ function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, 
             data.incomeSources.map((e) => {
               const d = parseYmd(e.date);
               const dateLabel = formatDate(d, data.settings);
+              const avg = (e.useAvgEstimate && e.useAmountRange) ? averagePaycheck(data, e) : null;
               return h('div', { key: e.id, className: 'list-item clickable', onClick: () => onEditIncome(e) },
                 h('div', null,
                   h('p', { className: 'list-item-name' }, e.name),
-                  h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}`)
+                  h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}`),
+                  avg ? h('p', { className: 'list-item-note' },
+                    avg.ready
+                      ? `\u2248${fmtCurrency(avg.amount, currency)} estimated \u00b7 average of your last ${avg.count} checks`
+                      : `Estimating \u2014 ${avg.count} of 2 checks recorded so far`) : null
                 ),
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
                   h('span', { className: 'list-item-amount', style: { color: 'var(--text-success)' } }, `+${entryAmountLabel(e, currency)}`),
@@ -343,6 +350,7 @@ function SyncCard({ data, setData, embedded }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [conflict, setConflict] = useState(null);
+  const conflictOverlay = useOverlayDismiss(() => setConflict(null));
   const supportsFile = Sync.supportsFileSystem;
 
   useEffect(() => {
@@ -460,7 +468,7 @@ function SyncCard({ data, setData, embedded }) {
 
     msg ? h('p', { style: { margin: '10px 0 0', fontSize: '13px', color: msg.ok ? 'var(--text-success)' : 'var(--late-red)' } }, msg.text) : null,
 
-    conflict ? h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) setConflict(null); } },
+    conflict ? h('div', Object.assign({ className: 'modal-overlay as-window' }, conflictOverlay),
       h('div', { className: 'modal-content as-window' },
         h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, 'That file is older'),
         h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
@@ -475,7 +483,8 @@ function SyncCard({ data, setData, embedded }) {
 }
 
 function SyncModal({ data, setData, onClose }) {
-  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+  const overlay = useOverlayDismiss(onClose);
+  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
     h('div', { className: 'modal-content as-window' },
       h('div', { className: 'modal-window-head' },
         h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, 'Sync'),
@@ -490,45 +499,9 @@ function SyncModal({ data, setData, onClose }) {
   );
 }
 
-function ExperimentalCard({ data, updateSetting }) {
-  const on = data.settings.avgPaycheckEnabled === true;
-  const currency = data.settings.currency;
-
-  return h('div', { className: 'card', style: { marginTop: '12px' } },
-    h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Experimental'),
-    h('p', { style: { margin: '0 0 10px', fontSize: '13px', color: 'var(--text-secondary)' } },
-      'Still being tried out — turn it off any time.'),
-    h('div', { className: 'checkbox-row' },
-      h('input', {
-        type: 'checkbox',
-        id: 'avg-paycheck',
-        checked: on,
-        onChange: (e) => updateSetting('avgPaycheckEnabled', e.target.checked)
-      }),
-      h('label', { htmlFor: 'avg-paycheck', style: { margin: 0 } }, 'Estimate the next paycheck from past ones')
-    ),
-    h('p', { style: { margin: '6px 0 0', fontSize: '13px', color: 'var(--text-secondary)' } },
-      'Once an income source has two or more paychecks with a real amount recorded, upcoming checks use that ' +
-      'average instead of the usual amount. Record a real amount with "Set price" on a paycheck that has already landed.'),
-    on ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' } },
-      data.incomeSources.length === 0
-        ? h('p', { className: 'empty-state' }, 'No income sources to average yet.')
-        : data.incomeSources.map((e) => {
-            const avg = averagePaycheck(data, e);
-            return h('div', { key: e.id, className: 'row-between', style: { fontSize: '13px' } },
-              h('span', null, e.name),
-              avg.ready
-                ? h('span', null, `${fmtCurrency(avg.amount, currency)} avg of ${avg.count}`)
-                : h('span', { style: { color: 'var(--text-tertiary)' } },
-                    `${avg.count} of 2 recorded — using ${entryAmountLabel(e, currency)}`)
-            );
-          })
-    ) : null
-  );
-}
-
 function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setConfirming }) {
   const [importWarning, setImportWarning] = useState(false);
+  const importOverlay = useOverlayDismiss(() => setImportWarning(false));
   const [importError, setImportError] = useState(null);
   const [importSuccess, setImportSuccess] = useState(false);
   const [exportError, setExportError] = useState(null);
@@ -589,8 +562,6 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
       )
     ),
 
-    h(ExperimentalCard, { data, updateSetting }),
-
     h('div', { className: 'card', style: { marginTop: '12px' } },
       h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Custom CSS'),
       h('p', { style: { margin: '0 0 8px', fontSize: '13px', color: 'var(--text-secondary)' } },
@@ -644,7 +615,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
       )
     ),
 
-    importWarning ? h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) setImportWarning(false); } },
+    importWarning ? h('div', Object.assign({ className: 'modal-overlay as-window' }, importOverlay),
       h('div', { className: 'modal-content as-window' },
         h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px', color: 'var(--late-red)' } }, '\u26a0\ufe0f This will delete all your current data'),
         h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
@@ -675,7 +646,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
       h('div', null,
         h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Finance Calendar'),
         h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
-          'Stores all data locally on this computer in a JSON file - nothing is sent anywhere.')
+          'Stores all data locally on this device - nothing is sent anywhere.')
       )
     )
   );

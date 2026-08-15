@@ -1,19 +1,10 @@
 
 const DONUT_COLORS = ['#D85A5A', '#D8A857', '#8B6FD6', '#4FAE6B', '#D8845A', '#5AA8D8', '#C75AA8', '#7A8C5A'];
 
-function billRowState(data, o, today) {
-  const paid = isPaid(data, o.id, o.occDate);
-  const late = !paid && (isForcedLate(data, o.id, o.occDate)
-    || (parseYmd(o.occDate) < today && !isDismissedLate(data, o.id, o.occDate)));
-  return { paid, late };
-}
-
 function BillChecklist({ rows, data, currency, onToggle, onOpen }) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
   return h('div', { className: 'bill-checklist' },
     rows.map((o) => {
-      const { paid, late } = billRowState(data, o, today);
+      const { paid, late } = lateState(data, o);
       const accentColor = getEntryColor(o, data) || '#D85A5A';
       return h('div', {
         key: `${o.id}-${o.occDate}`,
@@ -43,11 +34,9 @@ function BillChecklist({ rows, data, currency, onToggle, onOpen }) {
 }
 
 function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
   return h('div', { className: 'bill-tile-grid' },
     rows.map((o) => {
-      const { paid, late } = billRowState(data, o, today);
+      const { paid, late } = lateState(data, o);
       const accentColor = getEntryColor(o, data) || '#D85A5A';
       return h('div', {
         key: `${o.id}-${o.occDate}`,
@@ -468,6 +457,7 @@ function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setF
 }
 
 function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
+  const overlay = useOverlayDismiss(onClose);
   const existing = getOverride(data, occ.id, occ.occDate);
   const [price, setPrice] = useState(existing && existing.amount !== undefined ? String(existing.amount) : '');
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -499,12 +489,28 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
     onClose();
   }
 
-  const forcedLate = isForcedLate(data, occ.id, occ.occDate);
+  const { paid, forced, late } = lateState(data, occ);
+
+  function togglePaid() {
+    haptic(paid ? 'light' : 'success');
+    let next = togglePaidStatus(data, occ.id, occ.occDate);
+    next = logActivity(next, `${paid ? 'Unmarked' : 'Marked'} "${occ.name}" as paid`);
+    setData(next);
+  }
+
   function toggleLate() {
     haptic('warn');
     let next = toggleForcedLate(data, occ.id, occ.occDate);
-    next = logActivity(next, `${forcedLate ? 'Unmarked' : 'Marked'} "${occ.name}" as late`);
+    next = logActivity(next, `${forced ? 'Unmarked' : 'Marked'} "${occ.name}" as late`);
     setData(next);
+  }
+
+  function dismissLate() {
+    haptic('light');
+    const key = `${occ.id}|${occ.occDate}`;
+    setData(logActivity(
+      { ...data, dismissedLate: { ...data.dismissedLate, [key]: true } },
+      `Dismissed late status for "${occ.name}"`));
   }
 
   function removeThisOccurrence() {
@@ -527,7 +533,7 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
     ? `${fmtCurrency(occ.amountMin, currency)}-${fmtCurrency(occ.amountMax, currency)}`
     : fmtCurrency(entryAmount(occ), currency);
 
-  return h('div', { className: 'modal-overlay as-window', onClick: (e) => { if (e.target === e.currentTarget) onClose(); } },
+  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
     h('div', { className: 'modal-content as-window price-modal' },
       h('div', { className: 'modal-window-head' },
         h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, occ.name),
@@ -558,13 +564,38 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
 
       h('div', { className: 'price-actions' },
         occ.kind !== 'income'
-          ? h('button', { className: `price-action-row${forcedLate ? ' active' : ''}`, onClick: toggleLate },
+          ? h('button', { className: `price-action-row${paid ? ' active' : ''}`, onClick: togglePaid },
               h('div', null,
-                h('span', { className: 'price-action-title' }, forcedLate ? 'Marked late' : 'Mark late'),
-                h('span', { className: 'price-action-sub' }, forcedLate ? 'Tap to clear' : 'Flag this date as late')
+                h('span', { className: 'price-action-title' }, paid ? 'Paid' : 'Mark as paid'),
+                h('span', { className: 'price-action-sub' }, paid ? 'Tap to undo' : 'Check it off for this date')
               ),
-              h('span', { className: 'price-action-chevron' }, forcedLate ? '\u2713' : '\u203a')
+              h('span', { className: 'price-action-chevron' }, paid ? '\u2713' : '\u203a')
             )
+          : null,
+        occ.kind !== 'income'
+          ? (forced
+              ? h('button', { className: 'price-action-row active', onClick: toggleLate },
+                  h('div', null,
+                    h('span', { className: 'price-action-title' }, 'Marked late'),
+                    h('span', { className: 'price-action-sub' }, 'Tap to clear')
+                  ),
+                  h('span', { className: 'price-action-chevron' }, '\u2713')
+                )
+              : late
+                ? h('button', { className: 'price-action-row', onClick: dismissLate },
+                    h('div', null,
+                      h('span', { className: 'price-action-title' }, 'Dismiss late warning'),
+                      h('span', { className: 'price-action-sub' }, 'Stop flagging this date as late')
+                    ),
+                    h('span', { className: 'price-action-chevron' }, '\u203a')
+                  )
+                : h('button', { className: 'price-action-row', onClick: toggleLate },
+                    h('div', null,
+                      h('span', { className: 'price-action-title' }, 'Mark late'),
+                      h('span', { className: 'price-action-sub' }, 'Flag this date as late')
+                    ),
+                    h('span', { className: 'price-action-chevron' }, '\u203a')
+                  ))
           : null,
         h('button', { className: 'price-action-row danger', onClick: () => confirmRemove ? removeThisOccurrence() : setConfirmRemove(true) },
           h('div', null,

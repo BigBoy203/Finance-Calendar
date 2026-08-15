@@ -1,13 +1,13 @@
 # Finance Calendar — web build
 
-Personal bill / income / cash-flow tracker being grown into a full expense tracker. Plain-static React (no bundler, no JSX, `React.createElement` via `h`), deployed to Vercel at finance-calendar-web.vercel.app by pushing to this GitHub repo. Owner tests on a real iPhone in Safari and sends screenshots; mobile is the primary experience.
+Personal bill / income / cash-flow tracker being grown into a full expense tracker. Web only — there is no desktop/Electron build any more; the desktop *web* layout (sidebar) is kept working but is not the focus until mobile is finished. Plain-static React (no bundler, no JSX, `React.createElement` via `h`), deployed to Vercel at finance-calendar-web.vercel.app by pushing to this GitHub repo. Owner tests on a real iPhone in Safari and sends screenshots; mobile is the primary experience.
 
 ## CRITICAL BUILD RULES — follow exactly
 
 The ONLY JS file that runs in the browser is `app.js`. The individual source files do nothing at runtime; they are concatenated into `app.js`. After editing ANY source file, rebuild:
 
 ```
-cat app_core.js mobile.js entryform.js wizard.js quickadd.js home.js late.js calendar.js overview.js bills.js subscriptions.js creditcards.js allbills.js settings.js > app.js
+cat app_core.js mobile.js entryform.js wizard.js quickadd.js home.js calendar.js overview.js bills.js subscriptions.js creditcards.js allbills.js settings.js > app.js
 echo "" >> app.js
 echo "ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));" >> app.js
 node --check app.js
@@ -33,25 +33,28 @@ node --check app.js
 
 ## Architecture / conventions
 
-- All state lives in one JSON object persisted through `window.api` (localStorage on web, Electron file storage on desktop). `persist(next, opts)` stamps `lastModified`.
+- All state lives in one JSON object persisted through `window.api` (IndexedDB, see `storage.js`). `persist(next, opts)` stamps `lastModified`.
 - Paid state: `data.paidHistory["entryId|YYYY-MM-DD"] = true`. Per-occurrence overrides in `data.overrides` keyed the same way.
 - Recurrence end date: `entry.repeatUntil` (`''` = forever) caps `expandEntry`; the forms expose it through an "End repeat" `.setup-link` after "Amount range · Date range" (recurring entries only) and `repeatLabel(entry, settings)` renders "monthly until Sep 19" in list rows. Not to be confused with `useDateRange`/`dateEnd`, which is a bill that *spans* days on the calendar.
-- Mobile detection: `useIsMobile()` (matchMedia ≤768px). Mobile UI: fixed shell, bottom tab bar Home · Overview · [＋ raised circle] · Late · Expenses; Settings is the gear in the header; Sync button top-left with "last synced" label under it.
+- Mobile detection: `useIsMobile()` (matchMedia ≤768px). Mobile UI: fixed shell, bottom tab bar Home · Overview · [＋ raised circle] · Bills; Settings is the gear in the header; Sync button top-left with "last synced" label under it.
 - Modal rule: big forms and dialogs = centered window (`.modal-overlay.as-window` + `.modal-content.as-window` + `.modal-window-head` + `.modal-x`). Only the calendar day-detail stays a slide-up sheet.
-- Form field system (wizard, edit modals, quick-add all share it): `.setup-field` (small uppercase label + full-width 40px input) inside `.setup-entry-grid` (2-col), inline `.setup-link` toggles separated by a `::before` dot on `.setup-link + .setup-link` ("Amount range · Date range"), so a separator can never wrap onto a line alone. Do NOT use the old pattern of stacked full-width fields with underlined `.toggle-link` buttons in forms — on mobile those balloon to 40px rows and wreck spacing (`.toggle-link` survives only for the allbills info banner). `.setup-field` label/input selectors are direct-child scoped (`>`) so nested checkbox/color rows keep normal styling — keep them that way.
+- Form field system (wizard, edit modals, quick-add all share it): `.setup-field` (small uppercase label + full-width 40px input) inside `.setup-entry-grid` (2-col), inline `.setup-link` toggles separated by a `::before` dot on `.setup-link + .setup-link` ("Amount range · Date range"), so a separator can never wrap onto a line alone. Do NOT use the old pattern of stacked full-width fields with underlined `.toggle-link` buttons in forms — on mobile those balloon to 40px rows and wreck spacing (`.toggle-link` survives only for the allbills info banner). `.setup-field` label/input selectors are direct-child scoped (`>`) so nested checkbox/color rows keep normal styling — keep them that way. `.setup-hint` is the small grey explainer under a field.
 - Mobile calendar: `.calm-*` classes; dot grid + compact daily totals, Month/Agenda toggle, spanning range pills in a reserved lane below each week (lane-stacked when ranges overlap). IMPORTANT: mobile has `button { min-height: 40px }` — any new small button-like element must be added to the exemption list (`min-height: 0`) or it balloons.
 - Month math lives once in `useMonthFinancials(data, cursor)` (`overview.js`); `HomePage` and `StatisticsPage` both consume it. `useNextCheck(data, period)` builds a pay-period window. Income landing today counts as already received, so checks are collected from tomorrow forward; `period` indexes into them. Period 0 runs today → next check and includes overdue via `getLateBills`; period n runs (check n-1, check n] with no overdue. `HomePage` owns the `period` state and the card's `‹ ›` nav (hidden unless more than one check is ahead).
 - The Calendar tab is now **Overview** (`page === 'overview'`, `OverviewPage`): a two-view tab switched by `OverviewSwitch`, which renders *in place of the mobile header title* (`MobileHeader` `titleEl` prop) and above the page on desktop. `view: 'calendar'` renders `CalendarPage`, `view: 'stats'` renders `StatisticsPage` (next 7 days + cash flow + donut + at-a-glance + vs last month). The view state lives in `App()`.
-- Expenses (`AllBillsPage`) lists recurring commitments only — essentials, subscriptions, credit-card payments. One-time purchases are not listed there; they live on the calendar, Home, and Late, and are edited/deleted from the day sheet or the price modal.
-- Experimental `settings.avgPaycheckEnabled` (Settings → Advanced): `averagePaycheck(data, entry)` averages past occurrences of an income source that have a recorded amount (an override); with two or more samples `estimatedIncome` replaces the projected amount of the next check in `useNextCheck`, and `NextCheckCard` says so.
+- The Bills tab (`AllBillsPage`, `page === 'allbills'`) is the only place work piles up. `getAttentionItems(data)` merges `getLateBills` + `getNeedsAttention` into one deduped list (late first, then price-needed); `App` memoizes it as `attention` and its length drives the tab badge. There is no separate Late page — `attentionSummary()` writes the blue `.info-banner` copy from what is actually in the list, `.att-row` rows open `PriceOverrideModal`, and the list caps at `ATTENTION_PREVIEW` with a "Show all" toggle. Below it: filter chips and the recurring commitments (essentials, subscriptions, credit-card payments). One-time purchases are never listed there — they live on the calendar and Home.
+- `PriceOverrideModal` is the single hub for one occurrence: set the actual price, mark paid, and a three-state late row (marked late → clear / auto-late → dismiss / neither → mark late), plus remove. `lateState(data, occ)` is the one place late/paid/dismissed is decided — use it, never re-derive it inline.
+- Paycheck averaging is per income source: `entry.useAvgEstimate`, offered in the income form only when the source uses an amount range. `averagePaycheck(data, entry)` (WeakMap-cached on `data`) averages past occurrences that have a recorded amount; with two or more samples `expandAll` swaps the estimate into every **future** occurrence (`isEstimate`, shown as `≈$1,140` by `occAmountLabel`), so calendar totals, statistics, projections and the next-check card all move together. Settings → General shows the running average under the source.
 - Home is bill-first: full-bleed gradient hero (`.home-wash`, no card box), the "Before your next check" card, and a collapsible "Bills this month" row (`.drop-card`) with the covered/left progress bar. No charts on Home.
 - Onboarding (`wizard.js`): welcome screen → income → bills → subscriptions → credit cards. Bills/subs start EMPTY with tap-to-add suggestion chips. Mid-month rule: on the final step (if today > 1st) a default-on toggle marks already-passed bills this month as paid so nothing shows falsely late on day one.
-- Add window (`quickadd.js`): icon tiles Purchase (default) / Bill / Subscription / Income.
+- Add window (`quickadd.js`): icon tiles Purchase (default) / Bill / Subscription / Income. Category lists: `MAJOR_CATEGORIES` (bills) and `MINOR_CATEGORIES` (subs) are recurring-bill shaped; `ONE_TIME_PAYMENT_CATEGORIES` is day-to-day spending (Groceries, Food & drink, Gas, …) — keep bill-shaped names out of it.
 - Haptics: `haptic('light|medium|success|warn|heavy')` helper; respects `settings.hapticsEnabled`. iOS Safari does not support web vibration — that's expected, don't "fix" it.
 
 ## iOS hard limits (do not fight these)
 
 - No background tasks, no silent filesystem writes, no auto-folder creation from a web app. One-tap share-sheet export is the floor on iPhone.
+- iOS opens a **wheel picker** for `<select>` and `<input type="date">`, which shrinks `visualViewport` exactly like a keyboard does. `index.html` must only treat that shrink as `--kb` (and only scroll a field into view) when the focused element is a real typing field — `isTypingField()`. Counting the picker as a keyboard re-lays-out the modal mid-tap, so the next tap lands on whatever moved under the finger. This caused a real "can't change the category, it hits the buttons below or closes the window" bug; don't undo it.
+- Overlay taps go through `useOverlayDismiss(onClose)`, which only closes when the pointer went **down** and **up** on the overlay itself. Never dismiss on a bare `onClick` target check — a dismissed picker fires a click that closes the modal.
 - File inputs MUST be attached to the DOM (`document.body.appendChild`) or iOS never fires `change`. No focus-based cancel timeouts — iOS loses the race. Both are already handled in `storage.js` and `sync.js`; keep it that way.
 - apple-touch-icon must be PNG (`assets/icon-180.png`), regenerated from `assets/icon.svg`.
 
@@ -59,10 +62,6 @@ node --check app.js
 
 Owner pushes with GitHub Desktop; Vercel auto-deploys. Typical shipped files per change: `app.js` and/or `styles.css`, occasionally `index.html`, `storage.js`, `sync.js`, `assets/*`. Tell the owner exactly which files changed after each task.
 
-## Sibling project
-
-`finance-tracker-v11` (separate folder/repo) is the Electron desktop app sharing this renderer code, plus desktop-only `trading.js`, `market.js`, trader-mode income, and `src/main.js` + `src/preload.js` (`window.api.isDesktop = true`). When told to port changes there: same concat plus `market.js trading.js` at the end, keep web-only bits gated behind `!window.api.isDesktop`.
-
 ## Roadmap (owner's stated priorities)
 
-Next big update: spending insights / category breakdown for day-to-day expenses, plus a suggestion system based on purchase frequency. Later: keep desktop in sync. Always flag honest difficulty and scope concerns BEFORE building, not midway.
+Next big update: spending insights / category breakdown for day-to-day expenses (they now have real categories to group by), plus a suggestion system based on purchase frequency. The desktop *web* layout is maintained but gets its own pass only once mobile is where the owner wants it. Always flag honest difficulty and scope concerns BEFORE building, not midway.

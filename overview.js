@@ -222,7 +222,7 @@ function useNextCheck(data, period) {
 
     const idx = Math.max(0, Math.min(period || 0, checks.length - 1));
     const check = checks[idx] || null;
-    const estimate = estimatedIncome(data, check);
+    const estimate = (check && check.isEstimate) ? { amount: check.amount, count: check.estimateCount } : null;
     const windowEnd = new Date(today);
     if (check) {
       const d = parseYmd(check.occDate);
@@ -241,9 +241,7 @@ function useNextCheck(data, period) {
       windowStart.setDate(windowStart.getDate() - grace);
     }
 
-    const sourceListById = buildSourceListLookup(data);
-    const oneTimeIds = new Set(data.oneTimeEntries.map((e) => e.id));
-    const listFor = (o) => sourceListById[o.id] || (oneTimeIds.has(o.id) ? 'oneTimeEntries' : undefined);
+    const listFor = resolveSourceList(data);
 
     const upcoming = [
       ...expandAll(getAllBillLikeEntries(data), 'bill', windowStart, windowEnd, data),
@@ -272,7 +270,7 @@ function useNextCheck(data, period) {
       hasPrev: idx > 0,
       hasNext: idx + 1 < checks.length,
       due: bills.reduce((sum, o) => sum + o.amount, 0),
-      checkAmount: estimate ? estimate.amount : (check ? check.amount : 0),
+      checkAmount: check ? check.amount : 0,
       estimate,
       overdueCount: bills.filter((o) => parseYmd(o.occDate) < today).length
     };

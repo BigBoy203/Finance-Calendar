@@ -45,13 +45,20 @@
     }, 6000);
   </script>
   <script>
+    function isTypingField(el) {
+      if (!el) return false;
+      if (el.tagName === 'TEXTAREA') return true;
+      if (el.tagName !== 'INPUT') return false;
+      return /^(text|number|email|search|tel|url|password)$/i.test(el.type || 'text');
+    }
+
     function setViewportVars() {
       var el = document.documentElement;
       el.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
 
       var vv = window.visualViewport;
       var kb = 0;
-      if (vv) {
+      if (vv && isTypingField(document.activeElement)) {
         kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
         if (kb < 40) kb = 0;
       }
@@ -66,8 +73,8 @@
     }
 
     document.addEventListener('focusin', function (e) {
+      if (!isTypingField(e.target)) return;
       var t = e.target;
-      if (!t || !/^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
       setTimeout(function () {
         if (t.scrollIntoView) t.scrollIntoView({ block: 'center', behavior: 'smooth' });
       }, 300);

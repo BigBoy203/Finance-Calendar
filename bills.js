@@ -58,6 +58,7 @@ function BillsPage({ data, setData }) {
         ),
 
     editing ? h(EntryFormModal, {
+      data,
       title: editing._isNew ? 'Add bill' : 'Edit bill',
       entry: editing,
       categories: MAJOR_CATEGORIES,
