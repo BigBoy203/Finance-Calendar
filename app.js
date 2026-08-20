@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '3.6';
+const WEB_VERSION = '3.7';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -2247,7 +2247,7 @@ function QuickAddModal({ data, setData, initialDate, preset, onClose }) {
   );
 }
 
-const DONUT_COLORS = ['#D85A5A', '#D8A857', '#8B6FD6', '#4FAE6B', '#D8845A', '#5AA8D8', '#C75AA8', '#7A8C5A'];
+const DONUT_COLORS = ['#D85A5A', '#D8A857', '#8B6FD6', '#4FAE6B', '#D8845A', '#5AA8D8', '#C75AA8', '#7A8C5A', '#4FAEA0', '#7FC44F', '#B15AC7', '#5A73C7'];
 
 function BillChecklist({ rows, data, currency, onToggle, onOpen }) {
   return h('div', { className: 'bill-checklist' },
@@ -3929,6 +3929,16 @@ function purchaseEntries(data) {
   return (data.oneTimeEntries || []).filter((e) => e.oneTimeKind === 'payment' && e.date);
 }
 
+function categoryTotals(data, monthKey) {
+  const map = {};
+  purchaseEntries(data).forEach((e) => {
+    if (e.date.slice(0, 7) !== monthKey) return;
+    const key = e.category || 'Other';
+    map[key] = (map[key] || 0) + resolvedAmount(data, e, e.date);
+  });
+  return map;
+}
+
 function spendingHistory(data, cursor) {
   const buckets = [];
   for (let back = SPEND_HISTORY_MONTHS - 1; back >= 0; back--) {
@@ -4072,6 +4082,7 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const [budgetModal, setBudgetModal] = useState(null);
   const [priceModal, setPriceModal] = useState(null);
   const [showAllPurchases, setShowAllPurchases] = useState(false);
+  const [catFilter, setCatFilter] = useState(null);
 
   const fin = useMonthFinancials(data, cursor);
   const budgets = data.budgets || {};
@@ -4092,14 +4103,28 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const leftForLife = income - recurringTotal - spent;
   const hasIncome = income > 0;
 
-  const byCategory = useMemo(() => {
-    const map = {};
-    purchases.forEach((o) => {
-      const key = o.category || 'Other';
-      map[key] = (map[key] || 0) + o.amount;
-    });
-    return map;
-  }, [purchases]);
+  const monthKey = ymd(cursor).slice(0, 7);
+  const prevCursor = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1);
+  const prevKey = ymd(prevCursor).slice(0, 7);
+  const prevMonthName = MONTH_NAMES[prevCursor.getMonth()];
+
+  const byCategory = useMemo(() => categoryTotals(data, monthKey), [data, monthKey]);
+  const prevTotals = useMemo(() => categoryTotals(data, prevKey), [data, prevKey]);
+  const hasPrev = Object.keys(prevTotals).length > 0;
+
+  const breakdown = useMemo(() => Object.keys(byCategory)
+    .map((category) => {
+      const amount = byCategory[category];
+      const prev = prevTotals[category] || 0;
+      return {
+        category,
+        amount,
+        prev,
+        delta: amount - prev,
+        pct: spent > 0 ? Math.round((amount / spent) * 100) : 0
+      };
+    })
+    .sort((a, b) => b.amount - a.amount), [byCategory, prevTotals, spent]);
 
   const budgetRows = useMemo(() => {
     const keys = new Set([...Object.keys(budgets), ...Object.keys(byCategory)]);
@@ -4124,7 +4149,6 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const history = useMemo(() => spendingHistory(data, cursor), [data, cursor]);
   const lastMonthSpent = history.length > 1 ? history[history.length - 2].total : 0;
   const spendDelta = spent - lastMonthSpent;
-  const topCategory = Object.keys(byCategory).sort((a, b) => byCategory[b] - byCategory[a])[0];
   const suggestions = useMemo(() => (isCurrentMonth ? repeatBuys(data) : []), [data, isCurrentMonth]);
 
   const unusedCategories = ONE_TIME_PAYMENT_CATEGORIES.filter((c) => !budgets[c]);
@@ -4145,6 +4169,7 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
 
   function changeMonth(delta) {
     setShowAllPurchases(false);
+    setCatFilter(null);
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
   }
 
@@ -4248,11 +4273,74 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
       : null
   );
 
-  const visiblePurchases = showAllPurchases ? purchases : purchases.slice(0, PURCHASE_PREVIEW);
+  function deltaNote(row) {
+    if (!hasPrev) return null;
+    if (row.prev === 0) return { text: 'new this month', dir: 'flat' };
+    if (Math.abs(row.delta) < 1) return { text: `about the same as ${prevMonthName}`, dir: 'flat' };
+    return {
+      text: `${fmtCurrency(Math.abs(row.delta), currency)} ${row.delta > 0 ? 'more' : 'less'} than ${prevMonthName}`,
+      dir: row.delta > 0 ? 'up' : 'down'
+    };
+  }
+
+  const breakdownSection = purchases.length === 0 ? null : h('section', { className: 'spend-section' },
+    h('div', { className: 'row-between' },
+      h('div', null,
+        h('p', { className: 'section-title', style: { margin: 0 } }, 'Where it went'),
+        h('p', { className: 'spend-caption' },
+          catFilter
+            ? `Showing ${catFilter} below \u00b7 tap it again to clear`
+            : hasPrev
+              ? `${breakdown.length} ${breakdown.length === 1 ? 'category' : 'categories'} \u00b7 compared with ${prevMonthName}`
+              : `${breakdown.length} ${breakdown.length === 1 ? 'category' : 'categories'} this month`)
+      ),
+      h('span', { className: 'spend-section-total' }, fmtCurrency(spent, currency))
+    ),
+    h('div', { className: 'cat-list' },
+      breakdown.map((row) => {
+        const note = deltaNote(row);
+        const on = catFilter === row.category;
+        return h('button', {
+          key: row.category,
+          className: `cat-row${on ? ' on' : ''}`,
+          onClick: () => {
+            haptic('light');
+            setShowAllPurchases(false);
+            setCatFilter(on ? null : row.category);
+          }
+        },
+          h('span', { className: 'cat-top' },
+            h('span', { className: 'cat-name' },
+              h('span', { className: 'budget-swatch', style: { background: categoryColor(row.category) } }),
+              row.category
+            ),
+            h('span', { className: 'cat-figure' }, fmtCurrency(row.amount, currency))
+          ),
+          h('span', { className: 'cat-bar' },
+            h('span', {
+              className: 'cat-bar-fill',
+              style: { width: `${Math.max(2, row.pct)}%`, background: categoryColor(row.category) }
+            })
+          ),
+          h('span', { className: 'cat-meta' },
+            `${row.pct}% of spending`,
+            note ? h('span', { className: `cat-delta ${note.dir}` }, note.text) : null
+          )
+        );
+      })
+    )
+  );
+
+  const filtered = catFilter ? purchases.filter((o) => (o.category || 'Other') === catFilter) : purchases;
+  const filteredTotal = catFilter ? filtered.reduce((sum, o) => sum + o.amount, 0) : spent;
+  const visiblePurchases = showAllPurchases ? filtered : filtered.slice(0, PURCHASE_PREVIEW);
   const purchaseSection = h('section', { className: 'spend-section' },
     h('div', { className: 'row-between' },
-      h('p', { className: 'section-title', style: { margin: 0 } }, 'Purchases'),
-      h('span', { className: 'spend-section-total' }, fmtCurrency(spent, currency))
+      h('div', null,
+        h('p', { className: 'section-title', style: { margin: 0 } }, 'Purchases'),
+        catFilter ? h('p', { className: 'spend-caption' }, `${catFilter} only`) : null
+      ),
+      h('span', { className: 'spend-section-total' }, fmtCurrency(filteredTotal, currency))
     ),
     purchases.length === 0
       ? h('p', { className: 'empty-state' },
@@ -4275,9 +4363,9 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
             ),
             h('span', { className: 'spend-row-amt' }, occAmountLabel(o, currency))
           )),
-          purchases.length > PURCHASE_PREVIEW
+          filtered.length > PURCHASE_PREVIEW
             ? h('button', { className: 'att-more', onClick: () => setShowAllPurchases(!showAllPurchases) },
-                showAllPurchases ? 'Show less' : `Show all ${purchases.length}`)
+                showAllPurchases ? 'Show less' : `Show all ${filtered.length}`)
             : null
         )
   );
@@ -4311,8 +4399,9 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
         }, `${spendDelta >= 0 ? '+' : '-'}${fmtCurrency(Math.abs(spendDelta), currency)}`)
       ),
       h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'Top category'),
-        h('span', { className: 'spend-stat-value small' }, topCategory || '—')
+        h('span', { className: 'spend-stat-label' }, 'Avg purchase'),
+        h('span', { className: 'spend-stat-value' },
+          fmtCurrency(spent / Math.max(1, purchases.length), currency))
       ),
       h('div', { className: 'spend-stat' },
         h('span', { className: 'spend-stat-label' }, 'Purchases'),
@@ -4348,6 +4437,7 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
       isCurrentMonth ? quickLog : null,
       isCurrentMonth ? suggestionHint : null,
       budgetSection,
+      breakdownSection,
       purchaseSection,
       trendSection,
       modals
@@ -4363,7 +4453,7 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
         isCurrentMonth ? suggestionHint : null,
         budgetSection
       ),
-      h('div', null, purchaseSection, trendSection)
+      h('div', null, breakdownSection, purchaseSection, trendSection)
     ),
     modals
   );

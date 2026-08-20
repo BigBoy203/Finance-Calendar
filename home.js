@@ -1,5 +1,5 @@
 
-const DONUT_COLORS = ['#D85A5A', '#D8A857', '#8B6FD6', '#4FAE6B', '#D8845A', '#5AA8D8', '#C75AA8', '#7A8C5A'];
+const DONUT_COLORS = ['#D85A5A', '#D8A857', '#8B6FD6', '#4FAE6B', '#D8845A', '#5AA8D8', '#C75AA8', '#7A8C5A', '#4FAEA0', '#7FC44F', '#B15AC7', '#5A73C7'];
 
 function BillChecklist({ rows, data, currency, onToggle, onOpen }) {
   return h('div', { className: 'bill-checklist' },

@@ -1477,7 +1477,7 @@ label {
   .mobile-tab, .mobile-tab-add, .mobile-header-sync-group,
   .calm-ag-item, .calm-ag-date, .bill-check-row, .ov-switch-btn,
   .nextcheck-nav-btn, .att-row, .att-more,
-  .budget-row, .spend-unbudgeted-row, .spend-row,
+  .budget-row, .spend-unbudgeted-row, .spend-row, .cat-row,
   .pick-chip, .qa-type {
     min-height: 0;
   }
@@ -3133,6 +3133,93 @@ label {
   color: var(--late-red);
 }
 
+.cat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cat-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 14px;
+  text-align: left;
+  background: var(--bg-primary);
+  border: 0.5px solid var(--border-secondary);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+}
+
+.cat-row.on {
+  border-color: var(--accent);
+  background: var(--bg-secondary);
+}
+
+.cat-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cat-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cat-figure {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.cat-bar {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.cat-row.on .cat-bar {
+  background: var(--bg-tertiary);
+}
+
+.cat-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+
+.cat-meta {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.cat-delta::before {
+  content: '\00b7';
+  margin: 0 6px;
+}
+
+.cat-delta.up {
+  color: var(--late-red);
+}
+
+.cat-delta.down {
+  color: var(--text-success);
+}
+
 .spend-add-budget {
   width: 100%;
   padding: 11px;
@@ -3338,14 +3425,6 @@ label {
   font-size: 20px;
   font-weight: 600;
   letter-spacing: -0.02em;
-}
-
-.spend-stat-value.small {
-  font-size: 15px;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .qa-modal {
