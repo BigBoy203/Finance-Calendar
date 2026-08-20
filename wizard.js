@@ -278,7 +278,7 @@ function OnboardingWizard({ data, onComplete }) {
         h('div', null,
           h('h2', null, 'Import your backup'),
           h('p', { style: { color: 'var(--text-secondary)', marginTop: '4px' } },
-            'Do you have a .json backup from a previous install or the web version that you\u2019d like to restore?')
+            'Do you have a .json backup from another browser or device that you\u2019d like to restore?')
         ),
         h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' } },
           h('button', {

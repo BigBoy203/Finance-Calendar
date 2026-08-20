@@ -836,7 +836,7 @@ label {
   font-size: 13px;
   padding: 10px;
   border-radius: var(--radius-md);
-  border: 0.5px solid var(--border-tertiary);
+  border: 1px solid var(--border-secondary);
   background: var(--bg-primary);
   color: var(--text-primary);
   resize: vertical;
@@ -1162,20 +1162,6 @@ label {
     align-items: center;
     justify-content: flex-end;
     gap: 8px;
-  }
-  .mobile-header-sync {
-    width: 34px;
-    height: 34px;
-    min-height: 34px;
-    flex-shrink: 0;
-    padding: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    border: 0.5px solid var(--border-secondary);
-    background: var(--bg-tertiary);
-    color: var(--text-secondary);
   }
   .mobile-header-title {
     margin: 0;
@@ -1719,7 +1705,7 @@ label {
   align-items: flex-start;
   gap: 2px;
   padding: 9px 12px;
-  border: 0.5px solid var(--border-tertiary);
+  border: 1px solid var(--border-secondary);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);
   color: var(--text-primary);

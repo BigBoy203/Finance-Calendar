@@ -41,8 +41,9 @@ restored before anything is entered by hand.
 - **+** - the add window: Purchase, Bill, Subscription, or Income.
 - **Spending** - day-to-day money: what's left for daily life this month after
   bills and what you've already spent, two-tap re-logging of things you buy
-  often, monthly budgets by category, this month's purchases, and a six-month
-  trend.
+  often, monthly budgets by category, "Where it went" (each category's share of
+  the month against last month's, tap one to filter the list), this month's
+  purchases, and a six-month trend.
 - **Bills** - "Needs attention" at the top (anything past due or still using a
   price range), then recurring commitments grouped into Essentials,
   Subscriptions, and Credit cards.
