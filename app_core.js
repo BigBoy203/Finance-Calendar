@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '3.8';
+const WEB_VERSION = '3.9';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -319,16 +319,31 @@ function toggleForcedLate(data, entryId, occDate) {
   return { ...data, forcedLate: nextForced, dismissedLate: nextDismissed, paidHistory: nextPaid };
 }
 
+function deferredTo(data, entryId, occDate) {
+  const target = data.deferred ? data.deferred[`${entryId}|${occDate}`] : null;
+  if (!target) return null;
+  return target >= todayYmd() ? target : null;
+}
+
+function setDeferred(data, entryId, occDate, targetYmd) {
+  const key = `${entryId}|${occDate}`;
+  const next = { ...(data.deferred || {}) };
+  if (targetYmd) next[key] = targetYmd; else delete next[key];
+  return { ...data, deferred: next };
+}
+
 function togglePaidStatus(data, entryId, occDate) {
   const key = `${entryId}|${occDate}`;
   const nextPaid = { ...data.paidHistory };
   const nextForced = { ...(data.forcedLate || {}) };
+  const nextDeferred = { ...(data.deferred || {}) };
   const wasPaid = !!nextPaid[key];
   if (wasPaid) {
     delete nextPaid[key];
   } else {
     nextPaid[key] = true;
     delete nextForced[key];
+    delete nextDeferred[key];
   }
 
   let nextCreditCards = data.creditCards;
@@ -345,7 +360,7 @@ function togglePaidStatus(data, entryId, occDate) {
     }
   }
 
-  return { ...data, paidHistory: nextPaid, forcedLate: nextForced, creditCards: nextCreditCards };
+  return { ...data, paidHistory: nextPaid, forcedLate: nextForced, deferred: nextDeferred, creditCards: nextCreditCards };
 }
 
 function daysBetween(a, b) {
@@ -1025,6 +1040,7 @@ function getBlankData() {
     paidHistory: {},
     dismissedLate: {},
     forcedLate: {},
+    deferred: {},
     removedOccurrences: {},
     activityLog: [],
     overrides: {},

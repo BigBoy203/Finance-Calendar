@@ -1,6 +1,15 @@
 
 const DONUT_COLORS = ['#D85A5A', '#D8A857', '#8B6FD6', '#4FAE6B', '#D8845A', '#5AA8D8', '#C75AA8', '#7A8C5A', '#4FAEA0', '#7FC44F', '#B15AC7', '#5A73C7'];
 
+function PushedMark({ title }) {
+  return h('span', { className: 'push-mark', title },
+    h('svg', { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.6, strokeLinecap: 'round', strokeLinejoin: 'round' },
+      h('path', { d: 'M4 12h14' }),
+      h('path', { d: 'M13 7l5 5-5 5' })
+    )
+  );
+}
+
 function BillChecklist({ rows, data, currency, onToggle, onOpen }) {
   return h('div', { className: 'bill-checklist' },
     rows.map((o) => {
@@ -22,6 +31,7 @@ function BillChecklist({ rows, data, currency, onToggle, onOpen }) {
         h('div', { className: 'bill-check-text' },
           h('p', { className: 'bill-check-name' },
             late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
+            o.pushedTo ? h(PushedMark, { title: `Pushed to ${formatDate(parseYmd(o.pushedTo), data.settings)}` }) : null,
             o.name
           ),
           h('p', { className: 'bill-check-sub' },
@@ -47,6 +57,7 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
         h('div', { className: 'bill-tile-top' },
           h('p', { className: 'bill-tile-name' },
             late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
+            o.pushedTo ? h(PushedMark, { title: `Pushed to ${formatDate(parseYmd(o.pushedTo), data.settings)}` }) : null,
             o.name
           ),
           h('input', {
@@ -66,7 +77,7 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
 }
 
 function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
-  const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext } = nextCheck;
+  const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext, pushedOut } = nextCheck;
   const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
 
   const headingText = period === 0
@@ -129,8 +140,15 @@ function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
 
     bills.length === 0
       ? h('p', { className: 'empty-state' },
-          period === 0 ? 'Nothing due before then \u2014 you\u2019re clear.' : 'Nothing due in this stretch.')
-      : listEl
+          pushedOut.count > 0
+            ? 'Everything in this stretch is pushed forward.'
+            : period === 0 ? 'Nothing due before then \u2014 you\u2019re clear.' : 'Nothing due in this stretch.')
+      : listEl,
+
+    pushedOut.count > 0 ? h('p', { className: 'nextcheck-pushed' },
+      h(PushedMark, { title: 'Pushed forward' }),
+      `${pushedOut.count} pushed to ${formatDate(parseYmd(pushedOut.to), data.settings)} \u00b7 ${fmtCurrency(pushedOut.amount, currency)}`
+    ) : null
   );
 }
 
@@ -170,7 +188,8 @@ function HomePage({ data, setData, isMobile }) {
   const coveredPct = fin.totalBills > 0 ? Math.min(100, (fin.billsPaid / fin.totalBills) * 100) : 0;
 
   const Renderer = isMobile ? BillChecklist : BillTileGrid;
-  const listProps = { data, currency, onToggle: togglePaid, onOpen: setPriceModal };
+  const listProps = { data, currency, onToggle: togglePaid, onOpen: (o) => setPriceModal({ occ: o }) };
+  const checkListProps = { ...listProps, onOpen: (o) => setPriceModal({ occ: o, canPush: true }) };
 
   return h('div', { className: `home-page${isMobile ? ' mobile-home' : ''}` },
     h('div', { className: `home-wash${netSoFar >= 0 ? '' : ' neg'}` },
@@ -195,7 +214,7 @@ function HomePage({ data, setData, isMobile }) {
 
     isCurrentMonth ? h(NextCheckCard, {
       data, currency, nextCheck,
-      listEl: h(Renderer, Object.assign({ rows: nextCheck.bills }, listProps)),
+      listEl: h(Renderer, Object.assign({ rows: nextCheck.bills }, checkListProps)),
       onPrev: () => { haptic('light'); setPeriod(Math.max(0, nextCheck.period - 1)); },
       onNext: () => { haptic('light'); setPeriod(nextCheck.period + 1); }
     }) : null,
@@ -225,7 +244,8 @@ function HomePage({ data, setData, isMobile }) {
     ),
 
     priceModal ? h(PriceOverrideModal, {
-      data, setData, occ: priceModal, currency,
+      data, setData, occ: priceModal.occ, currency,
+      pushTo: priceModal.canPush ? nextCheck.pushTo : null,
       onClose: () => setPriceModal(null)
     }) : null
   );
@@ -456,7 +476,7 @@ function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setF
   );
 }
 
-function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
+function PriceOverrideModal({ data, setData, occ, currency, pushTo, onClose }) {
   const overlay = useOverlayDismiss(onClose);
   const existing = getOverride(data, occ.id, occ.occDate);
   const [price, setPrice] = useState(existing && existing.amount !== undefined ? String(existing.amount) : '');
@@ -490,6 +510,17 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
   }
 
   const { paid, forced, late } = lateState(data, occ);
+  const pushedTo = deferredTo(data, occ.id, occ.occDate);
+
+  function togglePush() {
+    haptic(pushedTo ? 'light' : 'medium');
+    const target = pushedTo ? null : pushTo;
+    let next = setDeferred(data, occ.id, occ.occDate, target);
+    next = logActivity(next, target
+      ? `Pushed "${occ.name}" to ${formatDate(parseYmd(target), data.settings)}`
+      : `Pulled "${occ.name}" back to this pay period`);
+    setData(next);
+  }
 
   function togglePaid() {
     haptic(paid ? 'light' : 'success');
@@ -570,6 +601,19 @@ function PriceOverrideModal({ data, setData, occ, currency, onClose }) {
                 h('span', { className: 'price-action-sub' }, paid ? 'Tap to undo' : 'Check it off for this date')
               ),
               h('span', { className: 'price-action-chevron' }, paid ? '\u2713' : '\u203a')
+            )
+          : null,
+        (pushTo && occ.kind !== 'income' && !paid)
+          ? h('button', { className: `price-action-row${pushedTo ? ' active' : ''}`, onClick: togglePush },
+              h('div', null,
+                h('span', { className: 'price-action-title' },
+                  pushedTo ? `Pushed to ${formatDate(parseYmd(pushedTo), data.settings)}` : 'Push to next check'),
+                h('span', { className: 'price-action-sub' },
+                  pushedTo
+                    ? 'Tap to pull it back to this pay period'
+                    : `Moves it to ${formatDate(parseYmd(pushTo), data.settings)} on Home \u2014 the calendar and totals stay put`)
+              ),
+              h('span', { className: 'price-action-chevron' }, pushedTo ? '\u2713' : '\u203a')
             )
           : null,
         occ.kind !== 'income'

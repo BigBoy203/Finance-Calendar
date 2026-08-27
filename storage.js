@@ -18,6 +18,7 @@
       paidHistory: {},
       dismissedLate: {},
       forcedLate: {},
+      deferred: {},
       removedOccurrences: {},
       activityLog: [],
       overrides: {},

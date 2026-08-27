@@ -353,6 +353,20 @@ label {
   margin-right: 5px;
   vertical-align: middle;
 }
+
+.push-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  margin-right: 5px;
+  vertical-align: middle;
+}
 .bill-tile-sub {
   font-size: 12px;
   color: var(--text-secondary);
@@ -1664,6 +1678,11 @@ label {
 
 @media (max-width: 768px) {
   .bill-check-name .late-dot,
+  .bill-check-name .push-mark {
+    margin-left: 1px;
+    margin-right: 0;
+    flex-shrink: 0;
+  }
   .list-item-name .late-dot {
     margin-left: 1px;
     flex-shrink: 0;
@@ -2773,6 +2792,14 @@ label {
   margin: -4px 0 0;
   font-size: 11px;
   color: var(--text-tertiary);
+}
+.nextcheck-pushed {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: -2px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .drop-card {

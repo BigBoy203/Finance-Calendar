@@ -242,6 +242,9 @@ function useNextCheck(data, period) {
     }
 
     const listFor = resolveSourceList(data);
+    const startStr = ymd(windowStart);
+    const endStr = ymd(windowEnd);
+    const landsHere = (target) => target >= startStr && target <= endStr;
 
     const upcoming = [
       ...expandAll(getAllBillLikeEntries(data), 'bill', windowStart, windowEnd, data),
@@ -250,16 +253,48 @@ function useNextCheck(data, period) {
         .map((e) => oneTimeOccurrence(data, e))
     ].filter((o) => !isPaid(data, o.id, o.occDate));
 
+    const entryById = buildEntryLookup(data);
+    const removed = data.removedOccurrences || {};
+    const pulled = Object.keys(data.deferred || {}).map((key) => {
+      const sep = key.lastIndexOf('|');
+      const entryId = key.slice(0, sep);
+      const occDate = key.slice(sep + 1);
+      const target = deferredTo(data, entryId, occDate);
+      if (!target || !landsHere(target)) return null;
+      if (occDate >= startStr && occDate <= endStr) return null;
+      if (isPaid(data, entryId, occDate) || removed[key]) return null;
+      const entry = entryById[entryId];
+      if (!entry || entry.oneTimeKind === 'income') return null;
+      if (entry.oneTimeKind === 'payment') return oneTimeOccurrence(data, entry);
+      const override = getOverride(data, entryId, occDate);
+      return {
+        ...entry,
+        occDate,
+        amount: hasAmountOverride(override) ? Number(override.amount) || 0 : entryAmount(entry),
+        isRange: !!entry.useAmountRange,
+        hasOverride: hasAmountOverride(override),
+        kind: 'bill'
+      };
+    }).filter(Boolean);
+
+    const pushedOut = [];
     const seen = new Set();
-    const bills = [...(idx === 0 ? getLateBills(data) : []), ...upcoming]
+    const bills = [...(idx === 0 ? getLateBills(data) : []), ...upcoming, ...pulled]
       .filter((o) => {
         const key = `${o.id}|${o.occDate}`;
         if (seen.has(key)) return false;
         seen.add(key);
+        const target = deferredTo(data, o.id, o.occDate);
+        if (target && !landsHere(target)) {
+          pushedOut.push({ ...o, target });
+          return false;
+        }
         return true;
       })
-      .map((o) => ({ ...o, sourceList: listFor(o) }))
+      .map((o) => ({ ...o, sourceList: listFor(o), pushedTo: deferredTo(data, o.id, o.occDate) }))
       .sort((a, b) => a.occDate.localeCompare(b.occDate));
+
+    const nextCheckDate = checks[idx + 1] ? checks[idx + 1].occDate : null;
 
     return {
       check,
@@ -272,7 +307,13 @@ function useNextCheck(data, period) {
       due: bills.reduce((sum, o) => sum + o.amount, 0),
       checkAmount: check ? check.amount : 0,
       estimate,
-      overdueCount: bills.filter((o) => parseYmd(o.occDate) < today).length
+      overdueCount: bills.filter((o) => parseYmd(o.occDate) < today).length,
+      pushTo: nextCheckDate,
+      pushedOut: {
+        count: pushedOut.length,
+        amount: pushedOut.reduce((sum, o) => sum + o.amount, 0),
+        to: pushedOut.reduce((soonest, o) => (soonest && soonest <= o.target ? soonest : o.target), null)
+      }
     };
   }, [data, period]);
 }
