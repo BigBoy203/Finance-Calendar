@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '3.9';
+const WEB_VERSION = '4.0';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -20,8 +20,24 @@ function haptic(kind) {
   } catch (e) {}
 }
 
+let _scrollLocks = 0;
+
 function useOverlayDismiss(onClose) {
   const startedOnOverlay = useRef(false);
+  useEffect(() => {
+    const panes = Array.from(document.querySelectorAll('.main-content, .wizard-shell'));
+    const saved = panes.map((p) => p.scrollTop);
+    _scrollLocks++;
+    document.body.classList.add('modal-open');
+    return () => {
+      _scrollLocks--;
+      if (_scrollLocks <= 0) {
+        _scrollLocks = 0;
+        document.body.classList.remove('modal-open');
+      }
+      panes.forEach((p, i) => { p.scrollTop = saved[i]; });
+    };
+  }, []);
   return {
     onPointerDown: (e) => { startedOnOverlay.current = e.target === e.currentTarget; },
     onClick: (e) => {
@@ -278,6 +294,9 @@ function oneTimeOccurrence(data, entry) {
 }
 
 function occAmountLabel(occ, currency) {
+  if (occ.covered > 0) {
+    return fmtCurrency(occ.amount, currency);
+  }
   if (occ.hasOverride) {
     return fmtCurrency(occ.amount, currency);
   }
@@ -332,11 +351,23 @@ function setDeferred(data, entryId, occDate, targetYmd) {
   return { ...data, deferred: next };
 }
 
+function coveredAmount(data, entryId, occDate) {
+  return Number((data.covered || {})[`${entryId}|${occDate}`]) || 0;
+}
+
+function setCovered(data, entryId, occDate, amount) {
+  const key = `${entryId}|${occDate}`;
+  const next = { ...(data.covered || {}) };
+  if (amount > 0) next[key] = amount; else delete next[key];
+  return { ...data, covered: next };
+}
+
 function togglePaidStatus(data, entryId, occDate) {
   const key = `${entryId}|${occDate}`;
   const nextPaid = { ...data.paidHistory };
   const nextForced = { ...(data.forcedLate || {}) };
   const nextDeferred = { ...(data.deferred || {}) };
+  const nextCovered = { ...(data.covered || {}) };
   const wasPaid = !!nextPaid[key];
   if (wasPaid) {
     delete nextPaid[key];
@@ -344,6 +375,7 @@ function togglePaidStatus(data, entryId, occDate) {
     nextPaid[key] = true;
     delete nextForced[key];
     delete nextDeferred[key];
+    delete nextCovered[key];
   }
 
   let nextCreditCards = data.creditCards;
@@ -360,7 +392,7 @@ function togglePaidStatus(data, entryId, occDate) {
     }
   }
 
-  return { ...data, paidHistory: nextPaid, forcedLate: nextForced, deferred: nextDeferred, creditCards: nextCreditCards };
+  return { ...data, paidHistory: nextPaid, forcedLate: nextForced, deferred: nextDeferred, covered: nextCovered, creditCards: nextCreditCards };
 }
 
 function daysBetween(a, b) {
@@ -1041,6 +1073,7 @@ function getBlankData() {
     dismissedLate: {},
     forcedLate: {},
     deferred: {},
+    covered: {},
     removedOccurrences: {},
     activityLog: [],
     overrides: {},

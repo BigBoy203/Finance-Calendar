@@ -37,7 +37,11 @@ function BillChecklist({ rows, data, currency, onToggle, onOpen }) {
           h('p', { className: 'bill-check-sub' },
             `${formatDate(parseYmd(o.occDate), data.settings)} \u00b7 ${o.category || (FREQ_LABELS[o.freq] || o.freq)}`)
         ),
-        h('span', { className: 'bill-check-amount' }, occAmountLabel(o, currency))
+        h('span', { className: 'bill-check-amount' },
+          occAmountLabel(o, currency),
+          o.covered > 0 ? h('span', { className: 'bill-check-of' },
+            `of ${fmtCurrency(o.amount + o.covered, currency)}`) : null
+        )
       );
     })
   );
@@ -68,7 +72,11 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
             'aria-label': `Mark ${o.name} paid`
           })
         ),
-        h('p', { className: 'bill-tile-amount' }, occAmountLabel(o, currency)),
+        h('p', { className: 'bill-tile-amount' },
+          occAmountLabel(o, currency),
+          o.covered > 0 ? h('span', { className: 'bill-tile-of' },
+            `of ${fmtCurrency(o.amount + o.covered, currency)}`) : null
+        ),
         h('p', { className: 'bill-tile-sub' },
           `${formatDate(parseYmd(o.occDate), data.settings)} \u2014 ${o.category || (FREQ_LABELS[o.freq] || o.freq)}`)
       );
@@ -189,7 +197,7 @@ function HomePage({ data, setData, isMobile }) {
 
   const Renderer = isMobile ? BillChecklist : BillTileGrid;
   const listProps = { data, currency, onToggle: togglePaid, onOpen: (o) => setPriceModal({ occ: o }) };
-  const checkListProps = { ...listProps, onOpen: (o) => setPriceModal({ occ: o, canPush: true }) };
+  const checkListProps = { ...listProps, onOpen: (o) => setPriceModal({ occ: o, inCheckCard: true }) };
 
   return h('div', { className: `home-page${isMobile ? ' mobile-home' : ''}` },
     h('div', { className: `home-wash${netSoFar >= 0 ? '' : ' neg'}` },
@@ -245,7 +253,8 @@ function HomePage({ data, setData, isMobile }) {
 
     priceModal ? h(PriceOverrideModal, {
       data, setData, occ: priceModal.occ, currency,
-      pushTo: priceModal.canPush ? nextCheck.pushTo : null,
+      inCheckCard: !!priceModal.inCheckCard,
+      pushTo: nextCheck.pushTo,
       onClose: () => setPriceModal(null)
     }) : null
   );
@@ -476,11 +485,16 @@ function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setF
   );
 }
 
-function PriceOverrideModal({ data, setData, occ, currency, pushTo, onClose }) {
+function PriceOverrideModal({ data, setData, occ, currency, inCheckCard, pushTo, onClose }) {
   const overlay = useOverlayDismiss(onClose);
   const existing = getOverride(data, occ.id, occ.occDate);
   const [price, setPrice] = useState(existing && existing.amount !== undefined ? String(existing.amount) : '');
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [cover, setCover] = useState(() => {
+    const already = coveredAmount(data, occ.id, occ.occDate);
+    return already > 0 ? String(already) : '';
+  });
+  const [coverOpen, setCoverOpen] = useState(false);
 
   function save() {
     haptic('success');
@@ -511,6 +525,23 @@ function PriceOverrideModal({ data, setData, occ, currency, pushTo, onClose }) {
 
   const { paid, forced, late } = lateState(data, occ);
   const pushedTo = deferredTo(data, occ.id, occ.occDate);
+  const covered = coveredAmount(data, occ.id, occ.occDate);
+  const fullAmount = hasAmountOverride(existing) ? Number(existing.amount) || 0 : entryAmount(occ);
+  const coverVal = Math.min(parseFloat(cover) || 0, fullAmount);
+  const remaining = Math.max(0, fullAmount - coverVal);
+
+  function applyCover() {
+    haptic('success');
+    let next = setCovered(data, occ.id, occ.occDate, coverVal);
+    if (coverVal > 0 && pushTo && !pushedTo) {
+      next = setDeferred(next, occ.id, occ.occDate, pushTo);
+    }
+    next = logActivity(next, coverVal > 0
+      ? `Covered ${fmtCurrency(coverVal, currency)} of "${occ.name}"`
+      : `Cleared the covered amount on "${occ.name}"`);
+    setData(next);
+    setCoverOpen(false);
+  }
 
   function togglePush() {
     haptic(pushedTo ? 'light' : 'medium');
@@ -594,16 +625,7 @@ function PriceOverrideModal({ data, setData, occ, currency, pushTo, onClose }) {
       ),
 
       h('div', { className: 'price-actions' },
-        occ.kind !== 'income'
-          ? h('button', { className: `price-action-row${paid ? ' active' : ''}`, onClick: togglePaid },
-              h('div', null,
-                h('span', { className: 'price-action-title' }, paid ? 'Paid' : 'Mark as paid'),
-                h('span', { className: 'price-action-sub' }, paid ? 'Tap to undo' : 'Check it off for this date')
-              ),
-              h('span', { className: 'price-action-chevron' }, paid ? '\u2713' : '\u203a')
-            )
-          : null,
-        (pushTo && occ.kind !== 'income' && !paid)
+        (inCheckCard && pushTo && occ.kind !== 'income' && !paid)
           ? h('button', { className: `price-action-row${pushedTo ? ' active' : ''}`, onClick: togglePush },
               h('div', null,
                 h('span', { className: 'price-action-title' },
@@ -616,31 +638,88 @@ function PriceOverrideModal({ data, setData, occ, currency, pushTo, onClose }) {
               h('span', { className: 'price-action-chevron' }, pushedTo ? '\u2713' : '\u203a')
             )
           : null,
-        occ.kind !== 'income'
-          ? (forced
-              ? h('button', { className: 'price-action-row active', onClick: toggleLate },
-                  h('div', null,
-                    h('span', { className: 'price-action-title' }, 'Marked late'),
-                    h('span', { className: 'price-action-sub' }, 'Tap to clear')
-                  ),
-                  h('span', { className: 'price-action-chevron' }, '\u2713')
-                )
-              : late
-                ? h('button', { className: 'price-action-row', onClick: dismissLate },
-                    h('div', null,
-                      h('span', { className: 'price-action-title' }, 'Dismiss late warning'),
-                      h('span', { className: 'price-action-sub' }, 'Stop flagging this date as late')
-                    ),
-                    h('span', { className: 'price-action-chevron' }, '\u203a')
-                  )
-                : h('button', { className: 'price-action-row', onClick: toggleLate },
-                    h('div', null,
-                      h('span', { className: 'price-action-title' }, 'Mark late'),
-                      h('span', { className: 'price-action-sub' }, 'Flag this date as late')
-                    ),
-                    h('span', { className: 'price-action-chevron' }, '\u203a')
-                  ))
+
+        (inCheckCard && occ.kind !== 'income' && !paid)
+          ? h('div', { className: 'price-cover-block' },
+              h('button', {
+                className: `price-action-row${covered > 0 ? ' active' : ''}`,
+                onClick: () => { haptic('light'); setCoverOpen((v) => !v); },
+                'aria-expanded': coverOpen
+              },
+                h('div', null,
+                  h('span', { className: 'price-action-title' },
+                    covered > 0 ? `Covering ${fmtCurrency(covered, currency)}` : 'Cover part of it'),
+                  h('span', { className: 'price-action-sub' },
+                    covered > 0
+                      ? `${fmtCurrency(Math.max(0, fullAmount - covered), currency)} still owed`
+                      : 'Put down what you can, carry the rest')
+                ),
+                h('span', { className: `price-action-chevron${coverOpen ? ' open' : ''}` }, '\u203a')
+              ),
+              coverOpen ? h('div', { className: 'price-cover' },
+                h('input', {
+                  type: 'number',
+                  inputMode: 'decimal',
+                  placeholder: `up to ${fmtCurrency(fullAmount, currency)}`,
+                  value: cover,
+                  onChange: (e) => setCover(e.target.value)
+                }),
+                h('div', { className: 'setup-chips' },
+                  h('button', {
+                    className: 'setup-chip',
+                    onClick: () => { haptic('light'); setCover(String(Math.round((fullAmount / 2) * 100) / 100)); }
+                  }, `Half \u00b7 ${fmtCurrency(fullAmount / 2, currency)}`),
+                  cover !== '' ? h('button', {
+                    className: 'setup-chip',
+                    onClick: () => { haptic('light'); setCover(''); }
+                  }, 'Clear') : null
+                ),
+                h('p', { className: 'price-cover-note' },
+                  coverVal > 0
+                    ? `${fmtCurrency(remaining, currency)} would still be owed`
+                    : 'Enter what you can put toward it now'),
+                h('button', {
+                  className: 'primary price-cover-go',
+                  onClick: applyCover,
+                  disabled: coverVal <= 0 && covered <= 0
+                },
+                  coverVal <= 0
+                    ? 'Clear the covered amount'
+                    : (pushTo && !pushedTo)
+                      ? `Cover ${fmtCurrency(coverVal, currency)} \u00b7 push the rest`
+                      : `Cover ${fmtCurrency(coverVal, currency)}`)
+              ) : null
+            )
           : null,
+
+        occ.kind === 'income' ? null : occ.isOneTime
+          ? h('button', { className: `price-action-row${paid ? ' active' : ''}`, onClick: togglePaid },
+              h('div', null,
+                h('span', { className: 'price-action-title' }, paid ? 'Paid' : 'Mark as paid'),
+                h('span', { className: 'price-action-sub' }, paid ? 'Tap to undo' : 'Check it off for this date')
+              ),
+              h('span', { className: 'price-action-chevron' }, paid ? '\u2713' : '\u203a')
+            )
+          : h('div', { className: 'price-action-pair' },
+          h('button', { className: `price-action-row half${paid ? ' active' : ''}`, onClick: togglePaid },
+            h('span', { className: 'price-action-title' }, paid ? 'Paid' : 'Mark paid'),
+            h('span', { className: 'price-action-sub' }, paid ? 'Tap to undo' : 'Check it off')
+          ),
+          (forced
+            ? h('button', { className: 'price-action-row half active', onClick: toggleLate },
+                h('span', { className: 'price-action-title' }, 'Marked late'),
+                h('span', { className: 'price-action-sub' }, 'Tap to clear')
+              )
+            : late
+              ? h('button', { className: 'price-action-row half', onClick: dismissLate },
+                  h('span', { className: 'price-action-title' }, 'Late'),
+                  h('span', { className: 'price-action-sub' }, 'Tap to dismiss')
+                )
+              : h('button', { className: 'price-action-row half', onClick: toggleLate },
+                  h('span', { className: 'price-action-title' }, 'Mark late'),
+                  h('span', { className: 'price-action-sub' }, 'Flag this date')
+                ))
+        ),
         h('button', { className: 'price-action-row danger', onClick: () => confirmRemove ? removeThisOccurrence() : setConfirmRemove(true) },
           h('div', null,
             h('span', { className: 'price-action-title' }, confirmRemove ? 'Tap again to confirm' : 'Remove this occurrence'),

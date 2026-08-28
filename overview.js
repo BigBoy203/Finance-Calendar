@@ -85,10 +85,17 @@ function useMonthFinancials(data, cursor) {
     .reduce((sum, o) => sum + o.amount, 0)
     + oneTimePayments
       .filter((o) => isPaid(data, o.id, o.occDate))
-      .reduce((sum, o) => sum + o.amount, 0);
+      .reduce((sum, o) => sum + o.amount, 0)
+    + [...billOccurrences, ...oneTimePayments]
+      .filter((o) => !isPaid(data, o.id, o.occDate))
+      .reduce((sum, o) => sum + Math.min(coveredAmount(data, o.id, o.occDate), o.amount), 0);
 
   const allTiles = useMemo(
-    () => [...billOccurrences, ...oneTimePayments].sort((a, b) => {
+    () => [...billOccurrences, ...oneTimePayments].map((o) => {
+      const covered = coveredAmount(data, o.id, o.occDate);
+      if (covered <= 0 || isPaid(data, o.id, o.occDate)) return o;
+      return { ...o, covered, amount: Math.max(0, o.amount - covered) };
+    }).sort((a, b) => {
       const aPaid = isPaid(data, a.id, a.occDate);
       const bPaid = isPaid(data, b.id, b.occDate);
       if (aPaid !== bPaid) return aPaid ? 1 : -1;
@@ -277,6 +284,7 @@ function useNextCheck(data, period) {
       };
     }).filter(Boolean);
 
+    const remainingOf = (o) => Math.max(0, o.amount - coveredAmount(data, o.id, o.occDate));
     const pushedOut = [];
     const seen = new Set();
     const bills = [...(idx === 0 ? getLateBills(data) : []), ...upcoming, ...pulled]
@@ -286,12 +294,18 @@ function useNextCheck(data, period) {
         seen.add(key);
         const target = deferredTo(data, o.id, o.occDate);
         if (target && !landsHere(target)) {
-          pushedOut.push({ ...o, target });
+          pushedOut.push({ ...o, target, amount: remainingOf(o) });
           return false;
         }
         return true;
       })
-      .map((o) => ({ ...o, sourceList: listFor(o), pushedTo: deferredTo(data, o.id, o.occDate) }))
+      .map((o) => ({
+        ...o,
+        sourceList: listFor(o),
+        pushedTo: deferredTo(data, o.id, o.occDate),
+        covered: coveredAmount(data, o.id, o.occDate),
+        amount: remainingOf(o)
+      }))
       .sort((a, b) => a.occDate.localeCompare(b.occDate));
 
     const nextCheckDate = checks[idx + 1] ? checks[idx + 1].occDate : null;

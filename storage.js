@@ -19,6 +19,7 @@
       dismissedLate: {},
       forcedLate: {},
       deferred: {},
+      covered: {},
       removedOccurrences: {},
       activityLog: [],
       overrides: {},
