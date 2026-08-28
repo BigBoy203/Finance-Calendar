@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '4.0';
+const WEB_VERSION = '4.1';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -488,6 +488,10 @@ function buildSourceListLookup(data) {
   getCreditCardPaymentEntries(data).forEach((e) => { map[e.id] = 'creditCards'; });
   data.incomeSources.forEach((e) => { map[e.id] = 'incomeSources'; });
   return map;
+}
+
+function purchaseEntries(data) {
+  return (data.oneTimeEntries || []).filter((e) => e.oneTimeKind === 'payment' && e.date);
 }
 
 function getAllBillLikeEntries(data) {

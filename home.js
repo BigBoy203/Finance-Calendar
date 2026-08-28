@@ -85,7 +85,7 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
 }
 
 function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
-  const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext, pushedOut } = nextCheck;
+  const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext, pushedOut, spent, spendStart } = nextCheck;
   const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
 
   const headingText = period === 0
@@ -100,8 +100,9 @@ function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
     ? `${overdueCount} overdue \u00b7 ${bills.length} to pay`
     : `${bills.length} to pay`;
 
-  const shortfall = due - checkAmount;
-  const fillPct = checkAmount > 0 ? Math.min(100, (due / checkAmount) * 100) : 0;
+  const shortfall = due + spent - checkAmount;
+  const billsPct = checkAmount > 0 ? Math.min(100, (due / checkAmount) * 100) : 0;
+  const spentPct = checkAmount > 0 ? Math.max(0, Math.min(100 - billsPct, (spent / checkAmount) * 100)) : 0;
   const rangeText = `${formatDate(windowStart, data.settings)} \u2013 ${formatDate(windowEnd, data.settings)}`;
 
   return h('section', { className: `nextcheck${overdueCount > 0 ? ' urgent' : ''}` },
@@ -133,13 +134,21 @@ function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
     ) : null,
 
     checkAmount > 0 ? h('div', { className: 'nextcheck-bar' },
-      h('span', { className: `nextcheck-bar-fill${shortfall > 0 ? ' over' : ''}`, style: { width: `${fillPct}%` } })
+      h('span', { className: `nextcheck-bar-fill${shortfall > 0 ? ' over' : ''}`, style: { width: `${billsPct}%` } }),
+      spent > 0 ? h('span', {
+        className: `nextcheck-bar-spent${shortfall > 0 ? ' over' : ''}`,
+        style: { width: `${spentPct}%` }
+      }) : null
     ) : null,
 
     checkAmount > 0 ? h('p', { className: `nextcheck-verdict${shortfall > 0 ? ' short' : ''}` },
       shortfall > 0
         ? `${fmtCurrency(shortfall, currency)} more than that check covers`
         : `${fmtCurrency(-shortfall, currency)} of it left over`
+    ) : null,
+
+    spent > 0 ? h('p', { className: 'nextcheck-spent' },
+      `${fmtCurrency(spent, currency)} spent since ${formatDate(spendStart, data.settings)}`
     ) : null,
 
     estimate ? h('p', { className: 'nextcheck-est' },

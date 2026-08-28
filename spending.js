@@ -11,10 +11,6 @@ function categoryColor(category) {
   return DONUT_COLORS[Math.abs(hash) % DONUT_COLORS.length];
 }
 
-function purchaseEntries(data) {
-  return (data.oneTimeEntries || []).filter((e) => e.oneTimeKind === 'payment' && e.date);
-}
-
 function categoryTotals(data, monthKey) {
   const map = {};
   purchaseEntries(data).forEach((e) => {

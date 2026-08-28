@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '4.0';
+const WEB_VERSION = '4.1';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -488,6 +488,10 @@ function buildSourceListLookup(data) {
   getCreditCardPaymentEntries(data).forEach((e) => { map[e.id] = 'creditCards'; });
   data.incomeSources.forEach((e) => { map[e.id] = 'incomeSources'; });
   return map;
+}
+
+function purchaseEntries(data) {
+  return (data.oneTimeEntries || []).filter((e) => e.oneTimeKind === 'payment' && e.date);
 }
 
 function getAllBillLikeEntries(data) {
@@ -2382,7 +2386,7 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
 }
 
 function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
-  const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext, pushedOut } = nextCheck;
+  const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext, pushedOut, spent, spendStart } = nextCheck;
   const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
 
   const headingText = period === 0
@@ -2397,8 +2401,9 @@ function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
     ? `${overdueCount} overdue \u00b7 ${bills.length} to pay`
     : `${bills.length} to pay`;
 
-  const shortfall = due - checkAmount;
-  const fillPct = checkAmount > 0 ? Math.min(100, (due / checkAmount) * 100) : 0;
+  const shortfall = due + spent - checkAmount;
+  const billsPct = checkAmount > 0 ? Math.min(100, (due / checkAmount) * 100) : 0;
+  const spentPct = checkAmount > 0 ? Math.max(0, Math.min(100 - billsPct, (spent / checkAmount) * 100)) : 0;
   const rangeText = `${formatDate(windowStart, data.settings)} \u2013 ${formatDate(windowEnd, data.settings)}`;
 
   return h('section', { className: `nextcheck${overdueCount > 0 ? ' urgent' : ''}` },
@@ -2430,13 +2435,21 @@ function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
     ) : null,
 
     checkAmount > 0 ? h('div', { className: 'nextcheck-bar' },
-      h('span', { className: `nextcheck-bar-fill${shortfall > 0 ? ' over' : ''}`, style: { width: `${fillPct}%` } })
+      h('span', { className: `nextcheck-bar-fill${shortfall > 0 ? ' over' : ''}`, style: { width: `${billsPct}%` } }),
+      spent > 0 ? h('span', {
+        className: `nextcheck-bar-spent${shortfall > 0 ? ' over' : ''}`,
+        style: { width: `${spentPct}%` }
+      }) : null
     ) : null,
 
     checkAmount > 0 ? h('p', { className: `nextcheck-verdict${shortfall > 0 ? ' short' : ''}` },
       shortfall > 0
         ? `${fmtCurrency(shortfall, currency)} more than that check covers`
         : `${fmtCurrency(-shortfall, currency)} of it left over`
+    ) : null,
+
+    spent > 0 ? h('p', { className: 'nextcheck-spent' },
+      `${fmtCurrency(spent, currency)} spent since ${formatDate(spendStart, data.settings)}`
     ) : null,
 
     estimate ? h('p', { className: 'nextcheck-est' },
@@ -3900,6 +3913,23 @@ function useNextCheck(data, period) {
       windowStart.setDate(windowStart.getDate() - grace);
     }
 
+    const lookback = new Date(today);
+    lookback.setDate(lookback.getDate() - 120);
+    const pastChecks = [
+      ...expandAll(data.incomeSources, 'income', lookback, today, data),
+      ...data.oneTimeEntries
+        .filter((e) => e.oneTimeKind === 'income' && e.date && parseYmd(e.date) >= lookback && parseYmd(e.date) <= today)
+        .map((e) => oneTimeOccurrence(data, e))
+    ].sort((a, b) => a.occDate.localeCompare(b.occDate));
+    const lastCheck = pastChecks.length ? pastChecks[pastChecks.length - 1] : null;
+
+    const spendStart = new Date(windowStart);
+    if (idx === 0 && lastCheck) {
+      const last = parseYmd(lastCheck.occDate);
+      spendStart.setFullYear(last.getFullYear(), last.getMonth(), last.getDate());
+    }
+    const spendStartStr = ymd(spendStart);
+
     const listFor = resolveSourceList(data);
     const startStr = ymd(windowStart);
     const endStr = ymd(windowEnd);
@@ -3962,6 +3992,10 @@ function useNextCheck(data, period) {
 
     const nextCheckDate = checks[idx + 1] ? checks[idx + 1].occDate : null;
 
+    const spent = purchaseEntries(data)
+      .filter((e) => e.date >= spendStartStr && e.date <= endStr && isPaid(data, e.id, e.date))
+      .reduce((sum, e) => sum + oneTimeOccurrence(data, e).amount, 0);
+
     return {
       check,
       windowStart,
@@ -3974,6 +4008,8 @@ function useNextCheck(data, period) {
       checkAmount: check ? check.amount : 0,
       estimate,
       overdueCount: bills.filter((o) => parseYmd(o.occDate) < today).length,
+      spent,
+      spendStart,
       pushTo: nextCheckDate,
       pushedOut: {
         count: pushedOut.length,
@@ -4150,10 +4186,6 @@ function categoryColor(category) {
   let hash = 0;
   for (let i = 0; i < (category || '').length; i++) hash = (hash * 31 + category.charCodeAt(i)) | 0;
   return DONUT_COLORS[Math.abs(hash) % DONUT_COLORS.length];
-}
-
-function purchaseEntries(data) {
-  return (data.oneTimeEntries || []).filter((e) => e.oneTimeKind === 'payment' && e.date);
 }
 
 function categoryTotals(data, monthKey) {

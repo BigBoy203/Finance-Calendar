@@ -248,6 +248,23 @@ function useNextCheck(data, period) {
       windowStart.setDate(windowStart.getDate() - grace);
     }
 
+    const lookback = new Date(today);
+    lookback.setDate(lookback.getDate() - 120);
+    const pastChecks = [
+      ...expandAll(data.incomeSources, 'income', lookback, today, data),
+      ...data.oneTimeEntries
+        .filter((e) => e.oneTimeKind === 'income' && e.date && parseYmd(e.date) >= lookback && parseYmd(e.date) <= today)
+        .map((e) => oneTimeOccurrence(data, e))
+    ].sort((a, b) => a.occDate.localeCompare(b.occDate));
+    const lastCheck = pastChecks.length ? pastChecks[pastChecks.length - 1] : null;
+
+    const spendStart = new Date(windowStart);
+    if (idx === 0 && lastCheck) {
+      const last = parseYmd(lastCheck.occDate);
+      spendStart.setFullYear(last.getFullYear(), last.getMonth(), last.getDate());
+    }
+    const spendStartStr = ymd(spendStart);
+
     const listFor = resolveSourceList(data);
     const startStr = ymd(windowStart);
     const endStr = ymd(windowEnd);
@@ -310,6 +327,10 @@ function useNextCheck(data, period) {
 
     const nextCheckDate = checks[idx + 1] ? checks[idx + 1].occDate : null;
 
+    const spent = purchaseEntries(data)
+      .filter((e) => e.date >= spendStartStr && e.date <= endStr && isPaid(data, e.id, e.date))
+      .reduce((sum, e) => sum + oneTimeOccurrence(data, e).amount, 0);
+
     return {
       check,
       windowStart,
@@ -322,6 +343,8 @@ function useNextCheck(data, period) {
       checkAmount: check ? check.amount : 0,
       estimate,
       overdueCount: bills.filter((o) => parseYmd(o.occDate) < today).length,
+      spent,
+      spendStart,
       pushTo: nextCheckDate,
       pushedOut: {
         count: pushedOut.length,
