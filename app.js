@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '4.1';
+const WEB_VERSION = '4.2';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -2386,7 +2386,7 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
 }
 
 function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
-  const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext, pushedOut, spent, spendStart } = nextCheck;
+  const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext, pushedOut, spent, spendStart, cycleCheck, cycleLeft } = nextCheck;
   const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
 
   const headingText = period === 0
@@ -2442,10 +2442,17 @@ function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
       }) : null
     ) : null,
 
-    checkAmount > 0 ? h('p', { className: `nextcheck-verdict${shortfall > 0 ? ' short' : ''}` },
-      shortfall > 0
-        ? `${fmtCurrency(shortfall, currency)} more than that check covers`
-        : `${fmtCurrency(-shortfall, currency)} of it left over`
+    (checkAmount > 0 || cycleLeft !== null) ? h('div', { className: 'nextcheck-under' },
+      checkAmount > 0 ? h('p', { className: `nextcheck-verdict${shortfall > 0 ? ' short' : ''}` },
+        shortfall > 0
+          ? `${fmtCurrency(shortfall, currency)} more than that check covers`
+          : `${fmtCurrency(-shortfall, currency)} of it left over`
+      ) : null,
+      cycleLeft !== null ? h('div', { className: 'nextcheck-bank' },
+        h('span', { className: 'nextcheck-bank-label' }, 'Bank estimate'),
+        h('span', { className: `nextcheck-bank-figure${cycleLeft < 0 ? ' short' : ''}` },
+          fmtCurrency(cycleLeft, currency))
+      ) : null
     ) : null,
 
     spent > 0 ? h('p', { className: 'nextcheck-spent' },
@@ -3996,6 +4003,13 @@ function useNextCheck(data, period) {
       .filter((e) => e.date >= spendStartStr && e.date <= endStr && isPaid(data, e.id, e.date))
       .reduce((sum, e) => sum + oneTimeOccurrence(data, e).amount, 0);
 
+    const cycleCheck = idx === 0 ? lastCheck : null;
+    const cyclePaid = expandAll(getAllBillLikeEntries(data), 'bill', spendStart, windowEnd, data)
+      .filter((o) => isPaid(data, o.id, o.occDate))
+      .reduce((sum, o) => sum + o.amount, 0);
+    const cycleCovered = [...bills, ...pushedOut]
+      .reduce((sum, o) => sum + coveredAmount(data, o.id, o.occDate), 0);
+
     return {
       check,
       windowStart,
@@ -4010,6 +4024,8 @@ function useNextCheck(data, period) {
       overdueCount: bills.filter((o) => parseYmd(o.occDate) < today).length,
       spent,
       spendStart,
+      cycleCheck,
+      cycleLeft: cycleCheck ? cycleCheck.amount - spent - cyclePaid - cycleCovered : null,
       pushTo: nextCheckDate,
       pushedOut: {
         count: pushedOut.length,

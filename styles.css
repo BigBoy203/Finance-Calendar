@@ -2861,6 +2861,38 @@ button.price-cover-go:disabled {
 .nextcheck-verdict.short {
   color: var(--late-red);
 }
+.nextcheck-under {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -6px 0 0;
+}
+.nextcheck-under .nextcheck-verdict {
+  margin: 0;
+  min-width: 0;
+}
+.nextcheck-bank {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  flex-shrink: 0;
+}
+.nextcheck-bank-label {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.nextcheck-bank-figure {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.nextcheck-bank-figure.short {
+  color: var(--late-red);
+}
 .nextcheck-est {
   margin: -4px 0 0;
   font-size: 11px;

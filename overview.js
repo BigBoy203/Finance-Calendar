@@ -331,6 +331,13 @@ function useNextCheck(data, period) {
       .filter((e) => e.date >= spendStartStr && e.date <= endStr && isPaid(data, e.id, e.date))
       .reduce((sum, e) => sum + oneTimeOccurrence(data, e).amount, 0);
 
+    const cycleCheck = idx === 0 ? lastCheck : null;
+    const cyclePaid = expandAll(getAllBillLikeEntries(data), 'bill', spendStart, windowEnd, data)
+      .filter((o) => isPaid(data, o.id, o.occDate))
+      .reduce((sum, o) => sum + o.amount, 0);
+    const cycleCovered = [...bills, ...pushedOut]
+      .reduce((sum, o) => sum + coveredAmount(data, o.id, o.occDate), 0);
+
     return {
       check,
       windowStart,
@@ -345,6 +352,8 @@ function useNextCheck(data, period) {
       overdueCount: bills.filter((o) => parseYmd(o.occDate) < today).length,
       spent,
       spendStart,
+      cycleCheck,
+      cycleLeft: cycleCheck ? cycleCheck.amount - spent - cyclePaid - cycleCovered : null,
       pushTo: nextCheckDate,
       pushedOut: {
         count: pushedOut.length,

@@ -85,7 +85,7 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
 }
 
 function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
-  const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext, pushedOut, spent, spendStart } = nextCheck;
+  const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext, pushedOut, spent, spendStart, cycleCheck, cycleLeft } = nextCheck;
   const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
 
   const headingText = period === 0
@@ -141,10 +141,17 @@ function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
       }) : null
     ) : null,
 
-    checkAmount > 0 ? h('p', { className: `nextcheck-verdict${shortfall > 0 ? ' short' : ''}` },
-      shortfall > 0
-        ? `${fmtCurrency(shortfall, currency)} more than that check covers`
-        : `${fmtCurrency(-shortfall, currency)} of it left over`
+    (checkAmount > 0 || cycleLeft !== null) ? h('div', { className: 'nextcheck-under' },
+      checkAmount > 0 ? h('p', { className: `nextcheck-verdict${shortfall > 0 ? ' short' : ''}` },
+        shortfall > 0
+          ? `${fmtCurrency(shortfall, currency)} more than that check covers`
+          : `${fmtCurrency(-shortfall, currency)} of it left over`
+      ) : null,
+      cycleLeft !== null ? h('div', { className: 'nextcheck-bank' },
+        h('span', { className: 'nextcheck-bank-label' }, 'Bank estimate'),
+        h('span', { className: `nextcheck-bank-figure${cycleLeft < 0 ? ' short' : ''}` },
+          fmtCurrency(cycleLeft, currency))
+      ) : null
     ) : null,
 
     spent > 0 ? h('p', { className: 'nextcheck-spent' },
