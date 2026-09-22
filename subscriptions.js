@@ -26,45 +26,29 @@ function SubscriptionsPage({ data, setData }) {
   }
 
   const list = data.subscriptions;
-  const total = list.reduce((sum, e) => {
-    let monthly = entryAmount(e);
-    if (e.freq === 'weekly') monthly *= 4.33;
-    else if (e.freq === 'biweekly') monthly *= 2.17;
-    else if (e.freq === 'yearly') monthly /= 12;
-    return sum + monthly;
-  }, 0);
+  const total = list.reduce((sum, e) => sum + monthlyAmount(e), 0);
 
   return h('div', null,
-    h('div', { className: 'row-between' },
-      h('h2', { style: { margin: 0 } }, 'Subscriptions & extras'),
-      h('button', { onClick: openAdd }, '+ Add')
-    ),
-    h('div', { className: 'metric-card', style: { marginTop: '12px', marginBottom: '12px' } },
-      h('p', { className: 'metric-label' }, 'Approx. monthly total'),
-      h('p', { className: 'metric-value' }, fmtCurrency(total, currency))
+    h('div', { className: 'sub-head' },
+      h('h2', { className: 'sub-title' }, 'Subscriptions'),
+      h('p', { className: 'sub-caption' },
+        list.length === 0
+          ? 'Streaming, apps, memberships \u2014 anything that renews on its own.'
+          : `${list.length} ${list.length === 1 ? 'subscription' : 'subscriptions'} \u00b7 about ${fmtCurrency(total, currency)} a month \u00b7 ${fmtCurrency(total * 12, currency)} a year`)
     ),
     list.length === 0
       ? h('p', { className: 'empty-state' }, 'No subscriptions added yet.')
-      : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-          list.map((e) => {
-            const d = parseYmd(e.date);
-            const dateLabel = formatDate(d, data.settings);
-            return h('div', { key: e.id, className: 'list-item clickable', onClick: () => openEdit(e) },
-              h('div', null,
-                h('p', { className: 'list-item-name' }, e.name),
-                h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}${e.category ? ' - ' + e.category : ''}`)
-              ),
-              h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
-                h('span', { className: 'list-item-amount' }, entryAmountLabel(e, currency)),
-                h('button', {
-                  className: 'x-btn',
-                  onClick: (ev) => { ev.stopPropagation(); deleteEntry(e); },
-                  'aria-label': `Delete ${e.name}`
-                }, '\u00d7')
-              )
-            );
-          })
+      : h('div', { className: 'entry-list' },
+          list.map((e) => h(EntryRow, {
+            key: e.id,
+            name: e.name,
+            sub: scheduleLabel(e, data.settings),
+            amount: entryAmountLabel(e, currency),
+            color: getEntryColor({ ...e, sourceList: 'subscriptions' }, data),
+            onClick: () => openEdit(e)
+          }))
         ),
+    h('button', { className: 'add-row', onClick: openAdd }, '+ Add a subscription'),
 
     editing ? h(EntryFormModal, {
       data,
@@ -74,6 +58,8 @@ function SubscriptionsPage({ data, setData }) {
       dateLabel: 'Billing date',
       submitLabel: editing._isNew ? 'Add' : 'Save',
       onSubmit: handleSubmit,
+      onDelete: editing._isNew ? null : () => { deleteEntry(editing); setEditing(null); },
+      deleteLabel: `Delete ${editing.name || 'this subscription'}`,
       onClose: () => setEditing(null)
     }) : null
   );

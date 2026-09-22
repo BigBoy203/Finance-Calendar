@@ -1,6 +1,20 @@
 
-function EntryFormModal({ data, title, entry, categories, dateLabel, showFreq, isIncome, submitLabel, onSubmit, onClose }) {
+function EntryRow({ name, sub, note, amount, positive, color, onClick }) {
+  return h('button', { className: 'entry-row', onClick },
+    h('span', { className: 'entry-row-swatch', style: { background: color || 'var(--border-secondary)' } }),
+    h('span', { className: 'entry-row-text' },
+      h('span', { className: 'entry-row-name' }, name),
+      sub ? h('span', { className: 'entry-row-sub' }, sub) : null,
+      note ? h('span', { className: 'entry-row-note' }, note) : null
+    ),
+    h('span', { className: `entry-row-amt${positive ? ' positive' : ''}` }, amount),
+    h('span', { className: 'att-chevron' }, '\u203a')
+  );
+}
+
+function EntryFormModal({ data, title, entry, categories, dateLabel, showFreq, isIncome, submitLabel, onSubmit, onDelete, deleteLabel, onClose }) {
   const [form, setForm] = useState(() => ({ ...entry }));
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const overlay = useOverlayDismiss(onClose);
 
   function update(field, value) {
@@ -128,6 +142,21 @@ function EntryFormModal({ data, title, entry, categories, dateLabel, showFreq, i
           }) : null
         )
       ),
+      onDelete ? h('button', {
+        className: 'price-action-row danger',
+        onClick: () => {
+          if (!confirmDelete) { haptic('warn'); setConfirmDelete(true); return; }
+          haptic('heavy');
+          onDelete();
+        }
+      },
+        h('div', null,
+          h('span', { className: 'price-action-title' }, confirmDelete ? 'Tap again to delete' : (deleteLabel || 'Delete')),
+          h('span', { className: 'price-action-sub' },
+            confirmDelete ? 'This cannot be undone' : 'Removes it from every date it appears on')
+        ),
+        h('span', { className: 'price-action-chevron' }, '\u203a')
+      ) : null,
       h('div', { className: 'row-between', style: { marginTop: '4px' } },
         h('button', { onClick: onClose }, 'Cancel'),
         h('button', { className: 'primary', onClick: submit }, submitLabel || 'Save')

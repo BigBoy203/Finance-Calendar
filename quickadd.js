@@ -47,25 +47,35 @@ function PickChips({ options, value, onPick }) {
   );
 }
 
-function QuickAddModal({ data, setData, initialDate, preset, onClose }) {
+function QuickAddModal({ data, setData, initialDate, preset, entry: editing, onClose }) {
   const overlay = useOverlayDismiss(onClose);
   const currency = data.settings.currency;
+  const isEdit = !!editing;
 
-  const [type, setType] = useState('oneTimePayment');
+  const [type, setType] = useState(() => (isEdit && editing.oneTimeKind === 'income') ? 'oneTimeIncome' : 'oneTimePayment');
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [useRange, setUseRange] = useState(false);
+  const [useRange, setUseRange] = useState(() => isEdit && !!editing.useAmountRange);
   const [useSpan, setUseSpan] = useState(false);
   const [useRepeatEnd, setUseRepeatEnd] = useState(false);
-  const [alreadyPaid, setAlreadyPaid] = useState(true);
-  const [paidTouched, setPaidTouched] = useState(false);
+  const [alreadyPaid, setAlreadyPaid] = useState(() => (isEdit ? isPaid(data, editing.id, editing.date) : true));
+  const [paidTouched, setPaidTouched] = useState(isEdit);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const [form, setForm] = useState(() => blankEntry({
-    date: initialDate || todayYmd(),
-    freq: 'none',
-    name: (preset && preset.name) || '',
-    amount: (preset && preset.amount) ? String(preset.amount) : '',
-    category: (preset && preset.category) || defaultCategoryForType('oneTimePayment')
-  }));
+  const [form, setForm] = useState(() => {
+    if (isEdit) {
+      const shaped = entryToFormShape(editing);
+      const override = getOverride(data, editing.id, editing.date);
+      if (hasAmountOverride(override) && !editing.useAmountRange) shaped.amount = String(override.amount);
+      return { ...blankEntry({}), ...shaped, freq: 'none' };
+    }
+    return blankEntry({
+      date: initialDate || todayYmd(),
+      freq: 'none',
+      name: (preset && preset.name) || '',
+      amount: (preset && preset.amount) ? String(preset.amount) : '',
+      category: (preset && preset.category) || defaultCategoryForType('oneTimePayment')
+    });
+  });
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -109,6 +119,42 @@ function QuickAddModal({ data, setData, initialDate, preset, onClose }) {
     : type === 'subscription' ? 'Billing date'
     : 'Due date';
 
+  function saveEdit(entry) {
+    const oldKey = `${editing.id}|${editing.date}`;
+    const newKey = `${entry.id}|${entry.date}`;
+    const paidHistory = { ...data.paidHistory };
+    const overrides = { ...(data.overrides || {}) };
+    delete paidHistory[oldKey];
+    delete overrides[oldKey];
+    if (isPurchase && alreadyPaid) paidHistory[newKey] = true;
+    const kind = isPurchase ? 'payment' : 'income';
+    const { _isNew, ...clean } = entry;
+    setData(logActivity({
+      ...data,
+      paidHistory,
+      overrides,
+      oneTimeEntries: data.oneTimeEntries.map((e) => (e.id === editing.id ? { ...e, ...clean, oneTimeKind: kind } : e))
+    }, `Edited "${entry.name}"`));
+    onClose();
+  }
+
+  function deleteEntry() {
+    if (!confirmDelete) { haptic('warn'); setConfirmDelete(true); return; }
+    haptic('heavy');
+    const key = `${editing.id}|${editing.date}`;
+    const paidHistory = { ...data.paidHistory };
+    const overrides = { ...(data.overrides || {}) };
+    delete paidHistory[key];
+    delete overrides[key];
+    setData(logActivity({
+      ...data,
+      paidHistory,
+      overrides,
+      oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== editing.id)
+    }, `Deleted "${editing.name}"`));
+    onClose();
+  }
+
   function submit() {
     if (!canSave) return;
     haptic('success');
@@ -126,6 +172,11 @@ function QuickAddModal({ data, setData, initialDate, preset, onClose }) {
       amountMax: form.amountMax === '' ? 0 : parseFloat(form.amountMax) || 0
     };
 
+    if (isEdit) {
+      saveEdit(entry);
+      return;
+    }
+
     if (type === 'bill') {
       setData(logActivity({ ...data, majorBills: [...data.majorBills, entry] }, `Added bill "${name}"`));
     } else if (type === 'subscription') {
@@ -142,7 +193,13 @@ function QuickAddModal({ data, setData, initialDate, preset, onClose }) {
     onClose();
   }
 
-  const header = h('div', { className: 'qa-head' },
+  const header = isEdit ? h('div', { className: 'qa-head' },
+    h('div', { className: 'qa-type' },
+      h('span', { className: 'qa-emoji' }, typeInfo.icon),
+      h('span', { className: 'qa-type-name' }, isPurchase ? 'Edit purchase' : 'Edit income'),
+      h('span', { className: 'qa-type-desc' }, `Logged for ${formatDate(parseYmd(editing.date), data.settings, { weekday: true })}`)
+    )
+  ) : h('div', { className: 'qa-head' },
     h('button', {
       className: 'qa-type',
       onClick: () => { haptic('light'); setPickerOpen(!pickerOpen); },
@@ -193,7 +250,7 @@ function QuickAddModal({ data, setData, initialDate, preset, onClose }) {
           type: 'number',
           inputMode: 'decimal',
           placeholder: '0',
-          autoFocus: true,
+          autoFocus: !isEdit,
           value: form.amount,
           onChange: (e) => update('amount', e.target.value)
         })
@@ -296,12 +353,22 @@ function QuickAddModal({ data, setData, initialDate, preset, onClose }) {
       repeatBlock,
       options,
 
+      isEdit ? h('button', { className: 'price-action-row danger', onClick: deleteEntry },
+        h('div', null,
+          h('span', { className: 'price-action-title' },
+            confirmDelete ? 'Tap again to delete' : `Delete this ${isPurchase ? 'purchase' : 'income'}`),
+          h('span', { className: 'price-action-sub' },
+            confirmDelete ? 'This cannot be undone' : 'Takes it off the calendar and out of your totals')
+        ),
+        h('span', { className: 'price-action-chevron' }, '\u203a')
+      ) : null,
+
       h('div', { className: 'qa-actions' },
         canSave ? null : h('p', { className: 'qa-hint' }, 'Enter an amount to save this.'),
         h('div', { className: 'qa-foot' },
           h('button', { onClick: onClose }, 'Cancel'),
           h('button', { className: 'primary', onClick: submit, disabled: !canSave },
-            `Add ${typeInfo.label.toLowerCase()}`)
+            isEdit ? 'Save changes' : `Add ${typeInfo.label.toLowerCase()}`)
         )
       )
     )

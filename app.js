@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '4.1';
+const WEB_VERSION = '4.2';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -59,6 +59,14 @@ function fmtCurrency(n, currency) {
   } catch (e) {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
   }
+}
+
+function fmtRange(min, max, currency) {
+  const whole = (n) => {
+    const text = fmtCurrency(n, currency);
+    return Number(n) % 1 === 0 ? text.replace(/[.,]00(?=\D*$)/, '') : text;
+  };
+  return `${whole(min)}\u2013${whole(max)}`;
 }
 
 function ymd(d) {
@@ -176,9 +184,17 @@ function entryAmountLabel(entry, currency) {
   if (entry.useAmountRange) {
     const min = Number(entry.amountMin) || 0;
     const max = Number(entry.amountMax) || 0;
-    return `${fmtCurrency(min, currency)}-${fmtCurrency(max, currency)}`;
+    return fmtRange(min, max, currency);
   }
   return fmtCurrency(entry.amount, currency);
+}
+
+function monthlyAmount(entry) {
+  const amount = entryAmount(entry) || 0;
+  if (entry.freq === 'weekly') return amount * 52 / 12;
+  if (entry.freq === 'biweekly') return amount * 26 / 12;
+  if (entry.freq === 'yearly') return amount / 12;
+  return amount;
 }
 
 function defaultRepeatUntil(dateStr) {
@@ -189,6 +205,23 @@ function repeatLabel(entry, settings) {
   const base = FREQ_LABELS[entry.freq] || entry.freq || 'one-time';
   if (!entry.repeatUntil || !entry.freq || entry.freq === 'none') return base;
   return `${base} until ${formatDate(parseYmd(entry.repeatUntil), settings)}`;
+}
+
+function nextDueDate(entry) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const horizon = new Date(today);
+  horizon.setDate(horizon.getDate() + 400);
+  const next = expandEntry(entry, today, horizon)[0];
+  return next ? parseYmd(next.occDate) : null;
+}
+
+function scheduleLabel(entry, settings) {
+  const next = nextDueDate(entry);
+  const when = next
+    ? (entry.freq && entry.freq !== 'none' ? `Next ${formatDate(next, settings)}` : formatDate(next, settings))
+    : 'Ended';
+  return [when, repeatLabel(entry, settings), entry.category !== entry.name ? entry.category : ''].filter(Boolean).join(' \u00b7 ');
 }
 
 function expandEntry(entry, rangeStart, rangeEnd) {
@@ -306,7 +339,7 @@ function occAmountLabel(occ, currency) {
   if (occ.isRange) {
     const min = Number(occ.amountMin) || 0;
     const max = Number(occ.amountMax) || 0;
-    return `${fmtCurrency(min, currency)}-${fmtCurrency(max, currency)}`;
+    return fmtRange(min, max, currency);
   }
   return fmtCurrency(occ.amount, currency);
 }
@@ -1275,8 +1308,22 @@ function useSheetDismiss(onClose) {
   return { onTouchStart, onTouchMove, onTouchEnd, onClick: onClose };
 }
 
-function EntryFormModal({ data, title, entry, categories, dateLabel, showFreq, isIncome, submitLabel, onSubmit, onClose }) {
+function EntryRow({ name, sub, note, amount, positive, color, onClick }) {
+  return h('button', { className: 'entry-row', onClick },
+    h('span', { className: 'entry-row-swatch', style: { background: color || 'var(--border-secondary)' } }),
+    h('span', { className: 'entry-row-text' },
+      h('span', { className: 'entry-row-name' }, name),
+      sub ? h('span', { className: 'entry-row-sub' }, sub) : null,
+      note ? h('span', { className: 'entry-row-note' }, note) : null
+    ),
+    h('span', { className: `entry-row-amt${positive ? ' positive' : ''}` }, amount),
+    h('span', { className: 'att-chevron' }, '\u203a')
+  );
+}
+
+function EntryFormModal({ data, title, entry, categories, dateLabel, showFreq, isIncome, submitLabel, onSubmit, onDelete, deleteLabel, onClose }) {
   const [form, setForm] = useState(() => ({ ...entry }));
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const overlay = useOverlayDismiss(onClose);
 
   function update(field, value) {
@@ -1404,6 +1451,21 @@ function EntryFormModal({ data, title, entry, categories, dateLabel, showFreq, i
           }) : null
         )
       ),
+      onDelete ? h('button', {
+        className: 'price-action-row danger',
+        onClick: () => {
+          if (!confirmDelete) { haptic('warn'); setConfirmDelete(true); return; }
+          haptic('heavy');
+          onDelete();
+        }
+      },
+        h('div', null,
+          h('span', { className: 'price-action-title' }, confirmDelete ? 'Tap again to delete' : (deleteLabel || 'Delete')),
+          h('span', { className: 'price-action-sub' },
+            confirmDelete ? 'This cannot be undone' : 'Removes it from every date it appears on')
+        ),
+        h('span', { className: 'price-action-chevron' }, '\u203a')
+      ) : null,
       h('div', { className: 'row-between', style: { marginTop: '4px' } },
         h('button', { onClick: onClose }, 'Cancel'),
         h('button', { className: 'primary', onClick: submit }, submitLabel || 'Save')
@@ -2039,25 +2101,35 @@ function PickChips({ options, value, onPick }) {
   );
 }
 
-function QuickAddModal({ data, setData, initialDate, preset, onClose }) {
+function QuickAddModal({ data, setData, initialDate, preset, entry: editing, onClose }) {
   const overlay = useOverlayDismiss(onClose);
   const currency = data.settings.currency;
+  const isEdit = !!editing;
 
-  const [type, setType] = useState('oneTimePayment');
+  const [type, setType] = useState(() => (isEdit && editing.oneTimeKind === 'income') ? 'oneTimeIncome' : 'oneTimePayment');
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [useRange, setUseRange] = useState(false);
+  const [useRange, setUseRange] = useState(() => isEdit && !!editing.useAmountRange);
   const [useSpan, setUseSpan] = useState(false);
   const [useRepeatEnd, setUseRepeatEnd] = useState(false);
-  const [alreadyPaid, setAlreadyPaid] = useState(true);
-  const [paidTouched, setPaidTouched] = useState(false);
+  const [alreadyPaid, setAlreadyPaid] = useState(() => (isEdit ? isPaid(data, editing.id, editing.date) : true));
+  const [paidTouched, setPaidTouched] = useState(isEdit);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const [form, setForm] = useState(() => blankEntry({
-    date: initialDate || todayYmd(),
-    freq: 'none',
-    name: (preset && preset.name) || '',
-    amount: (preset && preset.amount) ? String(preset.amount) : '',
-    category: (preset && preset.category) || defaultCategoryForType('oneTimePayment')
-  }));
+  const [form, setForm] = useState(() => {
+    if (isEdit) {
+      const shaped = entryToFormShape(editing);
+      const override = getOverride(data, editing.id, editing.date);
+      if (hasAmountOverride(override) && !editing.useAmountRange) shaped.amount = String(override.amount);
+      return { ...blankEntry({}), ...shaped, freq: 'none' };
+    }
+    return blankEntry({
+      date: initialDate || todayYmd(),
+      freq: 'none',
+      name: (preset && preset.name) || '',
+      amount: (preset && preset.amount) ? String(preset.amount) : '',
+      category: (preset && preset.category) || defaultCategoryForType('oneTimePayment')
+    });
+  });
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -2101,6 +2173,42 @@ function QuickAddModal({ data, setData, initialDate, preset, onClose }) {
     : type === 'subscription' ? 'Billing date'
     : 'Due date';
 
+  function saveEdit(entry) {
+    const oldKey = `${editing.id}|${editing.date}`;
+    const newKey = `${entry.id}|${entry.date}`;
+    const paidHistory = { ...data.paidHistory };
+    const overrides = { ...(data.overrides || {}) };
+    delete paidHistory[oldKey];
+    delete overrides[oldKey];
+    if (isPurchase && alreadyPaid) paidHistory[newKey] = true;
+    const kind = isPurchase ? 'payment' : 'income';
+    const { _isNew, ...clean } = entry;
+    setData(logActivity({
+      ...data,
+      paidHistory,
+      overrides,
+      oneTimeEntries: data.oneTimeEntries.map((e) => (e.id === editing.id ? { ...e, ...clean, oneTimeKind: kind } : e))
+    }, `Edited "${entry.name}"`));
+    onClose();
+  }
+
+  function deleteEntry() {
+    if (!confirmDelete) { haptic('warn'); setConfirmDelete(true); return; }
+    haptic('heavy');
+    const key = `${editing.id}|${editing.date}`;
+    const paidHistory = { ...data.paidHistory };
+    const overrides = { ...(data.overrides || {}) };
+    delete paidHistory[key];
+    delete overrides[key];
+    setData(logActivity({
+      ...data,
+      paidHistory,
+      overrides,
+      oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== editing.id)
+    }, `Deleted "${editing.name}"`));
+    onClose();
+  }
+
   function submit() {
     if (!canSave) return;
     haptic('success');
@@ -2118,6 +2226,11 @@ function QuickAddModal({ data, setData, initialDate, preset, onClose }) {
       amountMax: form.amountMax === '' ? 0 : parseFloat(form.amountMax) || 0
     };
 
+    if (isEdit) {
+      saveEdit(entry);
+      return;
+    }
+
     if (type === 'bill') {
       setData(logActivity({ ...data, majorBills: [...data.majorBills, entry] }, `Added bill "${name}"`));
     } else if (type === 'subscription') {
@@ -2134,7 +2247,13 @@ function QuickAddModal({ data, setData, initialDate, preset, onClose }) {
     onClose();
   }
 
-  const header = h('div', { className: 'qa-head' },
+  const header = isEdit ? h('div', { className: 'qa-head' },
+    h('div', { className: 'qa-type' },
+      h('span', { className: 'qa-emoji' }, typeInfo.icon),
+      h('span', { className: 'qa-type-name' }, isPurchase ? 'Edit purchase' : 'Edit income'),
+      h('span', { className: 'qa-type-desc' }, `Logged for ${formatDate(parseYmd(editing.date), data.settings, { weekday: true })}`)
+    )
+  ) : h('div', { className: 'qa-head' },
     h('button', {
       className: 'qa-type',
       onClick: () => { haptic('light'); setPickerOpen(!pickerOpen); },
@@ -2185,7 +2304,7 @@ function QuickAddModal({ data, setData, initialDate, preset, onClose }) {
           type: 'number',
           inputMode: 'decimal',
           placeholder: '0',
-          autoFocus: true,
+          autoFocus: !isEdit,
           value: form.amount,
           onChange: (e) => update('amount', e.target.value)
         })
@@ -2288,12 +2407,22 @@ function QuickAddModal({ data, setData, initialDate, preset, onClose }) {
       repeatBlock,
       options,
 
+      isEdit ? h('button', { className: 'price-action-row danger', onClick: deleteEntry },
+        h('div', null,
+          h('span', { className: 'price-action-title' },
+            confirmDelete ? 'Tap again to delete' : `Delete this ${isPurchase ? 'purchase' : 'income'}`),
+          h('span', { className: 'price-action-sub' },
+            confirmDelete ? 'This cannot be undone' : 'Takes it off the calendar and out of your totals')
+        ),
+        h('span', { className: 'price-action-chevron' }, '\u203a')
+      ) : null,
+
       h('div', { className: 'qa-actions' },
         canSave ? null : h('p', { className: 'qa-hint' }, 'Enter an amount to save this.'),
         h('div', { className: 'qa-foot' },
           h('button', { onClick: onClose }, 'Cancel'),
           h('button', { className: 'primary', onClick: submit, disabled: !canSave },
-            `Add ${typeInfo.label.toLowerCase()}`)
+            isEdit ? 'Save changes' : `Add ${typeInfo.label.toLowerCase()}`)
         )
       )
     )
@@ -2301,6 +2430,8 @@ function QuickAddModal({ data, setData, initialDate, preset, onClose }) {
 }
 
 const DONUT_COLORS = ['#D85A5A', '#D8A857', '#8B6FD6', '#4FAE6B', '#D8845A', '#5AA8D8', '#C75AA8', '#7A8C5A', '#4FAEA0', '#7FC44F', '#B15AC7', '#5A73C7'];
+
+const OVERDUE_FOLD = 3;
 
 function PushedMark({ title }) {
   return h('span', { className: 'push-mark', title },
@@ -2385,7 +2516,8 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
   );
 }
 
-function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
+function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }) {
+  const [overdueOpen, setOverdueOpen] = useState(false);
   const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext, pushedOut, spent, spendStart } = nextCheck;
   const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
 
@@ -2401,6 +2533,9 @@ function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
     ? `${overdueCount} overdue \u00b7 ${bills.length} to pay`
     : `${bills.length} to pay`;
 
+  const todayStr = todayYmd();
+  const overdue = bills.filter((o) => o.occDate < todayStr);
+  const upcoming = bills.filter((o) => o.occDate >= todayStr);
   const shortfall = due + spent - checkAmount;
   const billsPct = checkAmount > 0 ? Math.min(100, (due / checkAmount) * 100) : 0;
   const spentPct = checkAmount > 0 ? Math.max(0, Math.min(100 - billsPct, (spent / checkAmount) * 100)) : 0;
@@ -2461,7 +2596,25 @@ function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
           pushedOut.count > 0
             ? 'Everything in this stretch is pushed forward.'
             : period === 0 ? 'Nothing due before then \u2014 you\u2019re clear.' : 'Nothing due in this stretch.')
-      : listEl,
+      : overdueCount > OVERDUE_FOLD
+        ? h(React.Fragment, null,
+            h('button', {
+              className: 'overdue-fold',
+              onClick: () => { haptic('light'); setOverdueOpen(!overdueOpen); },
+              'aria-expanded': overdueOpen
+            },
+              h('span', { className: 'late-dot' }),
+              h('span', { className: 'overdue-fold-text' },
+                h('span', { className: 'overdue-fold-title' }, `${overdueCount} overdue`),
+                h('span', { className: 'overdue-fold-sub' }, overdueOpen ? 'Tap to fold them away' : 'Tap to see them and check off what you have paid')
+              ),
+              h('span', { className: 'overdue-fold-amt' }, fmtCurrency(overdue.reduce((sum, o) => sum + o.amount, 0), currency)),
+              h('span', { className: `drop-chevron${overdueOpen ? ' open' : ''}` }, '\u203a')
+            ),
+            overdueOpen ? renderList(overdue) : null,
+            upcoming.length > 0 ? renderList(upcoming) : null
+          )
+        : renderList(bills),
 
     pushedOut.count > 0 ? h('p', { className: 'nextcheck-pushed' },
       h(PushedMark, { title: 'Pushed forward' }),
@@ -2499,7 +2652,6 @@ function HomePage({ data, setData, isMobile }) {
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
   }
 
-  const monthLabel = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   const netSoFar = fin.incomeReceived - fin.billsPaid;
   const netProjected = fin.totalProjectedIncome - fin.totalBills;
   const leftToPay = Math.max(0, fin.totalBills - fin.billsPaid);
@@ -2511,11 +2663,7 @@ function HomePage({ data, setData, isMobile }) {
 
   return h('div', { className: `home-page${isMobile ? ' mobile-home' : ''}` },
     h('div', { className: `home-wash${netSoFar >= 0 ? '' : ' neg'}` },
-      h('div', { className: 'home-month-header' },
-        h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
-        h('h1', { className: 'home-month-title' }, monthLabel),
-        h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
-      ),
+      h(MonthHeader, { cursor, onChange: changeMonth }),
       h('div', { className: 'home-hero' },
         h('p', { className: 'home-hero-label' }, 'Net so far'),
         h('p', {
@@ -2532,7 +2680,7 @@ function HomePage({ data, setData, isMobile }) {
 
     isCurrentMonth ? h(NextCheckCard, {
       data, currency, nextCheck,
-      listEl: h(Renderer, Object.assign({ rows: nextCheck.bills }, checkListProps)),
+      renderList: (rows) => h(Renderer, Object.assign({ rows }, checkListProps)),
       onPrev: () => { haptic('light'); setPeriod(Math.max(0, nextCheck.period - 1)); },
       onNext: () => { haptic('light'); setPeriod(nextCheck.period + 1); }
     }) : null,
@@ -2570,74 +2718,47 @@ function HomePage({ data, setData, isMobile }) {
   );
 }
 
-function MonthSummaryCard({ summary, currency, incomeReceived, projectedIncome, incomeRange }) {
-  return h('div', { className: 'card' },
-    h('p', { style: { margin: '0 0 10px', fontWeight: 500 } }, 'This month at a glance'),
-    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' } },
-      summary.biggestBill ? h('div', { className: 'row-between' },
-        h('span', { style: { color: 'var(--text-secondary)' } }, 'Biggest bill'),
-        h('span', null, `${summary.biggestBill.name} - ${fmtCurrency(summary.biggestBill.amount, currency)}`)
-      ) : null,
-      summary.biggestIncome ? h('div', { className: 'row-between' },
-        h('span', { style: { color: 'var(--text-secondary)' } }, 'Biggest income'),
-        h('span', { style: { color: 'var(--text-success)' } }, `${summary.biggestIncome.name} - ${fmtCurrency(summary.biggestIncome.amount, currency)}`)
-      ) : null,
-      h('div', { className: 'row-between' },
-        h('span', { style: { color: 'var(--text-secondary)' } }, `Average bill (${summary.billCount})`),
-        h('span', null, fmtCurrency(summary.avgBill, currency))
-      ),
-      h('div', { className: 'row-between' },
-        h('span', { style: { color: 'var(--text-secondary)' } }, 'Income so far'),
-        h('span', { style: { color: 'var(--text-success)' } }, fmtCurrency(incomeReceived, currency))
-      ),
-      h('div', { className: 'row-between' },
-        h('span', { style: { color: 'var(--text-secondary)' } }, 'Projected income'),
-        h('span', null,
-          fmtCurrency(projectedIncome, currency),
-          incomeRange ? h('span', { style: { color: 'var(--text-tertiary)', marginLeft: '6px' } },
-            `${fmtCurrency(incomeRange.min, currency)}\u2013${fmtCurrency(incomeRange.max, currency)}`) : null
-        )
-      ),
-      (!summary.biggestBill && !summary.biggestIncome) ? h('p', { className: 'empty-state', style: { margin: 0 } }, 'Nothing scheduled this month yet.') : null
+function GlanceGrid({ fin, currency }) {
+  const s = fin.monthSummary;
+  const billsDelta = fin.totalBills - fin.lastMonthTotals.totalBills;
+  const hasLast = fin.lastMonthTotals.totalBills > 0;
+  const tiles = [
+    s.biggestBill ? { label: 'Biggest bill', value: fmtCurrency(s.biggestBill.amount, currency), sub: s.biggestBill.name } : null,
+    { label: 'Average payment', value: fmtCurrency(s.avgBill, currency), sub: `across ${s.billCount} ${s.billCount === 1 ? 'payment' : 'payments'}` },
+    { label: 'Income so far', value: fmtCurrency(fin.incomeReceived, currency), sub: `of ${fmtCurrency(fin.totalProjectedIncome, currency)} expected`, tone: 'good' },
+    hasLast ? {
+      label: 'vs last month',
+      value: `${billsDelta > 0 ? '+' : billsDelta < 0 ? '−' : ''}${fmtCurrency(Math.abs(billsDelta), currency)}`,
+      sub: Math.abs(billsDelta) < 1 ? 'about the same going out' : billsDelta > 0 ? 'more going out' : 'less going out',
+      tone: Math.abs(billsDelta) < 1 ? null : billsDelta > 0 ? 'bad' : 'good'
+    } : null
+  ].filter(Boolean);
+
+  return h('section', { className: 'stats-section' },
+    h('p', { className: 'stats-title' }, 'At a glance'),
+    h('div', { className: 'spend-stats' },
+      tiles.map((t) => h('div', { key: t.label, className: 'spend-stat' },
+        h('span', { className: 'spend-stat-label' }, t.label),
+        h('span', { className: `spend-stat-value${t.tone ? ' ' + t.tone : ''}` }, t.value),
+        h('span', { className: 'spend-stat-sub' }, t.sub)
+      ))
     )
   );
 }
 
-function MonthComparisonCard({ lastMonth, thisMonth, currency }) {
-  const billsDelta = thisMonth.totalBills - lastMonth.totalBills;
-  const incomeDelta = thisMonth.totalIncome - lastMonth.totalIncome;
-
-  function deltaLabel(delta, goodIsUp) {
-    if (Math.abs(delta) < 0.01) return { text: 'No change', color: 'var(--text-tertiary)' };
-    const up = delta > 0;
-    const good = goodIsUp ? up : !up;
-    return {
-      text: `${up ? '+' : ''}${fmtCurrency(delta, currency)} vs last month`,
-      color: good ? 'var(--text-success)' : 'var(--late-red)'
-    };
-  }
-
-  const billsInfo = deltaLabel(billsDelta, false);
-  const incomeInfo = deltaLabel(incomeDelta, true);
-
-  return h('div', { className: 'card' },
-    h('p', { style: { margin: '0 0 10px', fontWeight: 500 } }, 'vs. last month'),
-    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' } },
-      h('div', null,
-        h('p', { style: { margin: 0, color: 'var(--text-secondary)' } }, 'Bills'),
-        h('p', { style: { margin: 0 } }, `${fmtCurrency(thisMonth.totalBills, currency)} `,
-          h('span', { style: { color: billsInfo.color, fontSize: '12px' } }, billsInfo.text))
-      ),
-      h('div', null,
-        h('p', { style: { margin: 0, color: 'var(--text-secondary)' } }, 'Income'),
-        h('p', { style: { margin: 0 } }, `${fmtCurrency(thisMonth.totalIncome, currency)} `,
-          h('span', { style: { color: incomeInfo.color, fontSize: '12px' } }, incomeInfo.text))
-      )
-    )
+function ChipToggle({ options, value, onChange }) {
+  return h('div', { className: 'chip-toggle', role: 'tablist' },
+    options.map((o) => h('button', {
+      key: o.id,
+      role: 'tab',
+      'aria-selected': value === o.id,
+      className: `chip-toggle-btn${value === o.id ? ' on' : ''}`,
+      onClick: () => { haptic('light'); onChange(o.id); }
+    }, o.label))
   );
 }
 
-function CashFlowChart({ points, currency }) {
+function CashFlowChart({ points, currency, todayDay, colors }) {
   const [view, setView] = useState('cumulative');
   const [hoverIdx, setHoverIdx] = useState(null);
 
@@ -2649,89 +2770,102 @@ function CashFlowChart({ points, currency }) {
 
   const allVals = points.flatMap((p) => [p[billsKey], p[incomeKey], p[netKey]]);
   const maxVal = Math.max(...allVals, 1);
-  const minVal = view === 'daily' ? Math.min(...allVals, 0) : 0;
+  const minVal = Math.min(...allVals, 0);
 
-  const W = 760, H = 200, PAD_L = 56, PAD_R = 16, PAD_T = 16, PAD_B = 24;
+  const W = 360, H = 190, PAD_L = 8, PAD_R = 8, PAD_T = 14, PAD_B = 22;
   const innerW = W - PAD_L - PAD_R;
   const innerH = H - PAD_T - PAD_B;
   const stepX = points.length > 1 ? innerW / (points.length - 1) : 0;
   const range = maxVal - minVal || 1;
+  const xAt = (i) => PAD_L + i * stepX;
   const scaleY = (v) => PAD_T + innerH - ((v - minVal) / range) * innerH;
   const zeroY = scaleY(0);
 
-  const pathFor = (key) => points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${PAD_L + i * stepX} ${scaleY(p[key])}`).join(' ');
+  const pathFor = (key) => points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i).toFixed(1)} ${scaleY(p[key]).toFixed(1)}`).join(' ');
+  const areaFor = (key) => `${pathFor(key)} L ${xAt(points.length - 1).toFixed(1)} ${zeroY.toFixed(1)} L ${xAt(0).toFixed(1)} ${zeroY.toFixed(1)} Z`;
 
-  const labelEvery = points.length > 20 ? 5 : points.length > 10 ? 2 : 1;
+  const ticks = [1, 8, 15, 22, points.length].filter((d, i, arr) => d <= points.length && arr.indexOf(d) === i);
   const hovered = hoverIdx !== null ? points[hoverIdx] : null;
+  const last = points[points.length - 1];
 
-  return h('div', null,
-    h('div', { className: 'row-between' },
-      h('p', { className: 'section-title', style: { margin: 0 } }, 'Cash flow this month'),
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: '14px' } },
-        h('div', { style: { display: 'flex', gap: '14px', fontSize: '12px', color: 'var(--text-secondary)' } },
-          h('span', null, h('span', { style: { display: 'inline-block', width: 10, height: 10, background: 'var(--text-success)', marginRight: '4px', borderRadius: '2px' } }), 'Income'),
-          h('span', null, h('span', { style: { display: 'inline-block', width: 10, height: 10, background: 'var(--late-red)', marginRight: '4px', borderRadius: '2px' } }), 'Bills'),
-          h('span', null, h('span', { style: { display: 'inline-block', width: 10, height: 10, background: 'var(--accent)', marginRight: '4px', borderRadius: '2px' } }), 'Net')
-        ),
-        h('select', { value: view, onChange: (e) => setView(e.target.value), style: { fontSize: '12px', padding: '4px 8px' } },
-          h('option', { value: 'cumulative' }, 'Running total'),
-          h('option', { value: 'daily' }, 'Per day')
-        )
-      )
-    ),
-    h('div', { style: { position: 'relative' } },
-      h('svg', {
-        viewBox: `0 0 ${W} ${H}`,
-        className: 'cashflow-chart',
-        onMouseLeave: () => setHoverIdx(null)
-      },
+  function pick(e) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * W;
+    const idx = Math.round((x - PAD_L) / (stepX || 1));
+    setHoverIdx(Math.max(0, Math.min(points.length - 1, idx)));
+  }
 
-        h('line', { x1: PAD_L, y1: PAD_T, x2: PAD_L, y2: H - PAD_B, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
-        h('line', { x1: PAD_L, y1: zeroY, x2: W - PAD_R, y2: zeroY, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
-        h('text', { x: PAD_L - 8, y: PAD_T + 4, fontSize: 10, fill: 'var(--text-secondary)', textAnchor: 'end' }, fmtCurrency(maxVal, currency)),
-        h('text', { x: PAD_L - 8, y: zeroY + 4, fontSize: 10, fill: 'var(--text-secondary)', textAnchor: 'end' }, fmtCurrency(0, currency)),
-        minVal < 0 ? h('text', { x: PAD_L - 8, y: H - PAD_B + 4, fontSize: 10, fill: 'var(--text-secondary)', textAnchor: 'end' }, fmtCurrency(minVal, currency)) : null,
+  const shown = hovered || last;
+  const series = [
+    { key: incomeKey, label: 'In', color: colors.income },
+    { key: billsKey, label: 'Out', color: colors.bills },
+    { key: netKey, label: 'Net', color: 'var(--accent)', signed: true }
+  ];
 
-        points.map((p, i) => (
-          i % labelEvery === 0 ? h('text', {
-            key: `lbl-${i}`,
-            x: PAD_L + i * stepX,
-            y: H - PAD_B + 16,
-            fontSize: 9,
-            fill: 'var(--text-tertiary)',
-            textAnchor: 'middle'
-          }, p.day) : null
-        )),
-
-        h('path', { d: pathFor(billsKey), fill: 'none', stroke: 'var(--late-red)', strokeWidth: 2 }),
-        h('path', { d: pathFor(incomeKey), fill: 'none', stroke: 'var(--text-success)', strokeWidth: 2 }),
-        h('path', { d: pathFor(netKey), fill: 'none', stroke: 'var(--accent)', strokeWidth: 1.5, strokeDasharray: '4 3' }),
-
-        hovered ? h('line', {
-          x1: PAD_L + hoverIdx * stepX, y1: PAD_T, x2: PAD_L + hoverIdx * stepX, y2: H - PAD_B,
-          stroke: 'var(--border-secondary)', strokeWidth: 1
-        }) : null,
-
-        points.map((p, i) => h('rect', {
-          key: `hit-${i}`,
-          x: PAD_L + i * stepX - (stepX / 2 || 6),
-          y: PAD_T,
-          width: stepX || 12,
-          height: innerH,
-          fill: 'transparent',
-          onMouseEnter: () => setHoverIdx(i)
-        }))
+  return h('section', { className: 'stats-section' },
+    h('div', { className: 'stats-head' },
+      h('div', null,
+        h('p', { className: 'stats-title' }, 'Cash flow'),
+        h('p', { className: 'stats-caption' },
+          hovered ? `Day ${hovered.day}` : (view === 'cumulative' ? 'Running totals through the month' : 'What moves each day'))
       ),
-      hovered ? h('div', {
-        className: 'cashflow-tooltip',
-        style: {
-          left: `${Math.min(82, Math.max(10, (PAD_L + hoverIdx * stepX) / W * 100))}%`
-        }
-      },
-        h('p', { className: 'cashflow-tooltip-day' }, `Day ${hovered.day}`),
-        h('p', { style: { color: 'var(--text-success)' } }, `Income: ${fmtCurrency(hovered[incomeKey], currency)}`),
-        h('p', { style: { color: 'var(--late-red)' } }, `Bills: ${fmtCurrency(hovered[billsKey], currency)}`),
-        h('p', { style: { color: 'var(--accent)' } }, `Net: ${hovered[netKey] >= 0 ? '+' : ''}${fmtCurrency(hovered[netKey], currency)}`)
+      h(ChipToggle, {
+        value: view,
+        onChange: (v) => { setView(v); setHoverIdx(null); },
+        options: [{ id: 'cumulative', label: 'Running' }, { id: 'daily', label: 'Daily' }]
+      })
+    ),
+    h('div', { className: 'cf-legend' },
+      series.map((s) => h('span', { key: s.label, className: 'cf-legend-item' },
+        h('span', { className: 'cf-legend-dot', style: { background: s.color } }),
+        h('span', { className: 'cf-legend-label' }, s.label),
+        h('span', { className: 'cf-legend-value' },
+          `${s.signed && shown[s.key] > 0 ? '+' : ''}${fmtCompact(shown[s.key], currency)}`)
+      ))
+    ),
+    h('svg', {
+      viewBox: `0 0 ${W} ${H}`,
+      className: 'cashflow-chart',
+      onPointerDown: pick,
+      onPointerMove: pick,
+      onPointerLeave: () => setHoverIdx(null)
+    },
+      h('defs', null,
+        h('linearGradient', { id: 'cf-net-fill', x1: 0, y1: 0, x2: 0, y2: 1 },
+          h('stop', { offset: '0%', stopColor: 'var(--accent)', stopOpacity: 0.28 }),
+          h('stop', { offset: '100%', stopColor: 'var(--accent)', stopOpacity: 0 })
+        )
+      ),
+      [0.25, 0.5, 0.75].map((f) => h('line', {
+        key: f, x1: PAD_L, x2: W - PAD_R, y1: PAD_T + innerH * f, y2: PAD_T + innerH * f,
+        stroke: 'var(--border-tertiary)', strokeWidth: 1
+      })),
+      h('line', { x1: PAD_L, y1: zeroY, x2: W - PAD_R, y2: zeroY, stroke: 'var(--border-secondary)', strokeWidth: 1 }),
+      todayDay ? h('line', {
+        x1: xAt(todayDay - 1), x2: xAt(todayDay - 1), y1: PAD_T - 6, y2: H - PAD_B,
+        stroke: 'var(--text-tertiary)', strokeWidth: 1, strokeDasharray: '3 3'
+      }) : null,
+      todayDay ? h('text', {
+        x: xAt(todayDay - 1), y: PAD_T - 7, fontSize: 9, fill: 'var(--text-tertiary)',
+        textAnchor: todayDay > points.length - 3 ? 'end' : todayDay < 3 ? 'start' : 'middle'
+      }, 'today') : null,
+      ticks.map((d) => h('text', {
+        key: `t-${d}`, x: xAt(d - 1), y: H - 6, fontSize: 10, fill: 'var(--text-tertiary)',
+        textAnchor: d === 1 ? 'start' : d === points.length ? 'end' : 'middle'
+      }, d)),
+      h('path', { d: areaFor(netKey), fill: 'url(#cf-net-fill)', stroke: 'none' }),
+      h('path', { d: pathFor(billsKey), fill: 'none', stroke: colors.bills, strokeWidth: 2, strokeLinejoin: 'round' }),
+      h('path', { d: pathFor(incomeKey), fill: 'none', stroke: colors.income, strokeWidth: 2, strokeLinejoin: 'round' }),
+      h('path', { d: pathFor(netKey), fill: 'none', stroke: 'var(--accent)', strokeWidth: 2.4, strokeLinejoin: 'round' }),
+      hovered ? h('g', null,
+        h('line', {
+          x1: xAt(hoverIdx), x2: xAt(hoverIdx), y1: PAD_T, y2: H - PAD_B,
+          stroke: 'var(--text-secondary)', strokeWidth: 1
+        }),
+        series.map((s) => h('circle', {
+          key: s.label, cx: xAt(hoverIdx), cy: scaleY(hovered[s.key]), r: 3.5,
+          fill: s.color, stroke: 'var(--bg-primary)', strokeWidth: 1.5
+        }))
       ) : null
     )
   );
@@ -2739,7 +2873,7 @@ function CashFlowChart({ points, currency }) {
 
 function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setFilter }) {
   const total = rows.reduce((s, r) => s + r.amount, 0);
-  const size = 160, r = 60, cx = 80, cy = 80;
+  const size = 140, r = 54, cx = 70, cy = 70;
   const circumference = 2 * Math.PI * r;
 
   let offsetAcc = 0;
@@ -2750,52 +2884,67 @@ function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setF
     return seg;
   });
 
-  return h('div', null,
-    h('div', { className: 'row-between' },
-      h('p', { className: 'section-title', style: { margin: 0 } }, 'Where it goes'),
-      h('div', { style: { display: 'flex', gap: '8px' } },
-        h('select', { value: filter, onChange: (e) => setFilter(e.target.value), style: { fontSize: '12px', padding: '4px 8px' } },
-          h('option', { value: 'bills' }, 'Bills'),
-          h('option', { value: 'income' }, 'Income'),
-          h('option', { value: 'both' }, 'Both')
-        ),
-        h('select', { value: groupBy, onChange: (e) => setGroupBy(e.target.value), style: { fontSize: '12px', padding: '4px 8px' } },
-          h('option', { value: 'source' }, 'By source type'),
-          h('option', { value: 'category' }, 'By category')
-        )
-      )
+  return h('section', { className: 'stats-section' },
+    h('div', { className: 'stats-head' },
+      h('div', null,
+        h('p', { className: 'stats-title' }, filter === 'income' ? 'Where it comes from' : 'Where it goes'),
+        h('p', { className: 'stats-caption' }, groupBy === 'source' ? 'Grouped by kind' : 'Grouped by category')
+      ),
+      h(ChipToggle, {
+        value: filter,
+        onChange: setFilter,
+        options: [{ id: 'bills', label: 'Out' }, { id: 'income', label: 'In' }]
+      })
     ),
     rows.length === 0
-      ? h('p', { className: 'empty-state' }, 'Nothing to show for this filter.')
-      : h('div', { style: { display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap', marginTop: '8px' } },
-          h('svg', { viewBox: `0 0 ${size} ${size}`, style: { width: '160px', height: '160px', flexShrink: 0 } },
+      ? h('p', { className: 'empty-state' }, 'Nothing to show this month.')
+      : h('div', { className: 'donut-wrap' },
+          h('svg', { viewBox: `0 0 ${size} ${size}`, className: 'donut' },
+            h('circle', { cx, cy, r, fill: 'none', stroke: 'var(--bg-tertiary)', strokeWidth: 18 }),
             segments.map((seg, i) => h('circle', {
               key: i,
               cx, cy, r,
               fill: 'none',
               stroke: seg.color,
-              strokeWidth: 24,
-              strokeDasharray: `${seg.dash} ${circumference - seg.dash}`,
+              strokeWidth: 18,
+              strokeDasharray: `${Math.max(0, seg.dash - 1.5)} ${circumference - Math.max(0, seg.dash - 1.5)}`,
               strokeDashoffset: -seg.offset,
               transform: `rotate(-90 ${cx} ${cy})`
             })),
-            h('text', { x: cx, y: cy - 4, textAnchor: 'middle', fontSize: 13, fontWeight: 600, fill: 'var(--text-primary)' }, fmtCurrency(total, currency)),
-            h('text', { x: cx, y: cy + 12, textAnchor: 'middle', fontSize: 10, fill: 'var(--text-secondary)' }, 'total')
+            h('text', { x: cx, y: cy - 2, textAnchor: 'middle', fontSize: 14, fontWeight: 700, fill: 'var(--text-primary)' }, fmtCompact(total, currency)),
+            h('text', { x: cx, y: cy + 14, textAnchor: 'middle', fontSize: 10, fill: 'var(--text-tertiary)' }, 'this month')
           ),
-          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '180px' } },
-            segments.map((seg, i) => h('div', { key: i, style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', fontSize: '13px' } },
-              h('span', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
-                h('span', { style: { width: 9, height: 9, borderRadius: '50%', background: seg.color, display: 'inline-block', flexShrink: 0 } }),
-                seg.label
-              ),
-              h('span', { style: { color: 'var(--text-secondary)' } }, `${fmtCurrency(seg.amount, currency)} (${Math.round(seg.pct * 100)}%)`)
+          h('div', { className: 'donut-legend' },
+            segments.map((seg, i) => h('div', { key: i, className: 'donut-legend-row' },
+              h('span', { className: 'budget-swatch', style: { background: seg.color } }),
+              h('span', { className: 'donut-legend-label' }, seg.label),
+              h('span', { className: 'donut-legend-amt' }, fmtCurrency(seg.amount, currency)),
+              h('span', { className: 'donut-legend-pct' }, `${Math.round(seg.pct * 100)}%`)
             ))
           )
-        )
+        ),
+    rows.length === 0 ? null : h('div', { className: 'stats-foot' },
+      h(ChipToggle, {
+        value: groupBy,
+        onChange: setGroupBy,
+        options: [{ id: 'source', label: 'By kind' }, { id: 'category', label: 'By category' }]
+      })
+    )
   );
 }
 
-function PriceOverrideModal({ data, setData, occ, currency, inCheckCard, pushTo, onClose }) {
+function PriceOverrideModal(props) {
+  const { data, occ } = props;
+  const oneTime = occ.isOneTime || occ.sourceList === 'oneTimeEntries'
+    ? data.oneTimeEntries.find((e) => e.id === occ.id)
+    : null;
+  if (oneTime) {
+    return h(QuickAddModal, { data, setData: props.setData, entry: oneTime, onClose: props.onClose });
+  }
+  return h(OccurrenceHub, props);
+}
+
+function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onClose }) {
   const overlay = useOverlayDismiss(onClose);
   const existing = getOverride(data, occ.id, occ.occDate);
   const [price, setPrice] = useState(existing && existing.amount !== undefined ? String(existing.amount) : '');
@@ -2805,6 +2954,7 @@ function PriceOverrideModal({ data, setData, occ, currency, inCheckCard, pushTo,
     return already > 0 ? String(already) : '';
   });
   const [coverOpen, setCoverOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
 
   function save() {
     haptic('success');
@@ -2899,10 +3049,30 @@ function PriceOverrideModal({ data, setData, occ, currency, inCheckCard, pushTo,
     onClose();
   }
 
+  const editable = ['majorBills', 'subscriptions', 'incomeSources'].includes(occ.sourceList);
+
+  function openEdit() {
+    const entry = (data[occ.sourceList] || []).find((e) => e.id === occ.id);
+    if (entry) setEditing({ ...entryToFormShape(entry), _isNew: false });
+  }
+
+  function saveEdit(cleaned) {
+    setData(logActivity(applyEditedEntry(data, occ.sourceList, cleaned), `Edited "${cleaned.name}"`));
+    setEditing(null);
+    onClose();
+  }
+
+  if (editing) {
+    return h(EntryFormModal, Object.assign(
+      { data, entry: editing, onSubmit: saveEdit, onClose: () => setEditing(null), submitLabel: 'Save' },
+      getEditModalConfig(occ.sourceList, editing)
+    ));
+  }
+
   const d = parseYmd(occ.occDate);
   const dateLabel = formatDate(d, data.settings, { weekday: true, year: true });
   const templateLabel = occ.isRange
-    ? `${fmtCurrency(occ.amountMin, currency)}-${fmtCurrency(occ.amountMax, currency)}`
+    ? fmtRange(occ.amountMin, occ.amountMax, currency)
     : fmtCurrency(entryAmount(occ), currency);
 
   return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
@@ -2922,7 +3092,7 @@ function PriceOverrideModal({ data, setData, occ, currency, inCheckCard, pushTo,
       ),
 
       h('div', { className: 'price-field' },
-        h('label', null, 'Actual price for this occurrence'),
+        h('label', null, occ.kind === 'income' ? 'What actually came in' : 'What it actually cost this time'),
         h('input', {
           type: 'number',
           inputMode: 'decimal',
@@ -2931,7 +3101,7 @@ function PriceOverrideModal({ data, setData, occ, currency, inCheckCard, pushTo,
           onChange: (e) => setPrice(e.target.value)
         }),
         h('p', { className: 'price-hint' },
-          'Only affects this occurrence \u2014 future months keep the usual amount.')
+          'Only changes this date \u2014 every other date keeps the usual amount.')
       ),
 
       h('div', { className: 'price-actions' },
@@ -3030,6 +3200,13 @@ function PriceOverrideModal({ data, setData, occ, currency, inCheckCard, pushTo,
                   h('span', { className: 'price-action-sub' }, 'Flag this date')
                 ))
         ),
+        editable ? h('button', { className: 'price-action-row', onClick: openEdit },
+          h('div', null,
+            h('span', { className: 'price-action-title' }, `Edit ${occ.name}`),
+            h('span', { className: 'price-action-sub' }, 'Change the amount, date or how often it repeats')
+          ),
+          h('span', { className: 'price-action-chevron' }, '\u203a')
+        ) : null,
         h('button', { className: 'price-action-row danger', onClick: () => confirmRemove ? removeThisOccurrence() : setConfirmRemove(true) },
           h('div', null,
             h('span', { className: 'price-action-title' }, confirmRemove ? 'Tap again to confirm' : 'Remove this occurrence'),
@@ -3052,13 +3229,15 @@ const MONTH_NAMES = ['January','February','March','April','May','June','July','A
 const DOW_FULL = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 function fmtCompact(amount, currency) {
-  const sym = (currency === 'EUR') ? '\u20ac' : (currency === 'GBP') ? '\u00a3' : '$';
+  const sym = currencySymbol(currency);
   const n = Math.round(Number(amount) || 0);
-  if (n >= 1000) {
-    const k = n / 1000;
-    return `${sym}${k >= 10 ? Math.round(k) : k.toFixed(1)}k`;
+  const sign = n < 0 ? '\u2212' : '';
+  const abs = Math.abs(n);
+  if (abs >= 1000) {
+    const k = abs / 1000;
+    return `${sign}${sym}${k >= 10 ? Math.round(k) : k.toFixed(1).replace(/\.0$/, '')}k`;
   }
-  return `${sym}${n}`;
+  return `${sign}${sym}${abs}`;
 }
 
 function getDateRangeSpans(data, allBills, gridStart, gridEnd) {
@@ -3557,109 +3736,78 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
   const sheet = useSheetDismiss(onClose);
   const overlay = useOverlayDismiss(onClose);
   const [priceModal, setPriceModal] = useState(null);
-  const [editing, setEditing] = useState(null);
-  const [confirmRemove, setConfirmRemove] = useState(null);
 
   function togglePaid(o) {
     const wasPaid = isPaid(data, o.id, o.occDate);
+    haptic(wasPaid ? 'light' : 'success');
     let next = togglePaidStatus(data, o.id, o.occDate);
     next = logActivity(next, `${wasPaid ? 'Unmarked' : 'Marked'} "${o.name}" as paid`);
     setData(next);
   }
 
-  function openEdit(o) {
-    if (o.sourceList === 'creditCards') return;
-    setEditing({ sourceList: o.sourceList, form: { ...entryToFormShape(o), _isNew: false } });
-  }
-
-  function handleEditSubmit(cleaned) {
-    let next = applyEditedEntry(data, editing.sourceList, cleaned);
-    next = logActivity(next, `Edited "${cleaned.name}"`);
-    setData(next);
-    setEditing(null);
-  }
-
-  function toggleLate(o) {
-    const wasLate = isForcedLate(data, o.id, o.occDate);
-    let next = toggleForcedLate(data, o.id, o.occDate);
-    next = logActivity(next, `${wasLate ? 'Unmarked' : 'Marked'} "${o.name}" as late`);
-    setData(next);
-  }
-
-  function removeThisOccurrence(o) {
-    let next;
-    if (o.sourceList === 'oneTimeEntries') {
-
-      next = { ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== o.id) };
-      next = logActivity(next, `Removed "${o.name}"`);
-    } else {
-      next = removeOccurrence(data, o.id, o.occDate);
-      next = logActivity(next, `Removed "${o.name}" from calendar for ${o.occDate}`);
-    }
-    setData(next);
-    setConfirmRemove(null);
-  }
-
-  const dateLabel = formatDate(parseYmd(dateStr), data.settings, { weekday: true, year: true });
+  const date = parseYmd(dateStr);
+  const dateLabel = formatDate(date, data.settings, { weekday: true });
+  const out = occs.filter((o) => o.kind !== 'income').reduce((sum, o) => sum + o.amount, 0);
+  const inflow = occs.filter((o) => o.kind === 'income').reduce((sum, o) => sum + o.amount, 0);
+  const summary = [
+    out > 0 ? `${fmtCurrency(out, currency)} out` : null,
+    inflow > 0 ? `${fmtCurrency(inflow, currency)} in` : null
+  ].filter(Boolean).join(' \u00b7 ');
 
   return h('div', Object.assign({ className: 'modal-overlay' }, overlay),
     h('div', { className: 'modal-content day-modal' },
       h('div', { className: 'sheet-grabber', ...sheet, 'aria-label': 'Close' }),
-      h('div', { className: 'row-between' },
-        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, dateLabel),
-        h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')
+      h('div', { className: 'day-head' },
+        h('div', null,
+          h('p', { className: 'day-title' }, dateLabel),
+          h('p', { className: 'day-sub' }, occs.length === 0 ? 'Nothing scheduled' : summary)
+        ),
+        h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
+          h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
+            h('path', { d: 'M6 6l12 12M18 6L6 18' })
+          )
+        )
       ),
-      h('button', { onClick: () => { onClose(); onAddEntry(); }, style: { alignSelf: 'flex-start' } }, '+ Add entry'),
 
-      occs.length === 0
-        ? h('p', { className: 'empty-state' }, 'Nothing scheduled this day.')
-        : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-            occs.map((o, i) => {
-              const paid = o.kind === 'bill' && isPaid(data, o.id, o.occDate);
-              const editable = o.sourceList !== 'creditCards';
-              const forcedLate = o.kind === 'bill' && isForcedLate(data, o.id, o.occDate);
-              const removeKey = `${o.id}|${o.occDate}`;
-              const confirming = confirmRemove === removeKey;
-              const removeLabel = o.sourceList === 'oneTimeEntries' ? 'Remove' : 'Remove from calendar';
-              return h('div', { key: `${o.id}-${i}`, className: 'list-item' },
-                h('div', { className: 'checkbox-row' },
-                  o.kind === 'bill' ? h('input', {
-                    type: 'checkbox',
-                    checked: paid,
-                    onChange: () => togglePaid(o),
-                    'aria-label': `Mark ${o.name} paid`
-                  }) : null,
-                  h('div', null,
-                    h('p', { className: 'list-item-name' }, o.name),
-                    h('p', { className: 'list-item-sub' }, o.kind === 'income' ? 'Income' : (o.category || 'Bill')),
-                    forcedLate ? h('span', { className: 'badge badge-danger', style: { marginTop: '2px', display: 'inline-block' } }, 'Marked late') : null
-                  )
-                ),
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
-                  h('span', {
-                    className: 'list-item-amount',
-                    style: { color: o.kind === 'income' ? 'var(--text-success)' : 'inherit' }
-                  }, `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`),
-                  h('button', { onClick: () => setPriceModal(o) }, 'Set price'),
-                  o.kind === 'bill' ? h('button', { onClick: () => toggleLate(o) }, forcedLate ? 'Unmark late' : 'Mark as late') : null,
-                  editable ? h('button', { onClick: () => openEdit(o) }, 'Edit') : null,
-                  confirming
-                    ? h('button', { className: 'danger-text', onClick: () => removeThisOccurrence(o) }, 'Confirm remove?')
-                    : h('button', { className: 'danger-text', onClick: () => setConfirmRemove(removeKey) }, removeLabel)
-                )
-              );
-            })
-          ),
+      occs.length === 0 ? null : h('div', { className: 'entry-list day-list' },
+        occs.map((o, i) => {
+          const income = o.kind === 'income';
+          const { paid, late } = lateState(data, o);
+          return h('div', {
+            key: `${o.id}-${i}`,
+            className: `day-row${paid && !income ? ' paid' : ''}`,
+            onClick: () => setPriceModal(o)
+          },
+            income
+              ? h('span', { className: 'entry-row-swatch', style: { background: getEntryColor(o, data) || '#4FAE6B' } })
+              : h('input', {
+                  type: 'checkbox',
+                  checked: paid,
+                  onClick: (e) => e.stopPropagation(),
+                  onChange: () => togglePaid(o),
+                  'aria-label': `Mark ${o.name} paid`
+                }),
+            h('span', { className: 'entry-row-text' },
+              h('span', { className: 'entry-row-name' },
+                late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
+                o.name),
+              h('span', { className: 'entry-row-sub' },
+                income ? 'Income' : [paid ? 'Paid' : (late ? 'Late' : null), o.category || SOURCE_GROUP_LABELS[o.sourceList]].filter(Boolean).join(' \u00b7 '))
+            ),
+            h('span', { className: `entry-row-amt${income ? ' positive' : ''}` },
+              `${income ? '+' : ''}${occAmountLabel(o, currency)}`),
+            h('span', { className: 'att-chevron' }, '\u203a')
+          );
+        })
+      ),
+
+      h('button', { className: 'add-row', onClick: () => { onClose(); onAddEntry(); } },
+        `+ Add something on ${formatDate(date, data.settings)}`),
 
       priceModal ? h(PriceOverrideModal, {
         data, setData, occ: priceModal, currency,
         onClose: () => setPriceModal(null)
-      }) : null,
-
-      editing ? h(EntryFormModal, Object.assign(
-        { data, entry: editing.form, onSubmit: handleEditSubmit, onClose: () => setEditing(null), submitLabel: 'Save' },
-        getEditModalConfig(editing.sourceList, editing.form)
-      )) : null
+      }) : null
     )
   );
 }
@@ -3808,33 +3956,25 @@ function useMonthFinancials(data, cursor) {
     const lastEnd = new Date(cursor.getFullYear(), cursor.getMonth(), 0);
 
     const lastBills = expandAll(allBills, 'bill', lastStart, lastEnd, data);
-    const lastIncome = expandAll(data.incomeSources, 'income', lastStart, lastEnd, data);
-    const lastOneTime = data.oneTimeEntries.filter((e) => {
-      if (!e.date) return false;
-      const d = parseYmd(e.date);
-      return d >= lastStart && d <= lastEnd;
-    });
-    const lastOneTimeBills = lastOneTime.filter((e) => e.oneTimeKind === 'payment')
-      .reduce((sum, e) => sum + resolvedAmount(data, e, e.date), 0);
-    const lastOneTimeIncome = lastOneTime.filter((e) => e.oneTimeKind === 'income')
+    const lastOneTimeBills = purchaseEntries(data)
+      .filter((e) => {
+        const d = parseYmd(e.date);
+        return d >= lastStart && d <= lastEnd;
+      })
       .reduce((sum, e) => sum + resolvedAmount(data, e, e.date), 0);
 
     return {
-      totalBills: lastBills.reduce((sum, o) => sum + o.amount, 0) + lastOneTimeBills,
-      totalIncome: lastIncome.reduce((sum, o) => sum + o.amount, 0) + lastOneTimeIncome
+      totalBills: lastBills.reduce((sum, o) => sum + o.amount, 0) + lastOneTimeBills
     };
   }, [data, cursor]);
 
   const monthSummary = useMemo(() => {
     const billRows = [...billOccurrences, ...oneTimePayments];
-    const incomeRows = [...incomeOccurrences, ...oneTimeIncome.map((o) => ({ ...o, amount: resolvedAmount(data, o, o.date) }))];
-
     const biggestBill = billRows.reduce((max, o) => (!max || o.amount > max.amount ? o : max), null);
-    const biggestIncome = incomeRows.reduce((max, o) => (!max || o.amount > max.amount ? o : max), null);
     const avgBill = billRows.length > 0 ? billRows.reduce((s, o) => s + o.amount, 0) / billRows.length : 0;
 
-    return { biggestBill, biggestIncome, avgBill, billCount: billRows.length };
-  }, [billOccurrences, oneTimePayments, incomeOccurrences, oneTimeIncome, data]);
+    return { biggestBill, avgBill, billCount: billRows.length };
+  }, [billOccurrences, oneTimePayments]);
 
   const next7Days = useMemo(() => {
     const start = new Date(today);
@@ -4020,6 +4160,17 @@ function useNextCheck(data, period) {
   }, [data, period]);
 }
 
+const UPCOMING_PREVIEW = 6;
+
+function MonthHeader({ cursor, onChange }) {
+  const label = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  return h('div', { className: 'home-month-header' },
+    h('button', { onClick: () => { haptic('light'); onChange(-1); }, 'aria-label': 'Previous month' }, '\u2039'),
+    h('h1', { className: 'home-month-title' }, label),
+    h('button', { onClick: () => { haptic('light'); onChange(1); }, 'aria-label': 'Next month' }, '\u203a')
+  );
+}
+
 function OverviewSwitch({ view, setView }) {
   return h('div', { className: 'ov-switch', role: 'tablist' },
     [{ id: 'calendar', label: 'Calendar' }, { id: 'stats', label: 'Statistics' }].map((t) => h('button', {
@@ -4054,16 +4205,17 @@ function StatisticsPage({ data, setData, isMobile }) {
   const [groupBy, setGroupBy] = useState('source');
   const [filter, setFilter] = useState('bills');
   const [priceModal, setPriceModal] = useState(null);
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
 
   const fin = useMonthFinancials(data, cursor);
 
   const breakdown = useMemo(() => {
     const rows = [];
-    if (filter === 'bills' || filter === 'both') {
+    if (filter === 'bills') {
       fin.billOccurrences.forEach((o) => rows.push(o));
       fin.oneTimePayments.forEach((o) => rows.push(o));
     }
-    if (filter === 'income' || filter === 'both') {
+    if (filter === 'income') {
       fin.incomeOccurrences.forEach((o) => rows.push(o));
       fin.oneTimeIncome.forEach((o) => {
         rows.push({ ...o, amount: resolvedAmount(data, o, o.date), sourceList: 'oneTimeEntries' });
@@ -4081,7 +4233,7 @@ function StatisticsPage({ data, setData, isMobile }) {
       if (groupBy === 'source') {
         const groupKey = o.sourceList === 'oneTimeEntries' ? `oneTimeEntries:${o.kind}` : o.sourceList;
         const label = o.sourceList === 'oneTimeEntries'
-          ? (o.kind === 'income' ? 'One-time income' : 'One-time payments')
+          ? (o.kind === 'income' ? 'One-time income' : 'Purchases')
           : (SOURCE_GROUP_LABELS[o.sourceList] || 'Other');
         if (!groups[groupKey]) groups[groupKey] = { label, amount: 0, color: sourceColorFor(o) || DONUT_COLORS[0] };
         groups[groupKey].amount += o.amount;
@@ -4099,50 +4251,87 @@ function StatisticsPage({ data, setData, isMobile }) {
   }, [fin, groupBy, filter, data]);
 
   function changeMonth(delta) {
+    setShowAllUpcoming(false);
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
   }
 
-  const monthLabel = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const now = new Date();
+  const isCurrentMonth = cursor.getFullYear() === now.getFullYear() && cursor.getMonth() === now.getMonth();
+  const sc = data.settings.sectionColors || {};
+  const colors = { income: sc.incomeSources || '#4FAE6B', bills: sc.majorBills || '#D85A5A' };
 
-  const monthHeader = h('div', { className: 'home-month-header' },
-    h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
-    h('h1', { className: 'home-month-title' }, monthLabel),
-    h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
+  const moneyIn = fin.totalProjectedIncome;
+  const moneyOut = fin.totalBills;
+  const net = moneyIn - moneyOut;
+  const outPct = moneyIn > 0 ? Math.min(100, (moneyOut / moneyIn) * 100) : 100;
+
+  const summary = h('section', { className: 'stats-summary' },
+    h('div', { className: 'stats-summary-row' },
+      h('div', { className: 'stats-summary-cell' },
+        h('span', { className: 'spend-stat-label' }, 'Coming in'),
+        h('span', { className: 'stats-summary-value good' }, fmtCurrency(moneyIn, currency))
+      ),
+      h('div', { className: 'stats-summary-cell' },
+        h('span', { className: 'spend-stat-label' }, 'Going out'),
+        h('span', { className: 'stats-summary-value' }, fmtCurrency(moneyOut, currency))
+      )
+    ),
+    h('div', { className: 'stats-summary-bar' },
+      h('span', { className: `stats-summary-fill${net < 0 ? ' over' : ''}`, style: { width: `${outPct}%` } })
+    ),
+    h('p', { className: `stats-summary-net${net < 0 ? ' short' : ''}` },
+      moneyIn <= 0
+        ? 'Add an income source in Settings to compare in against out.'
+        : net >= 0
+          ? `${fmtCurrency(net, currency)} left after everything \u2014 ${Math.round(100 - outPct)}% of what comes in`
+          : `${fmtCurrency(-net, currency)} more going out than coming in`),
+    fin.hasIncomeRange ? h('p', { className: 'stats-summary-range' },
+      `Income could land anywhere from ${fmtRange(fin.projectedIncomeRange.min, fin.projectedIncomeRange.max, currency)}`) : null
   );
 
-  const next7List = fin.next7Days.length === 0
-    ? h('p', { className: 'empty-state' }, 'Nothing due in the next 7 days.')
-    : h('div', { className: 'ov-next7' },
-        fin.next7Days.map((o, i) => h('div', {
-          key: `${o.id}-${o.occDate}-${i}`,
-          className: 'list-item clickable',
-          onClick: () => setPriceModal(o)
-        },
-          h('div', null,
-            h('p', { className: 'list-item-name' }, o.name),
-            h('p', { className: 'list-item-sub' }, formatDate(parseYmd(o.occDate), data.settings))
-          ),
-          h('span', {
-            className: 'list-item-amount',
-            style: { color: o.kind === 'income' ? 'var(--text-success)' : 'inherit', fontSize: '12px' }
-          }, `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`)
-        ))
-      );
+  const upcoming = fin.next7Days.filter((o) => o.kind === 'income' || !isPaid(data, o.id, o.occDate));
+  const visibleUpcoming = showAllUpcoming ? upcoming : upcoming.slice(0, UPCOMING_PREVIEW);
+  const todayStr = todayYmd();
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = ymd(tomorrow);
+  const dayWord = (dateStr) => dateStr === todayStr ? 'Today'
+    : dateStr === tomorrowStr ? 'Tomorrow'
+    : parseYmd(dateStr).toLocaleDateString('en-US', { weekday: 'long' });
 
-  const chart = h(CashFlowChart, { points: fin.cashFlowSeries, currency });
+  const next7 = h('section', { className: 'stats-section' },
+    h('div', { className: 'stats-head' },
+      h('div', null,
+        h('p', { className: 'stats-title' }, 'Coming up'),
+        h('p', { className: 'stats-caption' }, 'The next 7 days, still to pay or receive')
+      )
+    ),
+    upcoming.length === 0
+      ? h('p', { className: 'empty-state' }, 'Nothing due in the next 7 days.')
+      : h('div', { className: 'entry-list' },
+          visibleUpcoming.map((o, i) => h(EntryRow, {
+            key: `${o.id}-${o.occDate}-${i}`,
+            name: o.name,
+            sub: `${dayWord(o.occDate)} \u00b7 ${formatDate(parseYmd(o.occDate), data.settings)}`,
+            amount: `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`,
+            positive: o.kind === 'income',
+            color: getEntryColor(o, data),
+            onClick: () => setPriceModal(o)
+          }))
+        ),
+    upcoming.length > UPCOMING_PREVIEW
+      ? h('button', { className: 'att-more', onClick: () => setShowAllUpcoming(!showAllUpcoming) },
+          showAllUpcoming ? 'Show less' : `Show all ${upcoming.length}`)
+      : null
+  );
+
+  const monthHeader = h(MonthHeader, { cursor, onChange: changeMonth });
+  const chart = h(CashFlowChart, {
+    points: fin.cashFlowSeries, currency, colors,
+    todayDay: isCurrentMonth ? now.getDate() : null
+  });
   const donut = h(CategoryDonut, { data: breakdown, currency, groupBy, setGroupBy, filter, setFilter });
-  const glance = h(MonthSummaryCard, {
-    summary: fin.monthSummary,
-    currency,
-    incomeReceived: fin.incomeReceived,
-    projectedIncome: fin.totalProjectedIncome,
-    incomeRange: fin.hasIncomeRange ? fin.projectedIncomeRange : null
-  });
-  const compare = h(MonthComparisonCard, {
-    lastMonth: fin.lastMonthTotals,
-    thisMonth: { totalBills: fin.totalBills, totalIncome: fin.totalProjectedIncome },
-    currency
-  });
+  const glance = h(GlanceGrid, { fin, currency });
 
   const priceModalEl = priceModal ? h(PriceOverrideModal, {
     data, setData, occ: priceModal, currency,
@@ -4151,26 +4340,15 @@ function StatisticsPage({ data, setData, isMobile }) {
 
   if (isMobile) {
     return h('div', { className: 'stats-page' },
-      monthHeader,
-      h('p', { className: 'section-title' }, 'Next 7 days'),
-      next7List,
-      h('div', { className: 'ov-stack' }, chart, donut, glance, compare),
-      priceModalEl
+      monthHeader, summary, isCurrentMonth ? next7 : null, chart, donut, glance, priceModalEl
     );
   }
 
   return h('div', { className: 'stats-page' },
     monthHeader,
-    h('div', { className: 'home-chart-row' },
-      h('div', { className: 'home-chart-main' }, chart),
-      h('div', { className: 'home-chart-side' },
-        h('p', { className: 'section-title', style: { marginTop: '0', marginBottom: '8px' } }, 'Next 7 days'),
-        next7List
-      )
-    ),
-    h('div', { className: 'home-bottom-row' },
-      donut,
-      h('div', { className: 'home-side-cards' }, glance, compare)
+    h('div', { className: 'stats-desktop' },
+      h('div', { className: 'stats-col' }, summary, chart, glance),
+      h('div', { className: 'stats-col' }, isCurrentMonth ? next7 : null, donut)
     ),
     priceModalEl
   );
@@ -4489,8 +4667,8 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const budgetSection = h('section', { className: 'spend-section' },
     h('div', { className: 'row-between' },
       h('div', null,
-        h('p', { className: 'section-title', style: { margin: 0 } }, 'Monthly budgets'),
-        h('p', { className: 'spend-caption' },
+        h('p', { className: 'stats-title' }, 'Monthly budgets'),
+        h('p', { className: 'stats-caption' },
           budgeted.length > 0
             ? `${monthLabel} \u00b7 starts over ${formatDate(resetsOn, data.settings)}`
             : 'One amount per category, for a whole month')
@@ -4512,7 +4690,7 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
           }))
         ),
     unusedCategories.length > 0
-      ? h('button', { className: 'spend-add-budget', onClick: () => setBudgetModal({}) },
+      ? h('button', { className: 'add-row', onClick: () => setBudgetModal({}) },
           budgeted.length === 0 ? '+ Set your first budget' : '+ Add another budget')
       : null,
     unbudgeted.length > 0
@@ -4545,8 +4723,8 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const breakdownSection = purchases.length === 0 ? null : h('section', { className: 'spend-section' },
     h('div', { className: 'row-between' },
       h('div', null,
-        h('p', { className: 'section-title', style: { margin: 0 } }, 'Where it went'),
-        h('p', { className: 'spend-caption' },
+        h('p', { className: 'stats-title' }, 'Where it went'),
+        h('p', { className: 'stats-caption' },
           catFilter
             ? `Showing ${catFilter} below \u00b7 tap it again to clear`
             : hasPrev
@@ -4596,8 +4774,8 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const purchaseSection = h('section', { className: 'spend-section' },
     h('div', { className: 'row-between' },
       h('div', null,
-        h('p', { className: 'section-title', style: { margin: 0 } }, 'Purchases'),
-        catFilter ? h('p', { className: 'spend-caption' }, `${catFilter} only`) : null
+        h('p', { className: 'stats-title' }, 'Purchases'),
+        catFilter ? h('p', { className: 'stats-caption' }, `${catFilter} only`) : null
       ),
       h('span', { className: 'spend-section-total' }, fmtCurrency(filteredTotal, currency))
     ),
@@ -4633,8 +4811,8 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const hasHistory = history.some((b) => b.total > 0);
   const trendSection = !hasHistory ? null : h('section', { className: 'spend-section' },
     h('div', null,
-      h('p', { className: 'section-title', style: { margin: 0 } }, 'Day-to-day spending by month'),
-      h('p', { className: 'spend-caption' }, `Totals for the last ${SPEND_HISTORY_MONTHS} months`)
+      h('p', { className: 'stats-title' }, 'Day-to-day spending by month'),
+      h('p', { className: 'stats-caption' }, `Totals for the last ${SPEND_HISTORY_MONTHS} months`)
     ),
     h('div', { className: 'spend-bars' },
       history.map((b, i) => h('div', { key: b.key, className: `spend-bar-col${i === history.length - 1 ? ' current' : ''}` },
@@ -4683,11 +4861,7 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
     }) : null
   );
 
-  const monthHeader = h('div', { className: 'home-month-header' },
-    h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
-    h('h1', { className: 'home-month-title' }, monthLabel),
-    h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
-  );
+  const monthHeader = h(MonthHeader, { cursor, onChange: changeMonth });
 
   if (isMobile) {
     return h('div', { className: 'spend-page' },
@@ -4746,35 +4920,29 @@ function BillsPage({ data, setData }) {
 
   const list = data.majorBills;
 
+  const total = list.reduce((sum, e) => sum + monthlyAmount(e), 0);
+
   return h('div', null,
-    h('div', { className: 'row-between' },
-      h('h2', { style: { margin: 0 } }, 'Essentials'),
-      h('button', { onClick: openAdd }, '+ Add')
+    h('div', { className: 'sub-head' },
+      h('h2', { className: 'sub-title' }, 'Essentials'),
+      h('p', { className: 'sub-caption' },
+        list.length === 0
+          ? 'Rent, utilities, insurance \u2014 the bills that keep the lights on.'
+          : `${list.length} ${list.length === 1 ? 'bill' : 'bills'} \u00b7 about ${fmtCurrency(total, currency)} a month`)
     ),
-    h('p', { style: { color: 'var(--text-secondary)', fontSize: '14px', marginTop: '4px' } },
-      'Income sources can be managed from Settings.'),
     list.length === 0
       ? h('p', { className: 'empty-state' }, 'No bills added yet.')
-      : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' } },
-          list.map((e) => {
-            const d = parseYmd(e.date);
-            const dateLabel = formatDate(d, data.settings);
-            return h('div', { key: e.id, className: 'list-item clickable', onClick: () => openEdit(e) },
-              h('div', null,
-                h('p', { className: 'list-item-name' }, e.name),
-                h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}${e.category ? ' - ' + e.category : ''}`)
-              ),
-              h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
-                h('span', { className: 'list-item-amount' }, entryAmountLabel(e, currency)),
-                h('button', {
-                  className: 'x-btn',
-                  onClick: (ev) => { ev.stopPropagation(); deleteEntry(e); },
-                  'aria-label': `Delete ${e.name}`
-                }, '\u00d7')
-              )
-            );
-          })
+      : h('div', { className: 'entry-list' },
+          list.map((e) => h(EntryRow, {
+            key: e.id,
+            name: e.name,
+            sub: scheduleLabel(e, data.settings),
+            amount: entryAmountLabel(e, currency),
+            color: getEntryColor({ ...e, sourceList: 'majorBills' }, data),
+            onClick: () => openEdit(e)
+          }))
         ),
+    h('button', { className: 'add-row', onClick: openAdd }, '+ Add a bill'),
 
     editing ? h(EntryFormModal, {
       data,
@@ -4784,6 +4952,8 @@ function BillsPage({ data, setData }) {
       dateLabel: 'Due date',
       submitLabel: editing._isNew ? 'Add' : 'Save',
       onSubmit: handleSubmit,
+      onDelete: editing._isNew ? null : () => { deleteEntry(editing); setEditing(null); },
+      deleteLabel: `Delete ${editing.name || 'this bill'}`,
       onClose: () => setEditing(null)
     }) : null
   );
@@ -4816,45 +4986,29 @@ function SubscriptionsPage({ data, setData }) {
   }
 
   const list = data.subscriptions;
-  const total = list.reduce((sum, e) => {
-    let monthly = entryAmount(e);
-    if (e.freq === 'weekly') monthly *= 4.33;
-    else if (e.freq === 'biweekly') monthly *= 2.17;
-    else if (e.freq === 'yearly') monthly /= 12;
-    return sum + monthly;
-  }, 0);
+  const total = list.reduce((sum, e) => sum + monthlyAmount(e), 0);
 
   return h('div', null,
-    h('div', { className: 'row-between' },
-      h('h2', { style: { margin: 0 } }, 'Subscriptions & extras'),
-      h('button', { onClick: openAdd }, '+ Add')
-    ),
-    h('div', { className: 'metric-card', style: { marginTop: '12px', marginBottom: '12px' } },
-      h('p', { className: 'metric-label' }, 'Approx. monthly total'),
-      h('p', { className: 'metric-value' }, fmtCurrency(total, currency))
+    h('div', { className: 'sub-head' },
+      h('h2', { className: 'sub-title' }, 'Subscriptions'),
+      h('p', { className: 'sub-caption' },
+        list.length === 0
+          ? 'Streaming, apps, memberships \u2014 anything that renews on its own.'
+          : `${list.length} ${list.length === 1 ? 'subscription' : 'subscriptions'} \u00b7 about ${fmtCurrency(total, currency)} a month \u00b7 ${fmtCurrency(total * 12, currency)} a year`)
     ),
     list.length === 0
       ? h('p', { className: 'empty-state' }, 'No subscriptions added yet.')
-      : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-          list.map((e) => {
-            const d = parseYmd(e.date);
-            const dateLabel = formatDate(d, data.settings);
-            return h('div', { key: e.id, className: 'list-item clickable', onClick: () => openEdit(e) },
-              h('div', null,
-                h('p', { className: 'list-item-name' }, e.name),
-                h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}${e.category ? ' - ' + e.category : ''}`)
-              ),
-              h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
-                h('span', { className: 'list-item-amount' }, entryAmountLabel(e, currency)),
-                h('button', {
-                  className: 'x-btn',
-                  onClick: (ev) => { ev.stopPropagation(); deleteEntry(e); },
-                  'aria-label': `Delete ${e.name}`
-                }, '\u00d7')
-              )
-            );
-          })
+      : h('div', { className: 'entry-list' },
+          list.map((e) => h(EntryRow, {
+            key: e.id,
+            name: e.name,
+            sub: scheduleLabel(e, data.settings),
+            amount: entryAmountLabel(e, currency),
+            color: getEntryColor({ ...e, sourceList: 'subscriptions' }, data),
+            onClick: () => openEdit(e)
+          }))
         ),
+    h('button', { className: 'add-row', onClick: openAdd }, '+ Add a subscription'),
 
     editing ? h(EntryFormModal, {
       data,
@@ -4864,6 +5018,8 @@ function SubscriptionsPage({ data, setData }) {
       dateLabel: 'Billing date',
       submitLabel: editing._isNew ? 'Add' : 'Save',
       onSubmit: handleSubmit,
+      onDelete: editing._isNew ? null : () => { deleteEntry(editing); setEditing(null); },
+      deleteLabel: `Delete ${editing.name || 'this subscription'}`,
       onClose: () => setEditing(null)
     }) : null
   );
@@ -4892,6 +5048,7 @@ function CreditCardsPage({ data, setData }) {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(() => blankCreditCard());
   const [projectionCard, setProjectionCard] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const cards = data.creditCards || [];
 
@@ -4906,12 +5063,14 @@ function CreditCardsPage({ data, setData }) {
   const totalOwedNow = cards.reduce((sum, c) => sum + getCurrentCardBalance(c), 0);
 
   function openAddForm() {
+    setConfirmDelete(false);
     setEditingId(null);
     setForm(blankCreditCard());
     setShowForm(true);
   }
 
   function openEditForm(card) {
+    setConfirmDelete(false);
     setEditingId(card.id);
     setForm({ ...blankCreditCard(), ...card });
     setShowForm(true);
@@ -4940,36 +5099,56 @@ function CreditCardsPage({ data, setData }) {
   }
 
   function deleteCard(id) {
+    if (!confirmDelete) { haptic('warn'); setConfirmDelete(true); return; }
+    haptic('heavy');
     const card = cards.find((c) => c.id === id);
     setData(logActivity({ ...data, creditCards: cards.filter((c) => c.id !== id) }, `Deleted credit card "${card ? card.name : id}"`));
+    setShowForm(false);
   }
 
+  const monthlyPayments = cards
+    .filter((c) => c.hasRecurringPayment)
+    .reduce((sum, c) => sum + monthlyAmount({ amount: c.paymentAmount, freq: c.paymentFreq }), 0);
+  const hasInterest = cards.some((c) => c.useApr && c.apr);
+
+  const closeX = (onClick) => h('button', { className: 'modal-x', onClick, 'aria-label': 'Close' },
+    h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
+      h('path', { d: 'M6 6l12 12M18 6L6 18' })
+    )
+  );
+
   return h('div', null,
-    h('div', { className: 'row-between' },
-      h('h2', { style: { margin: 0 } }, 'Credit cards'),
-      h('button', { onClick: openAddForm }, '+ Add')
+    h('div', { className: 'sub-head' },
+      h('h2', { className: 'sub-title' }, 'Credit cards'),
+      h('p', { className: 'sub-caption' },
+        cards.length === 0
+          ? 'Track what you owe, what you have paid, and when it will be gone.'
+          : `${cards.length} ${cards.length === 1 ? 'card' : 'cards'} · ${fmtCurrency(totalOwedNow, currency)} owed now`)
     ),
 
-    cards.length > 0 ? h('div', { className: 'grid-2', style: { marginTop: '12px' } },
-      h('div', { className: 'metric-card' },
-        h('p', { className: 'metric-label' }, 'Total debt'),
-        h('p', { className: 'metric-value' }, fmtCurrency(totals.totalDebt, currency))
+    cards.length > 0 ? h('div', { className: 'spend-stats', style: { marginTop: 0, marginBottom: '16px' } },
+      h('div', { className: 'spend-stat' },
+        h('span', { className: 'spend-stat-label' }, 'Owed now'),
+        h('span', { className: 'spend-stat-value bad' }, fmtCurrency(totalOwedNow, currency)),
+        h('span', { className: 'spend-stat-sub' }, hasInterest ? 'including interest' : 'across all cards')
       ),
-      h('div', { className: 'metric-card' },
-        h('p', { className: 'metric-label' }, 'Total paid so far'),
-        h('p', { className: 'metric-value', style: { color: 'var(--text-success)' } }, fmtCurrency(totals.totalPaid, currency))
+      h('div', { className: 'spend-stat' },
+        h('span', { className: 'spend-stat-label' }, 'Paid so far'),
+        h('span', { className: 'spend-stat-value good' }, fmtCurrency(totals.totalPaid, currency)),
+        h('span', { className: 'spend-stat-sub' }, `of ${fmtCurrency(totals.totalDebt, currency)} borrowed`)
       ),
-      h('div', { className: 'metric-card' },
-        h('p', { className: 'metric-label' }, 'Remaining across all cards'),
-        h('p', { className: 'metric-value', style: { color: 'var(--text-warning)' } }, fmtCurrency(totalRemaining, currency))
+      h('div', { className: 'spend-stat' },
+        h('span', { className: 'spend-stat-label' }, 'Principal left'),
+        h('span', { className: 'spend-stat-value' }, fmtCurrency(totalRemaining, currency)),
+        h('span', { className: 'spend-stat-sub' }, 'before interest')
       ),
-      h('div', { className: 'metric-card' },
-        h('p', { className: 'metric-label' }, 'Owed now (with interest)'),
-        h('p', { className: 'metric-value', style: { color: 'var(--text-danger)' } }, fmtCurrency(totalOwedNow, currency))
+      h('div', { className: 'spend-stat' },
+        h('span', { className: 'spend-stat-label' }, 'Payments'),
+        h('span', { className: 'spend-stat-value' }, fmtCurrency(monthlyPayments, currency)),
+        h('span', { className: 'spend-stat-sub' }, 'about a month')
       )
     ) : null,
 
-    h('p', { className: 'section-title' }, 'Your cards'),
     cards.length === 0
       ? h('p', { className: 'empty-state' }, 'No credit cards added yet.')
       : h('div', { className: 'card-grid' },
@@ -4979,32 +5158,42 @@ function CreditCardsPage({ data, setData }) {
             const currentBalance = getCurrentCardBalance(c);
             const accruedInterest = Math.max(0, currentBalance - Math.max(0, total - paid));
             const pct = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
+            const nextPay = c.hasRecurringPayment && c.paymentDate
+              ? nextDueDate({ date: c.paymentDate, freq: c.paymentFreq || 'monthly' })
+              : null;
+            const late = isCardPaymentLate(c, data);
             return h('div', { key: c.id, className: 'credit-card-tile' },
-              h('div', { className: 'row-between' },
-                h('p', { className: 'list-item-name' }, c.name),
-                h('button', { className: 'x-btn', onClick: () => deleteCard(c.id), 'aria-label': `Delete ${c.name}` }, '\u00d7')
+              h('button', { className: 'cc-main', onClick: () => openEditForm(c) },
+                h('span', { className: 'cc-top' },
+                  h('span', { className: 'cc-name' }, c.name),
+                  h('span', { className: 'att-chevron' }, '›')
+                ),
+                h('span', { className: 'cc-owed' }, fmtCurrency(currentBalance, currency)),
+                h('span', { className: 'cc-owed-label' },
+                  `owed now${accruedInterest > 0.005 ? ` · ${fmtCurrency(accruedInterest, currency)} of it interest` : ''}`),
+                h('span', { className: 'credit-card-progress' },
+                  h('span', { className: 'credit-card-progress-bar', style: { width: `${pct}%` } })
+                ),
+                h('span', { className: 'cc-meta' },
+                  h('span', null, `${fmtCurrency(paid, currency)} of ${fmtCurrency(total, currency)} paid`),
+                  h('span', null, `${pct}%`)
+                ),
+                (c.hasRecurringPayment || (c.useApr && c.apr)) ? h('span', { className: `cc-pay${late ? ' late' : ''}` },
+                  [
+                    c.hasRecurringPayment
+                      ? `${fmtCurrency(c.paymentAmount, currency)} ${FREQ_LABELS[c.paymentFreq] || c.paymentFreq}${late ? ' · payment late' : nextPay ? ` · next ${formatDate(nextPay, data.settings)}` : ''}`
+                      : null,
+                    c.useApr && c.apr ? `${c.apr}% APR` : null
+                  ].filter(Boolean).join(' · ')
+                ) : null
               ),
-              h('div', { className: 'credit-card-progress' },
-                h('div', { className: 'credit-card-progress-bar', style: { width: `${pct}%` } })
-              ),
-              h('div', { className: 'row-between' },
-                h('span', { className: 'list-item-sub' }, `${fmtCurrency(paid, currency)} paid of ${fmtCurrency(total, currency)}`),
-                h('span', { className: 'list-item-sub' }, `${pct}%`)
-              ),
-              h('p', { style: { margin: '4px 0 0', fontWeight: 600, fontSize: '15px' } }, `${fmtCurrency(currentBalance, currency)} owed now`),
-              c.useApr && c.apr ? h('p', { className: 'list-item-sub', style: { margin: '2px 0 0' } },
-                `${c.apr}% APR${accruedInterest > 0.005 ? ` - ${fmtCurrency(accruedInterest, currency)} interest accrued` : ''}`
-              ) : null,
-              c.hasRecurringPayment ? h('p', { className: 'list-item-sub', style: { margin: '4px 0 0' } },
-                `${fmtCurrency(c.paymentAmount, currency)} due ${formatDate(parseYmd(c.paymentDate), data.settings)} - ${FREQ_LABELS[c.paymentFreq] || c.paymentFreq}`
-              ) : null,
-              h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px' } },
-                h('button', { onClick: () => openEditForm(c) }, 'Edit'),
-                c.useApr && c.apr ? h('button', { onClick: () => setProjectionCard(c) }, 'View projection') : null
-              )
+              c.useApr && c.apr
+                ? h('button', { className: 'setup-link cc-link', onClick: () => setProjectionCard(c) }, 'See the payoff projection ›')
+                : null
             );
           })
         ),
+    h('button', { className: 'add-row', onClick: openAddForm }, '+ Add a card'),
 
     projectionCard ? h(ProjectionModal, {
       card: projectionCard, data, currency,
@@ -5013,67 +5202,74 @@ function CreditCardsPage({ data, setData }) {
 
     showForm ? h('div', Object.assign({ className: 'modal-overlay as-window' }, formOverlay),
       h('div', { className: 'modal-content as-window' },
-        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, editingId ? 'Edit credit card' : 'Add credit card'),
-        h('div', null,
-          h('label', null, 'Name'),
-          h('input', { type: 'text', placeholder: 'e.g. Chase Sapphire', value: form.name, onChange: (e) => setForm({ ...form, name: e.target.value }), style: { width: '100%' } })
+        h('div', { className: 'modal-window-head' },
+          h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, editingId ? 'Edit credit card' : 'Add a credit card'),
+          closeX(() => setShowForm(false))
         ),
-        h('div', { style: { display: 'flex', gap: '8px' } },
-          h('div', { style: { flex: 1 } },
+        h('div', { className: 'setup-field' },
+          h('label', null, 'Name'),
+          h('input', { type: 'text', placeholder: 'e.g. Chase Sapphire', value: form.name, onChange: (e) => setForm({ ...form, name: e.target.value }) })
+        ),
+        h('div', { className: 'setup-entry-grid' },
+          h('div', { className: 'setup-field' },
             h('label', null, 'Total debt'),
-            h('input', { type: 'number', value: form.totalDebt, onChange: (e) => setForm({ ...form, totalDebt: e.target.value }), style: { width: '100%' } })
+            h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: form.totalDebt, onChange: (e) => setForm({ ...form, totalDebt: e.target.value }) })
           ),
-          h('div', { style: { flex: 1 } },
-            h('label', null, 'Amount paid so far'),
-            h('input', { type: 'number', value: form.amountPaid, onChange: (e) => setForm({ ...form, amountPaid: e.target.value }), style: { width: '100%' } })
+          h('div', { className: 'setup-field' },
+            h('label', null, 'Paid so far'),
+            h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: form.amountPaid, onChange: (e) => setForm({ ...form, amountPaid: e.target.value }) })
           )
         ),
-        h('div', { className: 'checkbox-row' },
-          h('input', {
-            type: 'checkbox',
+        h('div', { className: 'switch-list' },
+          h(SettingSwitch, {
             id: 'cc-recurring',
-            checked: form.hasRecurringPayment,
-            onChange: (e) => setForm({ ...form, hasRecurringPayment: e.target.checked })
-          }),
-          h('label', { htmlFor: 'cc-recurring', style: { margin: 0 } }, 'This card has a required recurring payment')
+            title: 'Has a monthly payment',
+            sub: 'Shows on the calendar and counts toward your bills',
+            checked: !!form.hasRecurringPayment,
+            onChange: (v) => setForm({ ...form, hasRecurringPayment: v })
+          })
         ),
-        form.hasRecurringPayment ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-          h('div', { style: { display: 'flex', gap: '8px' } },
-            h('div', { style: { flex: 1 } },
-              h('label', null, 'Payment amount'),
-              h('input', { type: 'number', value: form.paymentAmount, onChange: (e) => setForm({ ...form, paymentAmount: e.target.value }), style: { width: '100%' } })
-            ),
-            h('div', { style: { flex: 1 } },
-              h('label', null, 'Due date'),
-              h('input', { type: 'date', value: form.paymentDate, onChange: (e) => setForm({ ...form, paymentDate: e.target.value }), style: { width: '100%' } })
-            )
+        form.hasRecurringPayment ? h('div', { className: 'setup-entry-grid' },
+          h('div', { className: 'setup-field' },
+            h('label', null, 'Payment'),
+            h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: form.paymentAmount, onChange: (e) => setForm({ ...form, paymentAmount: e.target.value }) })
           ),
-          h('div', null,
-            h('label', null, 'Frequency'),
-            h('select', { value: form.paymentFreq, onChange: (e) => setForm({ ...form, paymentFreq: e.target.value }), style: { width: '100%' } },
+          h('div', { className: 'setup-field' },
+            h('label', null, 'Due date'),
+            h('input', { type: 'date', value: form.paymentDate, onChange: (e) => setForm({ ...form, paymentDate: e.target.value }) })
+          ),
+          h('div', { className: 'setup-field' },
+            h('label', null, 'Repeats'),
+            h('select', { value: form.paymentFreq, onChange: (e) => setForm({ ...form, paymentFreq: e.target.value }) },
               FREQS.filter((f) => f !== 'none').map((f) => h('option', { key: f, value: f }, FREQ_LABELS[f])))
-          ),
-          h('p', { style: { margin: 0, fontSize: '12px', color: 'var(--text-secondary)' } },
-            'This payment will show up on the calendar and count toward your bills.')
+          )
         ) : null,
-        h('div', { className: 'checkbox-row' },
-          h('input', {
-            type: 'checkbox',
+        h('div', { className: 'switch-list' },
+          h(SettingSwitch, {
             id: 'cc-apr',
-            checked: form.useApr,
-            onChange: (e) => setForm({ ...form, useApr: e.target.checked })
-          }),
-          h('label', { htmlFor: 'cc-apr', style: { margin: 0 } }, 'Track APR / interest')
+            title: 'Track interest',
+            sub: 'Simple monthly interest on what is left, updated as days pass',
+            checked: !!form.useApr,
+            onChange: (v) => setForm({ ...form, useApr: v })
+          })
         ),
-        form.useApr ? h('div', null,
-          h('label', null, 'APR %'),
-          h('input', { type: 'number', step: '0.01', placeholder: 'e.g. 24.99', value: form.apr, onChange: (e) => setForm({ ...form, apr: e.target.value }), style: { width: '160px' } }),
-          h('p', { style: { margin: '4px 0 0', fontSize: '12px', color: 'var(--text-secondary)' } },
-            'Simple monthly interest on the remaining balance. The balance shown updates as days pass.')
+        form.useApr ? h('div', { className: 'setup-entry-grid' },
+          h('div', { className: 'setup-field' },
+            h('label', null, 'APR %'),
+            h('input', { type: 'number', inputMode: 'decimal', step: '0.01', placeholder: 'e.g. 24.99', value: form.apr, onChange: (e) => setForm({ ...form, apr: e.target.value }) })
+          )
+        ) : null,
+        editingId ? h('button', { className: 'price-action-row danger', onClick: () => deleteCard(editingId) },
+          h('div', null,
+            h('span', { className: 'price-action-title' }, confirmDelete ? 'Tap again to delete' : 'Delete this card'),
+            h('span', { className: 'price-action-sub' },
+              confirmDelete ? 'This cannot be undone' : 'Removes the card and its payments from the calendar')
+          ),
+          h('span', { className: 'price-action-chevron' }, '›')
         ) : null,
         h('div', { className: 'row-between', style: { marginTop: '4px' } },
           h('button', { onClick: () => setShowForm(false) }, 'Cancel'),
-          h('button', { className: 'primary', onClick: submitForm }, editingId ? 'Save' : 'Add')
+          h('button', { className: 'primary', onClick: submitForm }, editingId ? 'Save' : 'Add card')
         )
       )
     ) : null
@@ -5101,10 +5297,14 @@ function ProjectionModal({ card, data, currency, onClose }) {
   const barW = (W - PAD * 2) / Math.max(1, barPoints.length) - 4;
 
   return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
-    h('div', { className: 'modal-content', style: { width: '420px' } },
-      h('div', { className: 'row-between' },
-        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, `${card.name} - projection`),
-        h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')
+    h('div', { className: 'modal-content as-window' },
+      h('div', { className: 'modal-window-head' },
+        h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, `${card.name} \u2014 payoff projection`),
+        h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
+          h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
+            h('path', { d: 'M6 6l12 12M18 6L6 18' })
+          )
+        )
       ),
 
       late ? h('div', { className: 'info-banner' },
@@ -5112,7 +5312,7 @@ function ProjectionModal({ card, data, currency, onClose }) {
           'This card\u2019s recurring payment is currently late, so the next payment isn\u2019t factored into month 1 of this projection.')
       ) : null,
 
-      h('p', { className: 'list-item-sub', style: { margin: 0 } }, 'Projected balance over the next 12 months'),
+      h('p', { className: 'stats-caption', style: { margin: 0 } }, 'Projected balance over the next 12 months'),
       h('svg', { viewBox: `0 0 ${W} ${H}`, className: 'projection-chart' },
 
         h('line', { x1: PAD, y1: H - PAD, x2: W - PAD, y2: H - PAD, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
@@ -5125,7 +5325,7 @@ function ProjectionModal({ card, data, currency, onClose }) {
       ),
 
       barPoints.length > 0 ? h(React.Fragment, null,
-        h('p', { className: 'list-item-sub', style: { margin: '8px 0 0' } }, 'Interest vs. principal per payment'),
+        h('p', { className: 'stats-caption', style: { margin: '8px 0 0' } }, 'Interest vs. principal per payment'),
         h('svg', { viewBox: `0 0 ${W} ${H}`, className: 'projection-chart' },
           h('line', { x1: PAD, y1: H - PAD, x2: W - PAD, y2: H - PAD, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
           barPoints.map((p, i) => {
@@ -5215,7 +5415,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
   }
 
   function openEdit(e) {
-    if (e.sourceList === 'creditCards') return;
+    if (e.sourceList === 'creditCards') { setPage('creditcards'); return; }
     setEditing({ sourceList: e.sourceList, form: { ...entryToFormShape(e), _isNew: false } });
   }
 
@@ -5233,7 +5433,8 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
     data.subscriptions.forEach((e) => rows.push({ ...e, sourceList: 'subscriptions' }));
     getCreditCardPaymentEntries(data).forEach((e) => rows.push({ ...e, sourceList: 'creditCards' }));
 
-    return rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const nextOf = (e) => { const d = nextDueDate(e); return d ? ymd(d) : '9999'; };
+    return rows.map((e) => ({ ...e, _next: nextOf(e) })).sort((a, b) => a._next.localeCompare(b._next));
   }, [data]);
 
   const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards'];
@@ -5256,7 +5457,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
   const groupMonthlyTotals = useMemo(() => {
     const totals = {};
     grouped.forEach(([key, rows]) => {
-      totals[key] = rows.reduce((sum, e) => sum + (entryAmount(e) || 0), 0);
+      totals[key] = rows.reduce((sum, e) => sum + monthlyAmount(e), 0);
     });
     return totals;
   }, [grouped]);
@@ -5265,16 +5466,17 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
   const visibleAttention = showAllAttention ? attention : attention.slice(0, ATTENTION_PREVIEW);
 
   const attentionBlock = h('div', { className: 'attention-section' },
-      h('div', { className: 'row-between attention-header', onClick: () => setAttentionCollapsed(!attentionCollapsed) },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-          h(Icon, { name: 'alert' }),
-          h('p', { style: { margin: 0, fontWeight: 500 } }, 'Needs attention'),
-          attention.length > 0
-            ? h('span', { className: `nav-badge round${lateCount > 0 ? '' : ' attention'}` }, attention.length)
-            : null
-        ),
-        h('button', { onClick: (e) => { e.stopPropagation(); setAttentionCollapsed(!attentionCollapsed); } },
-          attentionCollapsed ? 'Expand' : 'Minimize')
+      h('button', {
+        className: 'attention-header',
+        onClick: () => { haptic('light'); setAttentionCollapsed(!attentionCollapsed); },
+        'aria-expanded': !attentionCollapsed
+      },
+        h(Icon, { name: 'alert' }),
+        h('span', { className: 'attention-title' }, 'Needs attention'),
+        attention.length > 0
+          ? h('span', { className: `nav-badge round${lateCount > 0 ? '' : ' attention'}` }, attention.length)
+          : null,
+        h('span', { className: `drop-chevron${attentionCollapsed ? '' : ' open'}` }, '\u203a')
       ),
       !attentionCollapsed ? h('div', { style: { marginTop: '10px' } },
         h('div', { className: 'info-banner' },
@@ -5295,6 +5497,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
     );
 
   const filterBlock = h('div', { className: 'bill-filter-row' },
+      h('p', { className: 'bill-filter-caption' }, 'About a month of recurring commitments'),
       h('button', {
         className: `bill-filter-chip${categoryFilter === 'all' ? ' active' : ''}`,
         onClick: () => setCategoryFilter('all')
@@ -5310,14 +5513,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
           onClick: () => setCategoryFilter(key)
         },
           h('span', { className: 'bill-filter-label' }, SOURCE_GROUP_LABELS[key]),
-          h('span', { className: 'bill-filter-total' }, fmtCurrency(groupMonthlyTotals[key] || 0, currency)),
-          (isMobile && setPage && SUBPAGE_FOR_GROUP[key])
-            ? h('span', {
-                className: 'bill-filter-edit',
-                onClick: (e) => { e.stopPropagation(); setPage(SUBPAGE_FOR_GROUP[key]); },
-                'aria-label': `Edit ${SOURCE_GROUP_LABELS[key]}`
-              }, '›')
-            : null
+          h('span', { className: 'bill-filter-total' }, fmtCurrency(groupMonthlyTotals[key] || 0, currency))
         )
       )
     );
@@ -5335,32 +5531,21 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
             h('div', { key },
               h('div', { className: 'category-group-header' },
                 h('span', null, SOURCE_GROUP_LABELS[key]),
-                h('span', { className: 'category-group-count' }, rows.length)
+                h('span', { className: 'category-group-count' }, rows.length),
+                (isMobile && setPage) ? h('button', {
+                  className: 'setup-link category-group-link',
+                  onClick: () => setPage(SUBPAGE_FOR_GROUP[key])
+                }, key === 'creditCards' ? 'Cards \u203a' : 'Add \u203a') : null
               ),
-              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' } },
-                rows.map((e) => {
-                  const d = e.date ? parseYmd(e.date) : null;
-                  const dateLabel = d ? formatDate(d, data.settings) : '';
-                  const editable = e.sourceList !== 'creditCards';
-                  return h('div', {
-                    key: `${e.sourceList}-${e.id}`,
-                    className: `list-item${editable ? ' clickable' : ''}`,
-                    onClick: editable ? () => openEdit(e) : undefined
-                  },
-                    h('div', null,
-                      h('p', { className: 'list-item-name' }, e.name),
-                      h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}${e.category ? ' - ' + e.category : ''}`)
-                    ),
-                    h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
-                      h('span', { className: 'list-item-amount' }, entryAmountLabel(e, currency)),
-                      editable ? h('button', {
-                        className: 'x-btn',
-                        onClick: (ev) => { ev.stopPropagation(); deleteEntry(e); },
-                        'aria-label': `Delete ${e.name}`
-                      }, '×') : null
-                    )
-                  );
-                })
+              h('div', { className: 'entry-list' },
+                rows.map((e) => h(EntryRow, {
+                  key: `${e.sourceList}-${e.id}`,
+                  name: e.name,
+                  sub: scheduleLabel(e, data.settings),
+                  amount: entryAmountLabel(e, currency),
+                  color: getEntryColor(e, data),
+                  onClick: () => openEdit(e)
+                }))
               )
             )
           )
@@ -5373,7 +5558,11 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
 
     editing ? h(EntryFormModal, Object.assign(
       { data, entry: editing.form, onSubmit: handleEditSubmit, onClose: () => setEditing(null), submitLabel: 'Save' },
-      getEditModalConfig(editing.sourceList, editing.form)
+      getEditModalConfig(editing.sourceList, editing.form),
+      {
+        deleteLabel: `Delete ${editing.form.name || 'this entry'}`,
+        onDelete: () => { deleteEntry({ ...editing.form, sourceList: editing.sourceList }); setEditing(null); }
+      }
     )) : null
   );
 }
@@ -5383,7 +5572,7 @@ const SECTION_COLOR_LABELS = [
   { key: 'subscriptions', label: 'Subscriptions' },
   { key: 'creditCards', label: 'Credit card payments' },
   { key: 'incomeSources', label: 'Income' },
-  { key: 'oneTimePayments', label: 'One-time payments' },
+  { key: 'oneTimePayments', label: 'Purchases' },
   { key: 'oneTimeIncome', label: 'One-time income' }
 ];
 
@@ -5507,7 +5696,7 @@ function SettingsPage({ data, setData, onRestart }) {
   if (tab === 'general') {
     tabContent = h(GeneralTab, {
       data, currency, updateSetting,
-      onAddIncome: openAddIncome, onEditIncome: openEditIncome, onDeleteIncome: deleteIncome
+      onAddIncome: openAddIncome, onEditIncome: openEditIncome
     });
   } else if (tab === 'colors') {
     tabContent = h(ColorsTab, { data, updateSectionColor });
@@ -5516,9 +5705,11 @@ function SettingsPage({ data, setData, onRestart }) {
   }
 
   return h('div', null,
-    h('h2', { style: { marginBottom: '2px' } }, 'Settings'),
-    h('p', { className: 'version-label' }, `Web version ${WEB_VERSION}`),
-    h('div', { className: 'segmented', style: { marginTop: '12px', marginBottom: '16px', maxWidth: '420px' } },
+    h('div', { className: 'sub-head' },
+      h('h2', { className: 'sub-title' }, 'Settings'),
+      h('p', { className: 'sub-caption' }, `Finance Calendar \u00b7 version ${WEB_VERSION}`)
+    ),
+    h('div', { className: 'segmented', style: { marginBottom: '16px', maxWidth: '420px' } },
       SETTINGS_TABS.map((t) =>
         h('div', { key: t.id, className: tab === t.id ? 'selected' : '', onClick: () => setTab(t.id) }, t.label)
       )
@@ -5534,50 +5725,45 @@ function SettingsPage({ data, setData, onRestart }) {
       isIncome: true,
       submitLabel: editingIncome._isNew ? 'Add' : 'Save',
       onSubmit: handleIncomeSubmit,
+      onDelete: editingIncome._isNew ? null : () => { deleteIncome(editingIncome); setEditingIncome(null); },
+      deleteLabel: `Delete ${editingIncome.name || 'this income source'}`,
       onClose: () => setEditingIncome(null)
     }) : null
   );
 }
 
-function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, onDeleteIncome }) {
+function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome }) {
   return h('div', null,
 
     h('div', { className: 'card' },
-      h('div', { className: 'row-between' },
-        h('p', { style: { margin: 0, fontWeight: 500 } }, 'Income sources'),
-        h('button', { onClick: onAddIncome }, '+ Add')
-      ),
+      h('p', { className: 'settings-card-title' }, 'Income sources'),
+      h('p', { className: 'settings-card-sub' }, 'Paychecks and anything else that lands on a schedule.'),
       data.incomeSources.length === 0
         ? h('p', { className: 'empty-state' }, 'No income sources added yet.')
-        : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' } },
+        : h('div', { className: 'entry-list' },
             data.incomeSources.map((e) => {
-              const d = parseYmd(e.date);
-              const dateLabel = formatDate(d, data.settings);
               const avg = (e.useAvgEstimate && e.useAmountRange) ? averagePaycheck(data, e) : null;
-              return h('div', { key: e.id, className: 'list-item clickable', onClick: () => onEditIncome(e) },
-                h('div', null,
-                  h('p', { className: 'list-item-name' }, e.name),
-                  h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}`),
-                  avg ? h('p', { className: 'list-item-note' },
-                    avg.ready
+              return h(EntryRow, {
+                key: e.id,
+                name: e.name,
+                sub: scheduleLabel(e, data.settings),
+                note: avg
+                  ? (avg.ready
                       ? `\u2248${fmtCurrency(avg.amount, currency)} estimated \u00b7 average of your last ${avg.count} checks`
-                      : `Estimating \u2014 ${avg.count} of 2 checks recorded so far`) : null
-                ),
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
-                  h('span', { className: 'list-item-amount', style: { color: 'var(--text-success)' } }, `+${entryAmountLabel(e, currency)}`),
-                  h('button', {
-                    className: 'x-btn',
-                    onClick: (ev) => { ev.stopPropagation(); onDeleteIncome(e); },
-                    'aria-label': `Delete ${e.name}`
-                  }, '\u00d7')
-                )
-              );
+                      : `Estimating \u2014 ${avg.count} of 2 checks recorded so far`)
+                  : null,
+                amount: `+${entryAmountLabel(e, currency)}`,
+                positive: true,
+                color: getEntryColor({ ...e, sourceList: 'incomeSources' }, data),
+                onClick: () => onEditIncome(e)
+              });
             })
-          )
+          ),
+      h('button', { className: 'add-row', onClick: onAddIncome }, '+ Add an income source')
     ),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Appearance'),
+      h('p', { className: 'settings-card-title' }, 'Appearance'),
       h('label', null, 'Theme'),
       h('div', { className: 'segmented', style: { marginBottom: '12px' } },
         ['system', 'light', 'dark'].map((t) =>
@@ -5628,66 +5814,82 @@ function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, 
     ),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Currency & bills'),
-      h('label', null, 'Currency'),
-      h('select', {
-        value: data.settings.currency,
-        onChange: (e) => updateSetting('currency', e.target.value),
-        style: { width: '160px', marginBottom: '12px' }
-      }, CURRENCIES.map((c) => h('option', { key: c, value: c }, c))),
-      h('div', { style: { marginBottom: '12px' } },
-        h('label', null, 'Grace period before a bill is marked late (days)'),
-        h('input', {
-          type: 'number', min: 0, max: 30,
-          value: data.settings.lateGraceDays,
-          onChange: (e) => updateSetting('lateGraceDays', parseInt(e.target.value, 10) || 0),
-          style: { width: '100px' }
-        })
+      h('p', { className: 'settings-card-title' }, 'Money & bills'),
+      h('div', { className: 'setup-entry-grid' },
+        h('div', { className: 'setup-field' },
+          h('label', null, 'Currency'),
+          h('select', {
+            value: data.settings.currency,
+            onChange: (e) => updateSetting('currency', e.target.value)
+          }, CURRENCIES.map((c) => h('option', { key: c, value: c }, c)))
+        ),
+        h('div', { className: 'setup-field' },
+          h('label', null, 'Late after'),
+          h('input', {
+            type: 'number', inputMode: 'numeric', min: 0, max: 30,
+            value: data.settings.lateGraceDays,
+            onChange: (e) => updateSetting('lateGraceDays', parseInt(e.target.value, 10) || 0)
+          })
+        ),
+        h('div', { className: 'setup-field' },
+          h('label', null, 'Flag bills early'),
+          h('input', {
+            type: 'number', inputMode: 'numeric', min: 0, max: 60,
+            value: data.settings.needsAttentionLookaheadDays,
+            onChange: (e) => updateSetting('needsAttentionLookaheadDays', parseInt(e.target.value, 10) || 0)
+          })
+        ),
+        h('div', { className: 'setup-field' },
+          h('label', null, 'Flag income early'),
+          h('input', {
+            type: 'number', inputMode: 'numeric', min: 0, max: 60,
+            value: data.settings.incomeNeedsAttentionLookaheadDays,
+            onChange: (e) => updateSetting('incomeNeedsAttentionLookaheadDays', parseInt(e.target.value, 10) || 0)
+          })
+        )
       ),
-      h('div', { style: { marginBottom: '12px' } },
-        h('label', null, 'Flag range-priced bills under "Needs attention" this many days before they\u2019re due'),
-        h('input', {
-          type: 'number', min: 0, max: 60,
-          value: data.settings.needsAttentionLookaheadDays,
-          onChange: (e) => updateSetting('needsAttentionLookaheadDays', parseInt(e.target.value, 10) || 0),
-          style: { width: '100px' }
-        })
-      ),
-      h('div', { style: { marginBottom: '12px' } },
-        h('label', null, 'Flag range-priced paychecks/income under "Needs attention" this many days before they\u2019re due'),
-        h('input', {
-          type: 'number', min: 0, max: 60,
-          value: data.settings.incomeNeedsAttentionLookaheadDays,
-          onChange: (e) => updateSetting('incomeNeedsAttentionLookaheadDays', parseInt(e.target.value, 10) || 0),
-          style: { width: '100px' }
-        })
-      ),
-      h('div', { className: 'checkbox-row' },
-        h('input', {
-          type: 'checkbox',
+      h('p', { className: 'setup-hint' },
+        'All in days. Late after: how long past due before a bill counts as late. Flag early: how far ahead a bill or paycheck with a price range shows up under Needs attention, so you can fill in the real amount.'),
+      h('div', { className: 'switch-list' },
+        h(SettingSwitch, {
           id: 'auto-deduct-cc',
+          title: 'Pay down card balances',
+          sub: 'Marking a card payment paid subtracts it from that card\u2019s balance',
           checked: data.settings.autoDeductCardPayments !== false,
-          onChange: (e) => updateSetting('autoDeductCardPayments', e.target.checked)
+          onChange: (v) => updateSetting('autoDeductCardPayments', v)
         }),
-        h('label', { htmlFor: 'auto-deduct-cc', style: { margin: 0 } }, 'Automatically deduct from a credit card\u2019s balance when its payment is marked paid')
-      ),
-      h('div', { className: 'checkbox-row' },
-        h('input', {
-          type: 'checkbox',
+        h(SettingSwitch, {
           id: 'haptics',
+          title: 'Vibrate on taps',
+          sub: 'Android only \u2014 iPhone Safari does not allow web vibration',
           checked: data.settings.hapticsEnabled !== false,
-          onChange: (e) => { updateSetting('hapticsEnabled', e.target.checked); if (e.target.checked) haptic('medium'); }
-        }),
-        h('label', { htmlFor: 'haptics', style: { margin: 0 } }, 'Vibrate on taps where supported (Android and native apps; iPhone Safari does not support web vibration)')
+          onChange: (v) => { updateSetting('hapticsEnabled', v); if (v) haptic('medium'); }
+        })
       )
     )
+  );
+}
+
+function SettingSwitch({ id, title, sub, checked, onChange }) {
+  return h('label', { className: 'switch-row', htmlFor: id },
+    h('span', { className: 'switch-text' },
+      h('span', { className: 'switch-title' }, title),
+      sub ? h('span', { className: 'switch-sub' }, sub) : null
+    ),
+    h('input', {
+      type: 'checkbox',
+      id,
+      className: 'switch',
+      checked,
+      onChange: (e) => onChange(e.target.checked)
+    })
   );
 }
 
 function ColorsTab({ data, updateSectionColor }) {
   return h('div', null,
     h('div', { className: 'card' },
-      h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Section colors'),
+      h('p', { className: 'settings-card-title' }, 'Section colors'),
       h('p', { style: { margin: '0 0 12px', fontSize: '13px', color: 'var(--text-secondary)' } },
         'These colors are used for chips and bars on the calendar. Any individual bill, subscription, ' +
         'income source, or one-time entry can override its color from its edit window.'),
@@ -5814,7 +6016,7 @@ function SyncCard({ data, setData, embedded }) {
   }
 
   return h('div', { className: embedded ? '' : 'card', style: embedded ? { marginTop: '4px' } : { marginTop: '12px' } },
-    embedded ? null : h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Sync'),
+    embedded ? null : h('p', { className: 'settings-card-title' }, 'Sync'),
     h('p', { style: { margin: '0 0 10px', fontSize: '13px', color: 'var(--text-secondary)' } },
       supportsFile
         ? 'Keep this device in step with a single data file. Link it once, then Sync writes your latest data to it and Load pulls the newest back in. Your data stays on your device and in your own file \u2014 never on a server.'
@@ -5914,7 +6116,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
 
   return h('div', null,
     h('div', { className: 'card' },
-      h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Display'),
+      h('p', { className: 'settings-card-title' }, 'Display'),
       h('label', null, 'Date format'),
       h('div', { className: 'segmented', style: { marginBottom: '12px' } },
         [
@@ -5942,7 +6144,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
     ),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Custom CSS'),
+      h('p', { className: 'settings-card-title' }, 'Custom CSS'),
       h('p', { style: { margin: '0 0 8px', fontSize: '13px', color: 'var(--text-secondary)' } },
         'For advanced users - add your own CSS to override styles. Applied live; clear the box to remove it.'),
       h('textarea', {
@@ -5955,7 +6157,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
     ),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Activity log'),
+      h('p', { className: 'settings-card-title' }, 'Activity log'),
       (!data.activityLog || data.activityLog.length === 0)
         ? h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } }, 'Nothing logged yet.')
         : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '320px', overflowY: 'auto' } },
@@ -5971,7 +6173,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
     h(SyncCard, { data, setData }),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Data portability'),
+      h('p', { className: 'settings-card-title' }, 'Data portability'),
       h('p', { style: { margin: '0 0 12px', fontSize: '13px', color: 'var(--text-secondary)' } },
         'Export your data as a .json file to back it up or move it to another computer. ',
         'Import a previously exported file to restore or transfer your data \u2014 this will permanently replace everything currently saved in this app.'),
@@ -5983,14 +6185,14 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
       exportError ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--late-red)' } }, exportError) : null,
       importSuccess ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--text-success)' } }, 'Data imported successfully. Your app is now showing the imported data.') : null,
       importError ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--late-red)' } }, importError) : null,
-      h('div', { className: 'checkbox-row', style: { marginTop: '12px', paddingTop: '12px', borderTop: '0.5px solid var(--border-tertiary)' } },
-        h('input', {
-          type: 'checkbox',
+      h('div', { className: 'switch-list' },
+        h(SettingSwitch, {
           id: 'backup-reminder',
+          title: 'Weekly backup reminder',
+          sub: 'A nudge every Monday to download a copy of your data',
           checked: data.settings.backupReminderEnabled !== false,
-          onChange: (e) => updateSetting('backupReminderEnabled', e.target.checked)
-        }),
-        h('label', { htmlFor: 'backup-reminder', style: { margin: 0 } }, 'Remind me to download a backup every Monday')
+          onChange: (v) => updateSetting('backupReminderEnabled', v)
+        })
       )
     ),
 
@@ -6009,7 +6211,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
     ) : null,
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Reset all data'),
+      h('p', { className: 'settings-card-title' }, 'Reset all data'),
       h('p', { style: { margin: '0 0 12px', fontSize: '14px', color: 'var(--text-secondary)' } },
         'This clears your income, bills, subscriptions, and paid history, then takes you back through setup.'),
       confirming
@@ -6023,7 +6225,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
     h('div', { className: 'card about-card', style: { marginTop: '12px' } },
       h('img', { src: 'assets/icon.svg', alt: '', className: 'about-logo' }),
       h('div', null,
-        h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Finance Calendar'),
+        h('p', { className: 'settings-card-title' }, 'Finance Calendar'),
         h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
           'Stores all data locally on this device - nothing is sent anywhere.')
       )

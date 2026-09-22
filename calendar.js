@@ -3,13 +3,15 @@ const MONTH_NAMES = ['January','February','March','April','May','June','July','A
 const DOW_FULL = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 function fmtCompact(amount, currency) {
-  const sym = (currency === 'EUR') ? '\u20ac' : (currency === 'GBP') ? '\u00a3' : '$';
+  const sym = currencySymbol(currency);
   const n = Math.round(Number(amount) || 0);
-  if (n >= 1000) {
-    const k = n / 1000;
-    return `${sym}${k >= 10 ? Math.round(k) : k.toFixed(1)}k`;
+  const sign = n < 0 ? '\u2212' : '';
+  const abs = Math.abs(n);
+  if (abs >= 1000) {
+    const k = abs / 1000;
+    return `${sign}${sym}${k >= 10 ? Math.round(k) : k.toFixed(1).replace(/\.0$/, '')}k`;
   }
-  return `${sym}${n}`;
+  return `${sign}${sym}${abs}`;
 }
 
 function getDateRangeSpans(data, allBills, gridStart, gridEnd) {
@@ -508,109 +510,78 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
   const sheet = useSheetDismiss(onClose);
   const overlay = useOverlayDismiss(onClose);
   const [priceModal, setPriceModal] = useState(null);
-  const [editing, setEditing] = useState(null);
-  const [confirmRemove, setConfirmRemove] = useState(null);
 
   function togglePaid(o) {
     const wasPaid = isPaid(data, o.id, o.occDate);
+    haptic(wasPaid ? 'light' : 'success');
     let next = togglePaidStatus(data, o.id, o.occDate);
     next = logActivity(next, `${wasPaid ? 'Unmarked' : 'Marked'} "${o.name}" as paid`);
     setData(next);
   }
 
-  function openEdit(o) {
-    if (o.sourceList === 'creditCards') return;
-    setEditing({ sourceList: o.sourceList, form: { ...entryToFormShape(o), _isNew: false } });
-  }
-
-  function handleEditSubmit(cleaned) {
-    let next = applyEditedEntry(data, editing.sourceList, cleaned);
-    next = logActivity(next, `Edited "${cleaned.name}"`);
-    setData(next);
-    setEditing(null);
-  }
-
-  function toggleLate(o) {
-    const wasLate = isForcedLate(data, o.id, o.occDate);
-    let next = toggleForcedLate(data, o.id, o.occDate);
-    next = logActivity(next, `${wasLate ? 'Unmarked' : 'Marked'} "${o.name}" as late`);
-    setData(next);
-  }
-
-  function removeThisOccurrence(o) {
-    let next;
-    if (o.sourceList === 'oneTimeEntries') {
-
-      next = { ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== o.id) };
-      next = logActivity(next, `Removed "${o.name}"`);
-    } else {
-      next = removeOccurrence(data, o.id, o.occDate);
-      next = logActivity(next, `Removed "${o.name}" from calendar for ${o.occDate}`);
-    }
-    setData(next);
-    setConfirmRemove(null);
-  }
-
-  const dateLabel = formatDate(parseYmd(dateStr), data.settings, { weekday: true, year: true });
+  const date = parseYmd(dateStr);
+  const dateLabel = formatDate(date, data.settings, { weekday: true });
+  const out = occs.filter((o) => o.kind !== 'income').reduce((sum, o) => sum + o.amount, 0);
+  const inflow = occs.filter((o) => o.kind === 'income').reduce((sum, o) => sum + o.amount, 0);
+  const summary = [
+    out > 0 ? `${fmtCurrency(out, currency)} out` : null,
+    inflow > 0 ? `${fmtCurrency(inflow, currency)} in` : null
+  ].filter(Boolean).join(' \u00b7 ');
 
   return h('div', Object.assign({ className: 'modal-overlay' }, overlay),
     h('div', { className: 'modal-content day-modal' },
       h('div', { className: 'sheet-grabber', ...sheet, 'aria-label': 'Close' }),
-      h('div', { className: 'row-between' },
-        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, dateLabel),
-        h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')
+      h('div', { className: 'day-head' },
+        h('div', null,
+          h('p', { className: 'day-title' }, dateLabel),
+          h('p', { className: 'day-sub' }, occs.length === 0 ? 'Nothing scheduled' : summary)
+        ),
+        h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
+          h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
+            h('path', { d: 'M6 6l12 12M18 6L6 18' })
+          )
+        )
       ),
-      h('button', { onClick: () => { onClose(); onAddEntry(); }, style: { alignSelf: 'flex-start' } }, '+ Add entry'),
 
-      occs.length === 0
-        ? h('p', { className: 'empty-state' }, 'Nothing scheduled this day.')
-        : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-            occs.map((o, i) => {
-              const paid = o.kind === 'bill' && isPaid(data, o.id, o.occDate);
-              const editable = o.sourceList !== 'creditCards';
-              const forcedLate = o.kind === 'bill' && isForcedLate(data, o.id, o.occDate);
-              const removeKey = `${o.id}|${o.occDate}`;
-              const confirming = confirmRemove === removeKey;
-              const removeLabel = o.sourceList === 'oneTimeEntries' ? 'Remove' : 'Remove from calendar';
-              return h('div', { key: `${o.id}-${i}`, className: 'list-item' },
-                h('div', { className: 'checkbox-row' },
-                  o.kind === 'bill' ? h('input', {
-                    type: 'checkbox',
-                    checked: paid,
-                    onChange: () => togglePaid(o),
-                    'aria-label': `Mark ${o.name} paid`
-                  }) : null,
-                  h('div', null,
-                    h('p', { className: 'list-item-name' }, o.name),
-                    h('p', { className: 'list-item-sub' }, o.kind === 'income' ? 'Income' : (o.category || 'Bill')),
-                    forcedLate ? h('span', { className: 'badge badge-danger', style: { marginTop: '2px', display: 'inline-block' } }, 'Marked late') : null
-                  )
-                ),
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
-                  h('span', {
-                    className: 'list-item-amount',
-                    style: { color: o.kind === 'income' ? 'var(--text-success)' : 'inherit' }
-                  }, `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`),
-                  h('button', { onClick: () => setPriceModal(o) }, 'Set price'),
-                  o.kind === 'bill' ? h('button', { onClick: () => toggleLate(o) }, forcedLate ? 'Unmark late' : 'Mark as late') : null,
-                  editable ? h('button', { onClick: () => openEdit(o) }, 'Edit') : null,
-                  confirming
-                    ? h('button', { className: 'danger-text', onClick: () => removeThisOccurrence(o) }, 'Confirm remove?')
-                    : h('button', { className: 'danger-text', onClick: () => setConfirmRemove(removeKey) }, removeLabel)
-                )
-              );
-            })
-          ),
+      occs.length === 0 ? null : h('div', { className: 'entry-list day-list' },
+        occs.map((o, i) => {
+          const income = o.kind === 'income';
+          const { paid, late } = lateState(data, o);
+          return h('div', {
+            key: `${o.id}-${i}`,
+            className: `day-row${paid && !income ? ' paid' : ''}`,
+            onClick: () => setPriceModal(o)
+          },
+            income
+              ? h('span', { className: 'entry-row-swatch', style: { background: getEntryColor(o, data) || '#4FAE6B' } })
+              : h('input', {
+                  type: 'checkbox',
+                  checked: paid,
+                  onClick: (e) => e.stopPropagation(),
+                  onChange: () => togglePaid(o),
+                  'aria-label': `Mark ${o.name} paid`
+                }),
+            h('span', { className: 'entry-row-text' },
+              h('span', { className: 'entry-row-name' },
+                late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
+                o.name),
+              h('span', { className: 'entry-row-sub' },
+                income ? 'Income' : [paid ? 'Paid' : (late ? 'Late' : null), o.category || SOURCE_GROUP_LABELS[o.sourceList]].filter(Boolean).join(' \u00b7 '))
+            ),
+            h('span', { className: `entry-row-amt${income ? ' positive' : ''}` },
+              `${income ? '+' : ''}${occAmountLabel(o, currency)}`),
+            h('span', { className: 'att-chevron' }, '\u203a')
+          );
+        })
+      ),
+
+      h('button', { className: 'add-row', onClick: () => { onClose(); onAddEntry(); } },
+        `+ Add something on ${formatDate(date, data.settings)}`),
 
       priceModal ? h(PriceOverrideModal, {
         data, setData, occ: priceModal, currency,
         onClose: () => setPriceModal(null)
-      }) : null,
-
-      editing ? h(EntryFormModal, Object.assign(
-        { data, entry: editing.form, onSubmit: handleEditSubmit, onClose: () => setEditing(null), submitLabel: 'Save' },
-        getEditModalConfig(editing.sourceList, editing.form)
-      )) : null
+      }) : null
     )
   );
 }

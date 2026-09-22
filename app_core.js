@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '4.1';
+const WEB_VERSION = '4.2';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -59,6 +59,14 @@ function fmtCurrency(n, currency) {
   } catch (e) {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
   }
+}
+
+function fmtRange(min, max, currency) {
+  const whole = (n) => {
+    const text = fmtCurrency(n, currency);
+    return Number(n) % 1 === 0 ? text.replace(/[.,]00(?=\D*$)/, '') : text;
+  };
+  return `${whole(min)}\u2013${whole(max)}`;
 }
 
 function ymd(d) {
@@ -176,9 +184,17 @@ function entryAmountLabel(entry, currency) {
   if (entry.useAmountRange) {
     const min = Number(entry.amountMin) || 0;
     const max = Number(entry.amountMax) || 0;
-    return `${fmtCurrency(min, currency)}-${fmtCurrency(max, currency)}`;
+    return fmtRange(min, max, currency);
   }
   return fmtCurrency(entry.amount, currency);
+}
+
+function monthlyAmount(entry) {
+  const amount = entryAmount(entry) || 0;
+  if (entry.freq === 'weekly') return amount * 52 / 12;
+  if (entry.freq === 'biweekly') return amount * 26 / 12;
+  if (entry.freq === 'yearly') return amount / 12;
+  return amount;
 }
 
 function defaultRepeatUntil(dateStr) {
@@ -189,6 +205,23 @@ function repeatLabel(entry, settings) {
   const base = FREQ_LABELS[entry.freq] || entry.freq || 'one-time';
   if (!entry.repeatUntil || !entry.freq || entry.freq === 'none') return base;
   return `${base} until ${formatDate(parseYmd(entry.repeatUntil), settings)}`;
+}
+
+function nextDueDate(entry) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const horizon = new Date(today);
+  horizon.setDate(horizon.getDate() + 400);
+  const next = expandEntry(entry, today, horizon)[0];
+  return next ? parseYmd(next.occDate) : null;
+}
+
+function scheduleLabel(entry, settings) {
+  const next = nextDueDate(entry);
+  const when = next
+    ? (entry.freq && entry.freq !== 'none' ? `Next ${formatDate(next, settings)}` : formatDate(next, settings))
+    : 'Ended';
+  return [when, repeatLabel(entry, settings), entry.category !== entry.name ? entry.category : ''].filter(Boolean).join(' \u00b7 ');
 }
 
 function expandEntry(entry, rangeStart, rangeEnd) {
@@ -306,7 +339,7 @@ function occAmountLabel(occ, currency) {
   if (occ.isRange) {
     const min = Number(occ.amountMin) || 0;
     const max = Number(occ.amountMax) || 0;
-    return `${fmtCurrency(min, currency)}-${fmtCurrency(max, currency)}`;
+    return fmtRange(min, max, currency);
   }
   return fmtCurrency(occ.amount, currency);
 }

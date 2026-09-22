@@ -1,6 +1,8 @@
 
 const DONUT_COLORS = ['#D85A5A', '#D8A857', '#8B6FD6', '#4FAE6B', '#D8845A', '#5AA8D8', '#C75AA8', '#7A8C5A', '#4FAEA0', '#7FC44F', '#B15AC7', '#5A73C7'];
 
+const OVERDUE_FOLD = 3;
+
 function PushedMark({ title }) {
   return h('span', { className: 'push-mark', title },
     h('svg', { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.6, strokeLinecap: 'round', strokeLinejoin: 'round' },
@@ -84,7 +86,8 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
   );
 }
 
-function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
+function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }) {
+  const [overdueOpen, setOverdueOpen] = useState(false);
   const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext, pushedOut, spent, spendStart } = nextCheck;
   const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
 
@@ -100,6 +103,9 @@ function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
     ? `${overdueCount} overdue \u00b7 ${bills.length} to pay`
     : `${bills.length} to pay`;
 
+  const todayStr = todayYmd();
+  const overdue = bills.filter((o) => o.occDate < todayStr);
+  const upcoming = bills.filter((o) => o.occDate >= todayStr);
   const shortfall = due + spent - checkAmount;
   const billsPct = checkAmount > 0 ? Math.min(100, (due / checkAmount) * 100) : 0;
   const spentPct = checkAmount > 0 ? Math.max(0, Math.min(100 - billsPct, (spent / checkAmount) * 100)) : 0;
@@ -160,7 +166,25 @@ function NextCheckCard({ data, currency, nextCheck, listEl, onPrev, onNext }) {
           pushedOut.count > 0
             ? 'Everything in this stretch is pushed forward.'
             : period === 0 ? 'Nothing due before then \u2014 you\u2019re clear.' : 'Nothing due in this stretch.')
-      : listEl,
+      : overdueCount > OVERDUE_FOLD
+        ? h(React.Fragment, null,
+            h('button', {
+              className: 'overdue-fold',
+              onClick: () => { haptic('light'); setOverdueOpen(!overdueOpen); },
+              'aria-expanded': overdueOpen
+            },
+              h('span', { className: 'late-dot' }),
+              h('span', { className: 'overdue-fold-text' },
+                h('span', { className: 'overdue-fold-title' }, `${overdueCount} overdue`),
+                h('span', { className: 'overdue-fold-sub' }, overdueOpen ? 'Tap to fold them away' : 'Tap to see them and check off what you have paid')
+              ),
+              h('span', { className: 'overdue-fold-amt' }, fmtCurrency(overdue.reduce((sum, o) => sum + o.amount, 0), currency)),
+              h('span', { className: `drop-chevron${overdueOpen ? ' open' : ''}` }, '\u203a')
+            ),
+            overdueOpen ? renderList(overdue) : null,
+            upcoming.length > 0 ? renderList(upcoming) : null
+          )
+        : renderList(bills),
 
     pushedOut.count > 0 ? h('p', { className: 'nextcheck-pushed' },
       h(PushedMark, { title: 'Pushed forward' }),
@@ -198,7 +222,6 @@ function HomePage({ data, setData, isMobile }) {
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
   }
 
-  const monthLabel = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   const netSoFar = fin.incomeReceived - fin.billsPaid;
   const netProjected = fin.totalProjectedIncome - fin.totalBills;
   const leftToPay = Math.max(0, fin.totalBills - fin.billsPaid);
@@ -210,11 +233,7 @@ function HomePage({ data, setData, isMobile }) {
 
   return h('div', { className: `home-page${isMobile ? ' mobile-home' : ''}` },
     h('div', { className: `home-wash${netSoFar >= 0 ? '' : ' neg'}` },
-      h('div', { className: 'home-month-header' },
-        h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
-        h('h1', { className: 'home-month-title' }, monthLabel),
-        h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
-      ),
+      h(MonthHeader, { cursor, onChange: changeMonth }),
       h('div', { className: 'home-hero' },
         h('p', { className: 'home-hero-label' }, 'Net so far'),
         h('p', {
@@ -231,7 +250,7 @@ function HomePage({ data, setData, isMobile }) {
 
     isCurrentMonth ? h(NextCheckCard, {
       data, currency, nextCheck,
-      listEl: h(Renderer, Object.assign({ rows: nextCheck.bills }, checkListProps)),
+      renderList: (rows) => h(Renderer, Object.assign({ rows }, checkListProps)),
       onPrev: () => { haptic('light'); setPeriod(Math.max(0, nextCheck.period - 1)); },
       onNext: () => { haptic('light'); setPeriod(nextCheck.period + 1); }
     }) : null,
@@ -269,74 +288,47 @@ function HomePage({ data, setData, isMobile }) {
   );
 }
 
-function MonthSummaryCard({ summary, currency, incomeReceived, projectedIncome, incomeRange }) {
-  return h('div', { className: 'card' },
-    h('p', { style: { margin: '0 0 10px', fontWeight: 500 } }, 'This month at a glance'),
-    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' } },
-      summary.biggestBill ? h('div', { className: 'row-between' },
-        h('span', { style: { color: 'var(--text-secondary)' } }, 'Biggest bill'),
-        h('span', null, `${summary.biggestBill.name} - ${fmtCurrency(summary.biggestBill.amount, currency)}`)
-      ) : null,
-      summary.biggestIncome ? h('div', { className: 'row-between' },
-        h('span', { style: { color: 'var(--text-secondary)' } }, 'Biggest income'),
-        h('span', { style: { color: 'var(--text-success)' } }, `${summary.biggestIncome.name} - ${fmtCurrency(summary.biggestIncome.amount, currency)}`)
-      ) : null,
-      h('div', { className: 'row-between' },
-        h('span', { style: { color: 'var(--text-secondary)' } }, `Average bill (${summary.billCount})`),
-        h('span', null, fmtCurrency(summary.avgBill, currency))
-      ),
-      h('div', { className: 'row-between' },
-        h('span', { style: { color: 'var(--text-secondary)' } }, 'Income so far'),
-        h('span', { style: { color: 'var(--text-success)' } }, fmtCurrency(incomeReceived, currency))
-      ),
-      h('div', { className: 'row-between' },
-        h('span', { style: { color: 'var(--text-secondary)' } }, 'Projected income'),
-        h('span', null,
-          fmtCurrency(projectedIncome, currency),
-          incomeRange ? h('span', { style: { color: 'var(--text-tertiary)', marginLeft: '6px' } },
-            `${fmtCurrency(incomeRange.min, currency)}\u2013${fmtCurrency(incomeRange.max, currency)}`) : null
-        )
-      ),
-      (!summary.biggestBill && !summary.biggestIncome) ? h('p', { className: 'empty-state', style: { margin: 0 } }, 'Nothing scheduled this month yet.') : null
+function GlanceGrid({ fin, currency }) {
+  const s = fin.monthSummary;
+  const billsDelta = fin.totalBills - fin.lastMonthTotals.totalBills;
+  const hasLast = fin.lastMonthTotals.totalBills > 0;
+  const tiles = [
+    s.biggestBill ? { label: 'Biggest bill', value: fmtCurrency(s.biggestBill.amount, currency), sub: s.biggestBill.name } : null,
+    { label: 'Average payment', value: fmtCurrency(s.avgBill, currency), sub: `across ${s.billCount} ${s.billCount === 1 ? 'payment' : 'payments'}` },
+    { label: 'Income so far', value: fmtCurrency(fin.incomeReceived, currency), sub: `of ${fmtCurrency(fin.totalProjectedIncome, currency)} expected`, tone: 'good' },
+    hasLast ? {
+      label: 'vs last month',
+      value: `${billsDelta > 0 ? '+' : billsDelta < 0 ? '−' : ''}${fmtCurrency(Math.abs(billsDelta), currency)}`,
+      sub: Math.abs(billsDelta) < 1 ? 'about the same going out' : billsDelta > 0 ? 'more going out' : 'less going out',
+      tone: Math.abs(billsDelta) < 1 ? null : billsDelta > 0 ? 'bad' : 'good'
+    } : null
+  ].filter(Boolean);
+
+  return h('section', { className: 'stats-section' },
+    h('p', { className: 'stats-title' }, 'At a glance'),
+    h('div', { className: 'spend-stats' },
+      tiles.map((t) => h('div', { key: t.label, className: 'spend-stat' },
+        h('span', { className: 'spend-stat-label' }, t.label),
+        h('span', { className: `spend-stat-value${t.tone ? ' ' + t.tone : ''}` }, t.value),
+        h('span', { className: 'spend-stat-sub' }, t.sub)
+      ))
     )
   );
 }
 
-function MonthComparisonCard({ lastMonth, thisMonth, currency }) {
-  const billsDelta = thisMonth.totalBills - lastMonth.totalBills;
-  const incomeDelta = thisMonth.totalIncome - lastMonth.totalIncome;
-
-  function deltaLabel(delta, goodIsUp) {
-    if (Math.abs(delta) < 0.01) return { text: 'No change', color: 'var(--text-tertiary)' };
-    const up = delta > 0;
-    const good = goodIsUp ? up : !up;
-    return {
-      text: `${up ? '+' : ''}${fmtCurrency(delta, currency)} vs last month`,
-      color: good ? 'var(--text-success)' : 'var(--late-red)'
-    };
-  }
-
-  const billsInfo = deltaLabel(billsDelta, false);
-  const incomeInfo = deltaLabel(incomeDelta, true);
-
-  return h('div', { className: 'card' },
-    h('p', { style: { margin: '0 0 10px', fontWeight: 500 } }, 'vs. last month'),
-    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' } },
-      h('div', null,
-        h('p', { style: { margin: 0, color: 'var(--text-secondary)' } }, 'Bills'),
-        h('p', { style: { margin: 0 } }, `${fmtCurrency(thisMonth.totalBills, currency)} `,
-          h('span', { style: { color: billsInfo.color, fontSize: '12px' } }, billsInfo.text))
-      ),
-      h('div', null,
-        h('p', { style: { margin: 0, color: 'var(--text-secondary)' } }, 'Income'),
-        h('p', { style: { margin: 0 } }, `${fmtCurrency(thisMonth.totalIncome, currency)} `,
-          h('span', { style: { color: incomeInfo.color, fontSize: '12px' } }, incomeInfo.text))
-      )
-    )
+function ChipToggle({ options, value, onChange }) {
+  return h('div', { className: 'chip-toggle', role: 'tablist' },
+    options.map((o) => h('button', {
+      key: o.id,
+      role: 'tab',
+      'aria-selected': value === o.id,
+      className: `chip-toggle-btn${value === o.id ? ' on' : ''}`,
+      onClick: () => { haptic('light'); onChange(o.id); }
+    }, o.label))
   );
 }
 
-function CashFlowChart({ points, currency }) {
+function CashFlowChart({ points, currency, todayDay, colors }) {
   const [view, setView] = useState('cumulative');
   const [hoverIdx, setHoverIdx] = useState(null);
 
@@ -348,89 +340,102 @@ function CashFlowChart({ points, currency }) {
 
   const allVals = points.flatMap((p) => [p[billsKey], p[incomeKey], p[netKey]]);
   const maxVal = Math.max(...allVals, 1);
-  const minVal = view === 'daily' ? Math.min(...allVals, 0) : 0;
+  const minVal = Math.min(...allVals, 0);
 
-  const W = 760, H = 200, PAD_L = 56, PAD_R = 16, PAD_T = 16, PAD_B = 24;
+  const W = 360, H = 190, PAD_L = 8, PAD_R = 8, PAD_T = 14, PAD_B = 22;
   const innerW = W - PAD_L - PAD_R;
   const innerH = H - PAD_T - PAD_B;
   const stepX = points.length > 1 ? innerW / (points.length - 1) : 0;
   const range = maxVal - minVal || 1;
+  const xAt = (i) => PAD_L + i * stepX;
   const scaleY = (v) => PAD_T + innerH - ((v - minVal) / range) * innerH;
   const zeroY = scaleY(0);
 
-  const pathFor = (key) => points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${PAD_L + i * stepX} ${scaleY(p[key])}`).join(' ');
+  const pathFor = (key) => points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i).toFixed(1)} ${scaleY(p[key]).toFixed(1)}`).join(' ');
+  const areaFor = (key) => `${pathFor(key)} L ${xAt(points.length - 1).toFixed(1)} ${zeroY.toFixed(1)} L ${xAt(0).toFixed(1)} ${zeroY.toFixed(1)} Z`;
 
-  const labelEvery = points.length > 20 ? 5 : points.length > 10 ? 2 : 1;
+  const ticks = [1, 8, 15, 22, points.length].filter((d, i, arr) => d <= points.length && arr.indexOf(d) === i);
   const hovered = hoverIdx !== null ? points[hoverIdx] : null;
+  const last = points[points.length - 1];
 
-  return h('div', null,
-    h('div', { className: 'row-between' },
-      h('p', { className: 'section-title', style: { margin: 0 } }, 'Cash flow this month'),
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: '14px' } },
-        h('div', { style: { display: 'flex', gap: '14px', fontSize: '12px', color: 'var(--text-secondary)' } },
-          h('span', null, h('span', { style: { display: 'inline-block', width: 10, height: 10, background: 'var(--text-success)', marginRight: '4px', borderRadius: '2px' } }), 'Income'),
-          h('span', null, h('span', { style: { display: 'inline-block', width: 10, height: 10, background: 'var(--late-red)', marginRight: '4px', borderRadius: '2px' } }), 'Bills'),
-          h('span', null, h('span', { style: { display: 'inline-block', width: 10, height: 10, background: 'var(--accent)', marginRight: '4px', borderRadius: '2px' } }), 'Net')
-        ),
-        h('select', { value: view, onChange: (e) => setView(e.target.value), style: { fontSize: '12px', padding: '4px 8px' } },
-          h('option', { value: 'cumulative' }, 'Running total'),
-          h('option', { value: 'daily' }, 'Per day')
-        )
-      )
-    ),
-    h('div', { style: { position: 'relative' } },
-      h('svg', {
-        viewBox: `0 0 ${W} ${H}`,
-        className: 'cashflow-chart',
-        onMouseLeave: () => setHoverIdx(null)
-      },
+  function pick(e) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * W;
+    const idx = Math.round((x - PAD_L) / (stepX || 1));
+    setHoverIdx(Math.max(0, Math.min(points.length - 1, idx)));
+  }
 
-        h('line', { x1: PAD_L, y1: PAD_T, x2: PAD_L, y2: H - PAD_B, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
-        h('line', { x1: PAD_L, y1: zeroY, x2: W - PAD_R, y2: zeroY, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
-        h('text', { x: PAD_L - 8, y: PAD_T + 4, fontSize: 10, fill: 'var(--text-secondary)', textAnchor: 'end' }, fmtCurrency(maxVal, currency)),
-        h('text', { x: PAD_L - 8, y: zeroY + 4, fontSize: 10, fill: 'var(--text-secondary)', textAnchor: 'end' }, fmtCurrency(0, currency)),
-        minVal < 0 ? h('text', { x: PAD_L - 8, y: H - PAD_B + 4, fontSize: 10, fill: 'var(--text-secondary)', textAnchor: 'end' }, fmtCurrency(minVal, currency)) : null,
+  const shown = hovered || last;
+  const series = [
+    { key: incomeKey, label: 'In', color: colors.income },
+    { key: billsKey, label: 'Out', color: colors.bills },
+    { key: netKey, label: 'Net', color: 'var(--accent)', signed: true }
+  ];
 
-        points.map((p, i) => (
-          i % labelEvery === 0 ? h('text', {
-            key: `lbl-${i}`,
-            x: PAD_L + i * stepX,
-            y: H - PAD_B + 16,
-            fontSize: 9,
-            fill: 'var(--text-tertiary)',
-            textAnchor: 'middle'
-          }, p.day) : null
-        )),
-
-        h('path', { d: pathFor(billsKey), fill: 'none', stroke: 'var(--late-red)', strokeWidth: 2 }),
-        h('path', { d: pathFor(incomeKey), fill: 'none', stroke: 'var(--text-success)', strokeWidth: 2 }),
-        h('path', { d: pathFor(netKey), fill: 'none', stroke: 'var(--accent)', strokeWidth: 1.5, strokeDasharray: '4 3' }),
-
-        hovered ? h('line', {
-          x1: PAD_L + hoverIdx * stepX, y1: PAD_T, x2: PAD_L + hoverIdx * stepX, y2: H - PAD_B,
-          stroke: 'var(--border-secondary)', strokeWidth: 1
-        }) : null,
-
-        points.map((p, i) => h('rect', {
-          key: `hit-${i}`,
-          x: PAD_L + i * stepX - (stepX / 2 || 6),
-          y: PAD_T,
-          width: stepX || 12,
-          height: innerH,
-          fill: 'transparent',
-          onMouseEnter: () => setHoverIdx(i)
-        }))
+  return h('section', { className: 'stats-section' },
+    h('div', { className: 'stats-head' },
+      h('div', null,
+        h('p', { className: 'stats-title' }, 'Cash flow'),
+        h('p', { className: 'stats-caption' },
+          hovered ? `Day ${hovered.day}` : (view === 'cumulative' ? 'Running totals through the month' : 'What moves each day'))
       ),
-      hovered ? h('div', {
-        className: 'cashflow-tooltip',
-        style: {
-          left: `${Math.min(82, Math.max(10, (PAD_L + hoverIdx * stepX) / W * 100))}%`
-        }
-      },
-        h('p', { className: 'cashflow-tooltip-day' }, `Day ${hovered.day}`),
-        h('p', { style: { color: 'var(--text-success)' } }, `Income: ${fmtCurrency(hovered[incomeKey], currency)}`),
-        h('p', { style: { color: 'var(--late-red)' } }, `Bills: ${fmtCurrency(hovered[billsKey], currency)}`),
-        h('p', { style: { color: 'var(--accent)' } }, `Net: ${hovered[netKey] >= 0 ? '+' : ''}${fmtCurrency(hovered[netKey], currency)}`)
+      h(ChipToggle, {
+        value: view,
+        onChange: (v) => { setView(v); setHoverIdx(null); },
+        options: [{ id: 'cumulative', label: 'Running' }, { id: 'daily', label: 'Daily' }]
+      })
+    ),
+    h('div', { className: 'cf-legend' },
+      series.map((s) => h('span', { key: s.label, className: 'cf-legend-item' },
+        h('span', { className: 'cf-legend-dot', style: { background: s.color } }),
+        h('span', { className: 'cf-legend-label' }, s.label),
+        h('span', { className: 'cf-legend-value' },
+          `${s.signed && shown[s.key] > 0 ? '+' : ''}${fmtCompact(shown[s.key], currency)}`)
+      ))
+    ),
+    h('svg', {
+      viewBox: `0 0 ${W} ${H}`,
+      className: 'cashflow-chart',
+      onPointerDown: pick,
+      onPointerMove: pick,
+      onPointerLeave: () => setHoverIdx(null)
+    },
+      h('defs', null,
+        h('linearGradient', { id: 'cf-net-fill', x1: 0, y1: 0, x2: 0, y2: 1 },
+          h('stop', { offset: '0%', stopColor: 'var(--accent)', stopOpacity: 0.28 }),
+          h('stop', { offset: '100%', stopColor: 'var(--accent)', stopOpacity: 0 })
+        )
+      ),
+      [0.25, 0.5, 0.75].map((f) => h('line', {
+        key: f, x1: PAD_L, x2: W - PAD_R, y1: PAD_T + innerH * f, y2: PAD_T + innerH * f,
+        stroke: 'var(--border-tertiary)', strokeWidth: 1
+      })),
+      h('line', { x1: PAD_L, y1: zeroY, x2: W - PAD_R, y2: zeroY, stroke: 'var(--border-secondary)', strokeWidth: 1 }),
+      todayDay ? h('line', {
+        x1: xAt(todayDay - 1), x2: xAt(todayDay - 1), y1: PAD_T - 6, y2: H - PAD_B,
+        stroke: 'var(--text-tertiary)', strokeWidth: 1, strokeDasharray: '3 3'
+      }) : null,
+      todayDay ? h('text', {
+        x: xAt(todayDay - 1), y: PAD_T - 7, fontSize: 9, fill: 'var(--text-tertiary)',
+        textAnchor: todayDay > points.length - 3 ? 'end' : todayDay < 3 ? 'start' : 'middle'
+      }, 'today') : null,
+      ticks.map((d) => h('text', {
+        key: `t-${d}`, x: xAt(d - 1), y: H - 6, fontSize: 10, fill: 'var(--text-tertiary)',
+        textAnchor: d === 1 ? 'start' : d === points.length ? 'end' : 'middle'
+      }, d)),
+      h('path', { d: areaFor(netKey), fill: 'url(#cf-net-fill)', stroke: 'none' }),
+      h('path', { d: pathFor(billsKey), fill: 'none', stroke: colors.bills, strokeWidth: 2, strokeLinejoin: 'round' }),
+      h('path', { d: pathFor(incomeKey), fill: 'none', stroke: colors.income, strokeWidth: 2, strokeLinejoin: 'round' }),
+      h('path', { d: pathFor(netKey), fill: 'none', stroke: 'var(--accent)', strokeWidth: 2.4, strokeLinejoin: 'round' }),
+      hovered ? h('g', null,
+        h('line', {
+          x1: xAt(hoverIdx), x2: xAt(hoverIdx), y1: PAD_T, y2: H - PAD_B,
+          stroke: 'var(--text-secondary)', strokeWidth: 1
+        }),
+        series.map((s) => h('circle', {
+          key: s.label, cx: xAt(hoverIdx), cy: scaleY(hovered[s.key]), r: 3.5,
+          fill: s.color, stroke: 'var(--bg-primary)', strokeWidth: 1.5
+        }))
       ) : null
     )
   );
@@ -438,7 +443,7 @@ function CashFlowChart({ points, currency }) {
 
 function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setFilter }) {
   const total = rows.reduce((s, r) => s + r.amount, 0);
-  const size = 160, r = 60, cx = 80, cy = 80;
+  const size = 140, r = 54, cx = 70, cy = 70;
   const circumference = 2 * Math.PI * r;
 
   let offsetAcc = 0;
@@ -449,52 +454,67 @@ function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setF
     return seg;
   });
 
-  return h('div', null,
-    h('div', { className: 'row-between' },
-      h('p', { className: 'section-title', style: { margin: 0 } }, 'Where it goes'),
-      h('div', { style: { display: 'flex', gap: '8px' } },
-        h('select', { value: filter, onChange: (e) => setFilter(e.target.value), style: { fontSize: '12px', padding: '4px 8px' } },
-          h('option', { value: 'bills' }, 'Bills'),
-          h('option', { value: 'income' }, 'Income'),
-          h('option', { value: 'both' }, 'Both')
-        ),
-        h('select', { value: groupBy, onChange: (e) => setGroupBy(e.target.value), style: { fontSize: '12px', padding: '4px 8px' } },
-          h('option', { value: 'source' }, 'By source type'),
-          h('option', { value: 'category' }, 'By category')
-        )
-      )
+  return h('section', { className: 'stats-section' },
+    h('div', { className: 'stats-head' },
+      h('div', null,
+        h('p', { className: 'stats-title' }, filter === 'income' ? 'Where it comes from' : 'Where it goes'),
+        h('p', { className: 'stats-caption' }, groupBy === 'source' ? 'Grouped by kind' : 'Grouped by category')
+      ),
+      h(ChipToggle, {
+        value: filter,
+        onChange: setFilter,
+        options: [{ id: 'bills', label: 'Out' }, { id: 'income', label: 'In' }]
+      })
     ),
     rows.length === 0
-      ? h('p', { className: 'empty-state' }, 'Nothing to show for this filter.')
-      : h('div', { style: { display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap', marginTop: '8px' } },
-          h('svg', { viewBox: `0 0 ${size} ${size}`, style: { width: '160px', height: '160px', flexShrink: 0 } },
+      ? h('p', { className: 'empty-state' }, 'Nothing to show this month.')
+      : h('div', { className: 'donut-wrap' },
+          h('svg', { viewBox: `0 0 ${size} ${size}`, className: 'donut' },
+            h('circle', { cx, cy, r, fill: 'none', stroke: 'var(--bg-tertiary)', strokeWidth: 18 }),
             segments.map((seg, i) => h('circle', {
               key: i,
               cx, cy, r,
               fill: 'none',
               stroke: seg.color,
-              strokeWidth: 24,
-              strokeDasharray: `${seg.dash} ${circumference - seg.dash}`,
+              strokeWidth: 18,
+              strokeDasharray: `${Math.max(0, seg.dash - 1.5)} ${circumference - Math.max(0, seg.dash - 1.5)}`,
               strokeDashoffset: -seg.offset,
               transform: `rotate(-90 ${cx} ${cy})`
             })),
-            h('text', { x: cx, y: cy - 4, textAnchor: 'middle', fontSize: 13, fontWeight: 600, fill: 'var(--text-primary)' }, fmtCurrency(total, currency)),
-            h('text', { x: cx, y: cy + 12, textAnchor: 'middle', fontSize: 10, fill: 'var(--text-secondary)' }, 'total')
+            h('text', { x: cx, y: cy - 2, textAnchor: 'middle', fontSize: 14, fontWeight: 700, fill: 'var(--text-primary)' }, fmtCompact(total, currency)),
+            h('text', { x: cx, y: cy + 14, textAnchor: 'middle', fontSize: 10, fill: 'var(--text-tertiary)' }, 'this month')
           ),
-          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '180px' } },
-            segments.map((seg, i) => h('div', { key: i, style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', fontSize: '13px' } },
-              h('span', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
-                h('span', { style: { width: 9, height: 9, borderRadius: '50%', background: seg.color, display: 'inline-block', flexShrink: 0 } }),
-                seg.label
-              ),
-              h('span', { style: { color: 'var(--text-secondary)' } }, `${fmtCurrency(seg.amount, currency)} (${Math.round(seg.pct * 100)}%)`)
+          h('div', { className: 'donut-legend' },
+            segments.map((seg, i) => h('div', { key: i, className: 'donut-legend-row' },
+              h('span', { className: 'budget-swatch', style: { background: seg.color } }),
+              h('span', { className: 'donut-legend-label' }, seg.label),
+              h('span', { className: 'donut-legend-amt' }, fmtCurrency(seg.amount, currency)),
+              h('span', { className: 'donut-legend-pct' }, `${Math.round(seg.pct * 100)}%`)
             ))
           )
-        )
+        ),
+    rows.length === 0 ? null : h('div', { className: 'stats-foot' },
+      h(ChipToggle, {
+        value: groupBy,
+        onChange: setGroupBy,
+        options: [{ id: 'source', label: 'By kind' }, { id: 'category', label: 'By category' }]
+      })
+    )
   );
 }
 
-function PriceOverrideModal({ data, setData, occ, currency, inCheckCard, pushTo, onClose }) {
+function PriceOverrideModal(props) {
+  const { data, occ } = props;
+  const oneTime = occ.isOneTime || occ.sourceList === 'oneTimeEntries'
+    ? data.oneTimeEntries.find((e) => e.id === occ.id)
+    : null;
+  if (oneTime) {
+    return h(QuickAddModal, { data, setData: props.setData, entry: oneTime, onClose: props.onClose });
+  }
+  return h(OccurrenceHub, props);
+}
+
+function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onClose }) {
   const overlay = useOverlayDismiss(onClose);
   const existing = getOverride(data, occ.id, occ.occDate);
   const [price, setPrice] = useState(existing && existing.amount !== undefined ? String(existing.amount) : '');
@@ -504,6 +524,7 @@ function PriceOverrideModal({ data, setData, occ, currency, inCheckCard, pushTo,
     return already > 0 ? String(already) : '';
   });
   const [coverOpen, setCoverOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
 
   function save() {
     haptic('success');
@@ -598,10 +619,30 @@ function PriceOverrideModal({ data, setData, occ, currency, inCheckCard, pushTo,
     onClose();
   }
 
+  const editable = ['majorBills', 'subscriptions', 'incomeSources'].includes(occ.sourceList);
+
+  function openEdit() {
+    const entry = (data[occ.sourceList] || []).find((e) => e.id === occ.id);
+    if (entry) setEditing({ ...entryToFormShape(entry), _isNew: false });
+  }
+
+  function saveEdit(cleaned) {
+    setData(logActivity(applyEditedEntry(data, occ.sourceList, cleaned), `Edited "${cleaned.name}"`));
+    setEditing(null);
+    onClose();
+  }
+
+  if (editing) {
+    return h(EntryFormModal, Object.assign(
+      { data, entry: editing, onSubmit: saveEdit, onClose: () => setEditing(null), submitLabel: 'Save' },
+      getEditModalConfig(occ.sourceList, editing)
+    ));
+  }
+
   const d = parseYmd(occ.occDate);
   const dateLabel = formatDate(d, data.settings, { weekday: true, year: true });
   const templateLabel = occ.isRange
-    ? `${fmtCurrency(occ.amountMin, currency)}-${fmtCurrency(occ.amountMax, currency)}`
+    ? fmtRange(occ.amountMin, occ.amountMax, currency)
     : fmtCurrency(entryAmount(occ), currency);
 
   return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
@@ -621,7 +662,7 @@ function PriceOverrideModal({ data, setData, occ, currency, inCheckCard, pushTo,
       ),
 
       h('div', { className: 'price-field' },
-        h('label', null, 'Actual price for this occurrence'),
+        h('label', null, occ.kind === 'income' ? 'What actually came in' : 'What it actually cost this time'),
         h('input', {
           type: 'number',
           inputMode: 'decimal',
@@ -630,7 +671,7 @@ function PriceOverrideModal({ data, setData, occ, currency, inCheckCard, pushTo,
           onChange: (e) => setPrice(e.target.value)
         }),
         h('p', { className: 'price-hint' },
-          'Only affects this occurrence \u2014 future months keep the usual amount.')
+          'Only changes this date \u2014 every other date keeps the usual amount.')
       ),
 
       h('div', { className: 'price-actions' },
@@ -729,6 +770,13 @@ function PriceOverrideModal({ data, setData, occ, currency, inCheckCard, pushTo,
                   h('span', { className: 'price-action-sub' }, 'Flag this date')
                 ))
         ),
+        editable ? h('button', { className: 'price-action-row', onClick: openEdit },
+          h('div', null,
+            h('span', { className: 'price-action-title' }, `Edit ${occ.name}`),
+            h('span', { className: 'price-action-sub' }, 'Change the amount, date or how often it repeats')
+          ),
+          h('span', { className: 'price-action-chevron' }, '\u203a')
+        ) : null,
         h('button', { className: 'price-action-row danger', onClick: () => confirmRemove ? removeThisOccurrence() : setConfirmRemove(true) },
           h('div', null,
             h('span', { className: 'price-action-title' }, confirmRemove ? 'Tap again to confirm' : 'Remove this occurrence'),

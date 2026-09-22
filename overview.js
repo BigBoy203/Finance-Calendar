@@ -143,33 +143,25 @@ function useMonthFinancials(data, cursor) {
     const lastEnd = new Date(cursor.getFullYear(), cursor.getMonth(), 0);
 
     const lastBills = expandAll(allBills, 'bill', lastStart, lastEnd, data);
-    const lastIncome = expandAll(data.incomeSources, 'income', lastStart, lastEnd, data);
-    const lastOneTime = data.oneTimeEntries.filter((e) => {
-      if (!e.date) return false;
-      const d = parseYmd(e.date);
-      return d >= lastStart && d <= lastEnd;
-    });
-    const lastOneTimeBills = lastOneTime.filter((e) => e.oneTimeKind === 'payment')
-      .reduce((sum, e) => sum + resolvedAmount(data, e, e.date), 0);
-    const lastOneTimeIncome = lastOneTime.filter((e) => e.oneTimeKind === 'income')
+    const lastOneTimeBills = purchaseEntries(data)
+      .filter((e) => {
+        const d = parseYmd(e.date);
+        return d >= lastStart && d <= lastEnd;
+      })
       .reduce((sum, e) => sum + resolvedAmount(data, e, e.date), 0);
 
     return {
-      totalBills: lastBills.reduce((sum, o) => sum + o.amount, 0) + lastOneTimeBills,
-      totalIncome: lastIncome.reduce((sum, o) => sum + o.amount, 0) + lastOneTimeIncome
+      totalBills: lastBills.reduce((sum, o) => sum + o.amount, 0) + lastOneTimeBills
     };
   }, [data, cursor]);
 
   const monthSummary = useMemo(() => {
     const billRows = [...billOccurrences, ...oneTimePayments];
-    const incomeRows = [...incomeOccurrences, ...oneTimeIncome.map((o) => ({ ...o, amount: resolvedAmount(data, o, o.date) }))];
-
     const biggestBill = billRows.reduce((max, o) => (!max || o.amount > max.amount ? o : max), null);
-    const biggestIncome = incomeRows.reduce((max, o) => (!max || o.amount > max.amount ? o : max), null);
     const avgBill = billRows.length > 0 ? billRows.reduce((s, o) => s + o.amount, 0) / billRows.length : 0;
 
-    return { biggestBill, biggestIncome, avgBill, billCount: billRows.length };
-  }, [billOccurrences, oneTimePayments, incomeOccurrences, oneTimeIncome, data]);
+    return { biggestBill, avgBill, billCount: billRows.length };
+  }, [billOccurrences, oneTimePayments]);
 
   const next7Days = useMemo(() => {
     const start = new Date(today);
@@ -355,6 +347,17 @@ function useNextCheck(data, period) {
   }, [data, period]);
 }
 
+const UPCOMING_PREVIEW = 6;
+
+function MonthHeader({ cursor, onChange }) {
+  const label = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  return h('div', { className: 'home-month-header' },
+    h('button', { onClick: () => { haptic('light'); onChange(-1); }, 'aria-label': 'Previous month' }, '\u2039'),
+    h('h1', { className: 'home-month-title' }, label),
+    h('button', { onClick: () => { haptic('light'); onChange(1); }, 'aria-label': 'Next month' }, '\u203a')
+  );
+}
+
 function OverviewSwitch({ view, setView }) {
   return h('div', { className: 'ov-switch', role: 'tablist' },
     [{ id: 'calendar', label: 'Calendar' }, { id: 'stats', label: 'Statistics' }].map((t) => h('button', {
@@ -389,16 +392,17 @@ function StatisticsPage({ data, setData, isMobile }) {
   const [groupBy, setGroupBy] = useState('source');
   const [filter, setFilter] = useState('bills');
   const [priceModal, setPriceModal] = useState(null);
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
 
   const fin = useMonthFinancials(data, cursor);
 
   const breakdown = useMemo(() => {
     const rows = [];
-    if (filter === 'bills' || filter === 'both') {
+    if (filter === 'bills') {
       fin.billOccurrences.forEach((o) => rows.push(o));
       fin.oneTimePayments.forEach((o) => rows.push(o));
     }
-    if (filter === 'income' || filter === 'both') {
+    if (filter === 'income') {
       fin.incomeOccurrences.forEach((o) => rows.push(o));
       fin.oneTimeIncome.forEach((o) => {
         rows.push({ ...o, amount: resolvedAmount(data, o, o.date), sourceList: 'oneTimeEntries' });
@@ -416,7 +420,7 @@ function StatisticsPage({ data, setData, isMobile }) {
       if (groupBy === 'source') {
         const groupKey = o.sourceList === 'oneTimeEntries' ? `oneTimeEntries:${o.kind}` : o.sourceList;
         const label = o.sourceList === 'oneTimeEntries'
-          ? (o.kind === 'income' ? 'One-time income' : 'One-time payments')
+          ? (o.kind === 'income' ? 'One-time income' : 'Purchases')
           : (SOURCE_GROUP_LABELS[o.sourceList] || 'Other');
         if (!groups[groupKey]) groups[groupKey] = { label, amount: 0, color: sourceColorFor(o) || DONUT_COLORS[0] };
         groups[groupKey].amount += o.amount;
@@ -434,50 +438,87 @@ function StatisticsPage({ data, setData, isMobile }) {
   }, [fin, groupBy, filter, data]);
 
   function changeMonth(delta) {
+    setShowAllUpcoming(false);
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
   }
 
-  const monthLabel = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const now = new Date();
+  const isCurrentMonth = cursor.getFullYear() === now.getFullYear() && cursor.getMonth() === now.getMonth();
+  const sc = data.settings.sectionColors || {};
+  const colors = { income: sc.incomeSources || '#4FAE6B', bills: sc.majorBills || '#D85A5A' };
 
-  const monthHeader = h('div', { className: 'home-month-header' },
-    h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
-    h('h1', { className: 'home-month-title' }, monthLabel),
-    h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
+  const moneyIn = fin.totalProjectedIncome;
+  const moneyOut = fin.totalBills;
+  const net = moneyIn - moneyOut;
+  const outPct = moneyIn > 0 ? Math.min(100, (moneyOut / moneyIn) * 100) : 100;
+
+  const summary = h('section', { className: 'stats-summary' },
+    h('div', { className: 'stats-summary-row' },
+      h('div', { className: 'stats-summary-cell' },
+        h('span', { className: 'spend-stat-label' }, 'Coming in'),
+        h('span', { className: 'stats-summary-value good' }, fmtCurrency(moneyIn, currency))
+      ),
+      h('div', { className: 'stats-summary-cell' },
+        h('span', { className: 'spend-stat-label' }, 'Going out'),
+        h('span', { className: 'stats-summary-value' }, fmtCurrency(moneyOut, currency))
+      )
+    ),
+    h('div', { className: 'stats-summary-bar' },
+      h('span', { className: `stats-summary-fill${net < 0 ? ' over' : ''}`, style: { width: `${outPct}%` } })
+    ),
+    h('p', { className: `stats-summary-net${net < 0 ? ' short' : ''}` },
+      moneyIn <= 0
+        ? 'Add an income source in Settings to compare in against out.'
+        : net >= 0
+          ? `${fmtCurrency(net, currency)} left after everything \u2014 ${Math.round(100 - outPct)}% of what comes in`
+          : `${fmtCurrency(-net, currency)} more going out than coming in`),
+    fin.hasIncomeRange ? h('p', { className: 'stats-summary-range' },
+      `Income could land anywhere from ${fmtRange(fin.projectedIncomeRange.min, fin.projectedIncomeRange.max, currency)}`) : null
   );
 
-  const next7List = fin.next7Days.length === 0
-    ? h('p', { className: 'empty-state' }, 'Nothing due in the next 7 days.')
-    : h('div', { className: 'ov-next7' },
-        fin.next7Days.map((o, i) => h('div', {
-          key: `${o.id}-${o.occDate}-${i}`,
-          className: 'list-item clickable',
-          onClick: () => setPriceModal(o)
-        },
-          h('div', null,
-            h('p', { className: 'list-item-name' }, o.name),
-            h('p', { className: 'list-item-sub' }, formatDate(parseYmd(o.occDate), data.settings))
-          ),
-          h('span', {
-            className: 'list-item-amount',
-            style: { color: o.kind === 'income' ? 'var(--text-success)' : 'inherit', fontSize: '12px' }
-          }, `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`)
-        ))
-      );
+  const upcoming = fin.next7Days.filter((o) => o.kind === 'income' || !isPaid(data, o.id, o.occDate));
+  const visibleUpcoming = showAllUpcoming ? upcoming : upcoming.slice(0, UPCOMING_PREVIEW);
+  const todayStr = todayYmd();
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = ymd(tomorrow);
+  const dayWord = (dateStr) => dateStr === todayStr ? 'Today'
+    : dateStr === tomorrowStr ? 'Tomorrow'
+    : parseYmd(dateStr).toLocaleDateString('en-US', { weekday: 'long' });
 
-  const chart = h(CashFlowChart, { points: fin.cashFlowSeries, currency });
+  const next7 = h('section', { className: 'stats-section' },
+    h('div', { className: 'stats-head' },
+      h('div', null,
+        h('p', { className: 'stats-title' }, 'Coming up'),
+        h('p', { className: 'stats-caption' }, 'The next 7 days, still to pay or receive')
+      )
+    ),
+    upcoming.length === 0
+      ? h('p', { className: 'empty-state' }, 'Nothing due in the next 7 days.')
+      : h('div', { className: 'entry-list' },
+          visibleUpcoming.map((o, i) => h(EntryRow, {
+            key: `${o.id}-${o.occDate}-${i}`,
+            name: o.name,
+            sub: `${dayWord(o.occDate)} \u00b7 ${formatDate(parseYmd(o.occDate), data.settings)}`,
+            amount: `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`,
+            positive: o.kind === 'income',
+            color: getEntryColor(o, data),
+            onClick: () => setPriceModal(o)
+          }))
+        ),
+    upcoming.length > UPCOMING_PREVIEW
+      ? h('button', { className: 'att-more', onClick: () => setShowAllUpcoming(!showAllUpcoming) },
+          showAllUpcoming ? 'Show less' : `Show all ${upcoming.length}`)
+      : null
+  );
+
+  const monthHeader = h(MonthHeader, { cursor, onChange: changeMonth });
+  const chart = h(CashFlowChart, {
+    points: fin.cashFlowSeries, currency, colors,
+    todayDay: isCurrentMonth ? now.getDate() : null
+  });
   const donut = h(CategoryDonut, { data: breakdown, currency, groupBy, setGroupBy, filter, setFilter });
-  const glance = h(MonthSummaryCard, {
-    summary: fin.monthSummary,
-    currency,
-    incomeReceived: fin.incomeReceived,
-    projectedIncome: fin.totalProjectedIncome,
-    incomeRange: fin.hasIncomeRange ? fin.projectedIncomeRange : null
-  });
-  const compare = h(MonthComparisonCard, {
-    lastMonth: fin.lastMonthTotals,
-    thisMonth: { totalBills: fin.totalBills, totalIncome: fin.totalProjectedIncome },
-    currency
-  });
+  const glance = h(GlanceGrid, { fin, currency });
 
   const priceModalEl = priceModal ? h(PriceOverrideModal, {
     data, setData, occ: priceModal, currency,
@@ -486,26 +527,15 @@ function StatisticsPage({ data, setData, isMobile }) {
 
   if (isMobile) {
     return h('div', { className: 'stats-page' },
-      monthHeader,
-      h('p', { className: 'section-title' }, 'Next 7 days'),
-      next7List,
-      h('div', { className: 'ov-stack' }, chart, donut, glance, compare),
-      priceModalEl
+      monthHeader, summary, isCurrentMonth ? next7 : null, chart, donut, glance, priceModalEl
     );
   }
 
   return h('div', { className: 'stats-page' },
     monthHeader,
-    h('div', { className: 'home-chart-row' },
-      h('div', { className: 'home-chart-main' }, chart),
-      h('div', { className: 'home-chart-side' },
-        h('p', { className: 'section-title', style: { marginTop: '0', marginBottom: '8px' } }, 'Next 7 days'),
-        next7List
-      )
-    ),
-    h('div', { className: 'home-bottom-row' },
-      donut,
-      h('div', { className: 'home-side-cards' }, glance, compare)
+    h('div', { className: 'stats-desktop' },
+      h('div', { className: 'stats-col' }, summary, chart, glance),
+      h('div', { className: 'stats-col' }, isCurrentMonth ? next7 : null, donut)
     ),
     priceModalEl
   );

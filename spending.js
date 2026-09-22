@@ -312,8 +312,8 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const budgetSection = h('section', { className: 'spend-section' },
     h('div', { className: 'row-between' },
       h('div', null,
-        h('p', { className: 'section-title', style: { margin: 0 } }, 'Monthly budgets'),
-        h('p', { className: 'spend-caption' },
+        h('p', { className: 'stats-title' }, 'Monthly budgets'),
+        h('p', { className: 'stats-caption' },
           budgeted.length > 0
             ? `${monthLabel} \u00b7 starts over ${formatDate(resetsOn, data.settings)}`
             : 'One amount per category, for a whole month')
@@ -335,7 +335,7 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
           }))
         ),
     unusedCategories.length > 0
-      ? h('button', { className: 'spend-add-budget', onClick: () => setBudgetModal({}) },
+      ? h('button', { className: 'add-row', onClick: () => setBudgetModal({}) },
           budgeted.length === 0 ? '+ Set your first budget' : '+ Add another budget')
       : null,
     unbudgeted.length > 0
@@ -368,8 +368,8 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const breakdownSection = purchases.length === 0 ? null : h('section', { className: 'spend-section' },
     h('div', { className: 'row-between' },
       h('div', null,
-        h('p', { className: 'section-title', style: { margin: 0 } }, 'Where it went'),
-        h('p', { className: 'spend-caption' },
+        h('p', { className: 'stats-title' }, 'Where it went'),
+        h('p', { className: 'stats-caption' },
           catFilter
             ? `Showing ${catFilter} below \u00b7 tap it again to clear`
             : hasPrev
@@ -419,8 +419,8 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const purchaseSection = h('section', { className: 'spend-section' },
     h('div', { className: 'row-between' },
       h('div', null,
-        h('p', { className: 'section-title', style: { margin: 0 } }, 'Purchases'),
-        catFilter ? h('p', { className: 'spend-caption' }, `${catFilter} only`) : null
+        h('p', { className: 'stats-title' }, 'Purchases'),
+        catFilter ? h('p', { className: 'stats-caption' }, `${catFilter} only`) : null
       ),
       h('span', { className: 'spend-section-total' }, fmtCurrency(filteredTotal, currency))
     ),
@@ -456,8 +456,8 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const hasHistory = history.some((b) => b.total > 0);
   const trendSection = !hasHistory ? null : h('section', { className: 'spend-section' },
     h('div', null,
-      h('p', { className: 'section-title', style: { margin: 0 } }, 'Day-to-day spending by month'),
-      h('p', { className: 'spend-caption' }, `Totals for the last ${SPEND_HISTORY_MONTHS} months`)
+      h('p', { className: 'stats-title' }, 'Day-to-day spending by month'),
+      h('p', { className: 'stats-caption' }, `Totals for the last ${SPEND_HISTORY_MONTHS} months`)
     ),
     h('div', { className: 'spend-bars' },
       history.map((b, i) => h('div', { key: b.key, className: `spend-bar-col${i === history.length - 1 ? ' current' : ''}` },
@@ -506,11 +506,7 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
     }) : null
   );
 
-  const monthHeader = h('div', { className: 'home-month-header' },
-    h('button', { onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '<'),
-    h('h1', { className: 'home-month-title' }, monthLabel),
-    h('button', { onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '>')
-  );
+  const monthHeader = h(MonthHeader, { cursor, onChange: changeMonth });
 
   if (isMobile) {
     return h('div', { className: 'spend-page' },

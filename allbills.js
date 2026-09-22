@@ -59,7 +59,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
   }
 
   function openEdit(e) {
-    if (e.sourceList === 'creditCards') return;
+    if (e.sourceList === 'creditCards') { setPage('creditcards'); return; }
     setEditing({ sourceList: e.sourceList, form: { ...entryToFormShape(e), _isNew: false } });
   }
 
@@ -77,7 +77,8 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
     data.subscriptions.forEach((e) => rows.push({ ...e, sourceList: 'subscriptions' }));
     getCreditCardPaymentEntries(data).forEach((e) => rows.push({ ...e, sourceList: 'creditCards' }));
 
-    return rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const nextOf = (e) => { const d = nextDueDate(e); return d ? ymd(d) : '9999'; };
+    return rows.map((e) => ({ ...e, _next: nextOf(e) })).sort((a, b) => a._next.localeCompare(b._next));
   }, [data]);
 
   const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards'];
@@ -100,7 +101,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
   const groupMonthlyTotals = useMemo(() => {
     const totals = {};
     grouped.forEach(([key, rows]) => {
-      totals[key] = rows.reduce((sum, e) => sum + (entryAmount(e) || 0), 0);
+      totals[key] = rows.reduce((sum, e) => sum + monthlyAmount(e), 0);
     });
     return totals;
   }, [grouped]);
@@ -109,16 +110,17 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
   const visibleAttention = showAllAttention ? attention : attention.slice(0, ATTENTION_PREVIEW);
 
   const attentionBlock = h('div', { className: 'attention-section' },
-      h('div', { className: 'row-between attention-header', onClick: () => setAttentionCollapsed(!attentionCollapsed) },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-          h(Icon, { name: 'alert' }),
-          h('p', { style: { margin: 0, fontWeight: 500 } }, 'Needs attention'),
-          attention.length > 0
-            ? h('span', { className: `nav-badge round${lateCount > 0 ? '' : ' attention'}` }, attention.length)
-            : null
-        ),
-        h('button', { onClick: (e) => { e.stopPropagation(); setAttentionCollapsed(!attentionCollapsed); } },
-          attentionCollapsed ? 'Expand' : 'Minimize')
+      h('button', {
+        className: 'attention-header',
+        onClick: () => { haptic('light'); setAttentionCollapsed(!attentionCollapsed); },
+        'aria-expanded': !attentionCollapsed
+      },
+        h(Icon, { name: 'alert' }),
+        h('span', { className: 'attention-title' }, 'Needs attention'),
+        attention.length > 0
+          ? h('span', { className: `nav-badge round${lateCount > 0 ? '' : ' attention'}` }, attention.length)
+          : null,
+        h('span', { className: `drop-chevron${attentionCollapsed ? '' : ' open'}` }, '\u203a')
       ),
       !attentionCollapsed ? h('div', { style: { marginTop: '10px' } },
         h('div', { className: 'info-banner' },
@@ -139,6 +141,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
     );
 
   const filterBlock = h('div', { className: 'bill-filter-row' },
+      h('p', { className: 'bill-filter-caption' }, 'About a month of recurring commitments'),
       h('button', {
         className: `bill-filter-chip${categoryFilter === 'all' ? ' active' : ''}`,
         onClick: () => setCategoryFilter('all')
@@ -154,14 +157,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
           onClick: () => setCategoryFilter(key)
         },
           h('span', { className: 'bill-filter-label' }, SOURCE_GROUP_LABELS[key]),
-          h('span', { className: 'bill-filter-total' }, fmtCurrency(groupMonthlyTotals[key] || 0, currency)),
-          (isMobile && setPage && SUBPAGE_FOR_GROUP[key])
-            ? h('span', {
-                className: 'bill-filter-edit',
-                onClick: (e) => { e.stopPropagation(); setPage(SUBPAGE_FOR_GROUP[key]); },
-                'aria-label': `Edit ${SOURCE_GROUP_LABELS[key]}`
-              }, '›')
-            : null
+          h('span', { className: 'bill-filter-total' }, fmtCurrency(groupMonthlyTotals[key] || 0, currency))
         )
       )
     );
@@ -179,32 +175,21 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
             h('div', { key },
               h('div', { className: 'category-group-header' },
                 h('span', null, SOURCE_GROUP_LABELS[key]),
-                h('span', { className: 'category-group-count' }, rows.length)
+                h('span', { className: 'category-group-count' }, rows.length),
+                (isMobile && setPage) ? h('button', {
+                  className: 'setup-link category-group-link',
+                  onClick: () => setPage(SUBPAGE_FOR_GROUP[key])
+                }, key === 'creditCards' ? 'Cards \u203a' : 'Add \u203a') : null
               ),
-              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' } },
-                rows.map((e) => {
-                  const d = e.date ? parseYmd(e.date) : null;
-                  const dateLabel = d ? formatDate(d, data.settings) : '';
-                  const editable = e.sourceList !== 'creditCards';
-                  return h('div', {
-                    key: `${e.sourceList}-${e.id}`,
-                    className: `list-item${editable ? ' clickable' : ''}`,
-                    onClick: editable ? () => openEdit(e) : undefined
-                  },
-                    h('div', null,
-                      h('p', { className: 'list-item-name' }, e.name),
-                      h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}${e.category ? ' - ' + e.category : ''}`)
-                    ),
-                    h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
-                      h('span', { className: 'list-item-amount' }, entryAmountLabel(e, currency)),
-                      editable ? h('button', {
-                        className: 'x-btn',
-                        onClick: (ev) => { ev.stopPropagation(); deleteEntry(e); },
-                        'aria-label': `Delete ${e.name}`
-                      }, '×') : null
-                    )
-                  );
-                })
+              h('div', { className: 'entry-list' },
+                rows.map((e) => h(EntryRow, {
+                  key: `${e.sourceList}-${e.id}`,
+                  name: e.name,
+                  sub: scheduleLabel(e, data.settings),
+                  amount: entryAmountLabel(e, currency),
+                  color: getEntryColor(e, data),
+                  onClick: () => openEdit(e)
+                }))
               )
             )
           )
@@ -217,7 +202,11 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
 
     editing ? h(EntryFormModal, Object.assign(
       { data, entry: editing.form, onSubmit: handleEditSubmit, onClose: () => setEditing(null), submitLabel: 'Save' },
-      getEditModalConfig(editing.sourceList, editing.form)
+      getEditModalConfig(editing.sourceList, editing.form),
+      {
+        deleteLabel: `Delete ${editing.form.name || 'this entry'}`,
+        onDelete: () => { deleteEntry({ ...editing.form, sourceList: editing.sourceList }); setEditing(null); }
+      }
     )) : null
   );
 }

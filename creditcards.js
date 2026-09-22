@@ -22,6 +22,7 @@ function CreditCardsPage({ data, setData }) {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(() => blankCreditCard());
   const [projectionCard, setProjectionCard] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const cards = data.creditCards || [];
 
@@ -36,12 +37,14 @@ function CreditCardsPage({ data, setData }) {
   const totalOwedNow = cards.reduce((sum, c) => sum + getCurrentCardBalance(c), 0);
 
   function openAddForm() {
+    setConfirmDelete(false);
     setEditingId(null);
     setForm(blankCreditCard());
     setShowForm(true);
   }
 
   function openEditForm(card) {
+    setConfirmDelete(false);
     setEditingId(card.id);
     setForm({ ...blankCreditCard(), ...card });
     setShowForm(true);
@@ -70,36 +73,56 @@ function CreditCardsPage({ data, setData }) {
   }
 
   function deleteCard(id) {
+    if (!confirmDelete) { haptic('warn'); setConfirmDelete(true); return; }
+    haptic('heavy');
     const card = cards.find((c) => c.id === id);
     setData(logActivity({ ...data, creditCards: cards.filter((c) => c.id !== id) }, `Deleted credit card "${card ? card.name : id}"`));
+    setShowForm(false);
   }
 
+  const monthlyPayments = cards
+    .filter((c) => c.hasRecurringPayment)
+    .reduce((sum, c) => sum + monthlyAmount({ amount: c.paymentAmount, freq: c.paymentFreq }), 0);
+  const hasInterest = cards.some((c) => c.useApr && c.apr);
+
+  const closeX = (onClick) => h('button', { className: 'modal-x', onClick, 'aria-label': 'Close' },
+    h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
+      h('path', { d: 'M6 6l12 12M18 6L6 18' })
+    )
+  );
+
   return h('div', null,
-    h('div', { className: 'row-between' },
-      h('h2', { style: { margin: 0 } }, 'Credit cards'),
-      h('button', { onClick: openAddForm }, '+ Add')
+    h('div', { className: 'sub-head' },
+      h('h2', { className: 'sub-title' }, 'Credit cards'),
+      h('p', { className: 'sub-caption' },
+        cards.length === 0
+          ? 'Track what you owe, what you have paid, and when it will be gone.'
+          : `${cards.length} ${cards.length === 1 ? 'card' : 'cards'} · ${fmtCurrency(totalOwedNow, currency)} owed now`)
     ),
 
-    cards.length > 0 ? h('div', { className: 'grid-2', style: { marginTop: '12px' } },
-      h('div', { className: 'metric-card' },
-        h('p', { className: 'metric-label' }, 'Total debt'),
-        h('p', { className: 'metric-value' }, fmtCurrency(totals.totalDebt, currency))
+    cards.length > 0 ? h('div', { className: 'spend-stats', style: { marginTop: 0, marginBottom: '16px' } },
+      h('div', { className: 'spend-stat' },
+        h('span', { className: 'spend-stat-label' }, 'Owed now'),
+        h('span', { className: 'spend-stat-value bad' }, fmtCurrency(totalOwedNow, currency)),
+        h('span', { className: 'spend-stat-sub' }, hasInterest ? 'including interest' : 'across all cards')
       ),
-      h('div', { className: 'metric-card' },
-        h('p', { className: 'metric-label' }, 'Total paid so far'),
-        h('p', { className: 'metric-value', style: { color: 'var(--text-success)' } }, fmtCurrency(totals.totalPaid, currency))
+      h('div', { className: 'spend-stat' },
+        h('span', { className: 'spend-stat-label' }, 'Paid so far'),
+        h('span', { className: 'spend-stat-value good' }, fmtCurrency(totals.totalPaid, currency)),
+        h('span', { className: 'spend-stat-sub' }, `of ${fmtCurrency(totals.totalDebt, currency)} borrowed`)
       ),
-      h('div', { className: 'metric-card' },
-        h('p', { className: 'metric-label' }, 'Remaining across all cards'),
-        h('p', { className: 'metric-value', style: { color: 'var(--text-warning)' } }, fmtCurrency(totalRemaining, currency))
+      h('div', { className: 'spend-stat' },
+        h('span', { className: 'spend-stat-label' }, 'Principal left'),
+        h('span', { className: 'spend-stat-value' }, fmtCurrency(totalRemaining, currency)),
+        h('span', { className: 'spend-stat-sub' }, 'before interest')
       ),
-      h('div', { className: 'metric-card' },
-        h('p', { className: 'metric-label' }, 'Owed now (with interest)'),
-        h('p', { className: 'metric-value', style: { color: 'var(--text-danger)' } }, fmtCurrency(totalOwedNow, currency))
+      h('div', { className: 'spend-stat' },
+        h('span', { className: 'spend-stat-label' }, 'Payments'),
+        h('span', { className: 'spend-stat-value' }, fmtCurrency(monthlyPayments, currency)),
+        h('span', { className: 'spend-stat-sub' }, 'about a month')
       )
     ) : null,
 
-    h('p', { className: 'section-title' }, 'Your cards'),
     cards.length === 0
       ? h('p', { className: 'empty-state' }, 'No credit cards added yet.')
       : h('div', { className: 'card-grid' },
@@ -109,32 +132,42 @@ function CreditCardsPage({ data, setData }) {
             const currentBalance = getCurrentCardBalance(c);
             const accruedInterest = Math.max(0, currentBalance - Math.max(0, total - paid));
             const pct = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
+            const nextPay = c.hasRecurringPayment && c.paymentDate
+              ? nextDueDate({ date: c.paymentDate, freq: c.paymentFreq || 'monthly' })
+              : null;
+            const late = isCardPaymentLate(c, data);
             return h('div', { key: c.id, className: 'credit-card-tile' },
-              h('div', { className: 'row-between' },
-                h('p', { className: 'list-item-name' }, c.name),
-                h('button', { className: 'x-btn', onClick: () => deleteCard(c.id), 'aria-label': `Delete ${c.name}` }, '\u00d7')
+              h('button', { className: 'cc-main', onClick: () => openEditForm(c) },
+                h('span', { className: 'cc-top' },
+                  h('span', { className: 'cc-name' }, c.name),
+                  h('span', { className: 'att-chevron' }, '›')
+                ),
+                h('span', { className: 'cc-owed' }, fmtCurrency(currentBalance, currency)),
+                h('span', { className: 'cc-owed-label' },
+                  `owed now${accruedInterest > 0.005 ? ` · ${fmtCurrency(accruedInterest, currency)} of it interest` : ''}`),
+                h('span', { className: 'credit-card-progress' },
+                  h('span', { className: 'credit-card-progress-bar', style: { width: `${pct}%` } })
+                ),
+                h('span', { className: 'cc-meta' },
+                  h('span', null, `${fmtCurrency(paid, currency)} of ${fmtCurrency(total, currency)} paid`),
+                  h('span', null, `${pct}%`)
+                ),
+                (c.hasRecurringPayment || (c.useApr && c.apr)) ? h('span', { className: `cc-pay${late ? ' late' : ''}` },
+                  [
+                    c.hasRecurringPayment
+                      ? `${fmtCurrency(c.paymentAmount, currency)} ${FREQ_LABELS[c.paymentFreq] || c.paymentFreq}${late ? ' · payment late' : nextPay ? ` · next ${formatDate(nextPay, data.settings)}` : ''}`
+                      : null,
+                    c.useApr && c.apr ? `${c.apr}% APR` : null
+                  ].filter(Boolean).join(' · ')
+                ) : null
               ),
-              h('div', { className: 'credit-card-progress' },
-                h('div', { className: 'credit-card-progress-bar', style: { width: `${pct}%` } })
-              ),
-              h('div', { className: 'row-between' },
-                h('span', { className: 'list-item-sub' }, `${fmtCurrency(paid, currency)} paid of ${fmtCurrency(total, currency)}`),
-                h('span', { className: 'list-item-sub' }, `${pct}%`)
-              ),
-              h('p', { style: { margin: '4px 0 0', fontWeight: 600, fontSize: '15px' } }, `${fmtCurrency(currentBalance, currency)} owed now`),
-              c.useApr && c.apr ? h('p', { className: 'list-item-sub', style: { margin: '2px 0 0' } },
-                `${c.apr}% APR${accruedInterest > 0.005 ? ` - ${fmtCurrency(accruedInterest, currency)} interest accrued` : ''}`
-              ) : null,
-              c.hasRecurringPayment ? h('p', { className: 'list-item-sub', style: { margin: '4px 0 0' } },
-                `${fmtCurrency(c.paymentAmount, currency)} due ${formatDate(parseYmd(c.paymentDate), data.settings)} - ${FREQ_LABELS[c.paymentFreq] || c.paymentFreq}`
-              ) : null,
-              h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px' } },
-                h('button', { onClick: () => openEditForm(c) }, 'Edit'),
-                c.useApr && c.apr ? h('button', { onClick: () => setProjectionCard(c) }, 'View projection') : null
-              )
+              c.useApr && c.apr
+                ? h('button', { className: 'setup-link cc-link', onClick: () => setProjectionCard(c) }, 'See the payoff projection ›')
+                : null
             );
           })
         ),
+    h('button', { className: 'add-row', onClick: openAddForm }, '+ Add a card'),
 
     projectionCard ? h(ProjectionModal, {
       card: projectionCard, data, currency,
@@ -143,67 +176,74 @@ function CreditCardsPage({ data, setData }) {
 
     showForm ? h('div', Object.assign({ className: 'modal-overlay as-window' }, formOverlay),
       h('div', { className: 'modal-content as-window' },
-        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, editingId ? 'Edit credit card' : 'Add credit card'),
-        h('div', null,
-          h('label', null, 'Name'),
-          h('input', { type: 'text', placeholder: 'e.g. Chase Sapphire', value: form.name, onChange: (e) => setForm({ ...form, name: e.target.value }), style: { width: '100%' } })
+        h('div', { className: 'modal-window-head' },
+          h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, editingId ? 'Edit credit card' : 'Add a credit card'),
+          closeX(() => setShowForm(false))
         ),
-        h('div', { style: { display: 'flex', gap: '8px' } },
-          h('div', { style: { flex: 1 } },
+        h('div', { className: 'setup-field' },
+          h('label', null, 'Name'),
+          h('input', { type: 'text', placeholder: 'e.g. Chase Sapphire', value: form.name, onChange: (e) => setForm({ ...form, name: e.target.value }) })
+        ),
+        h('div', { className: 'setup-entry-grid' },
+          h('div', { className: 'setup-field' },
             h('label', null, 'Total debt'),
-            h('input', { type: 'number', value: form.totalDebt, onChange: (e) => setForm({ ...form, totalDebt: e.target.value }), style: { width: '100%' } })
+            h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: form.totalDebt, onChange: (e) => setForm({ ...form, totalDebt: e.target.value }) })
           ),
-          h('div', { style: { flex: 1 } },
-            h('label', null, 'Amount paid so far'),
-            h('input', { type: 'number', value: form.amountPaid, onChange: (e) => setForm({ ...form, amountPaid: e.target.value }), style: { width: '100%' } })
+          h('div', { className: 'setup-field' },
+            h('label', null, 'Paid so far'),
+            h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: form.amountPaid, onChange: (e) => setForm({ ...form, amountPaid: e.target.value }) })
           )
         ),
-        h('div', { className: 'checkbox-row' },
-          h('input', {
-            type: 'checkbox',
+        h('div', { className: 'switch-list' },
+          h(SettingSwitch, {
             id: 'cc-recurring',
-            checked: form.hasRecurringPayment,
-            onChange: (e) => setForm({ ...form, hasRecurringPayment: e.target.checked })
-          }),
-          h('label', { htmlFor: 'cc-recurring', style: { margin: 0 } }, 'This card has a required recurring payment')
+            title: 'Has a monthly payment',
+            sub: 'Shows on the calendar and counts toward your bills',
+            checked: !!form.hasRecurringPayment,
+            onChange: (v) => setForm({ ...form, hasRecurringPayment: v })
+          })
         ),
-        form.hasRecurringPayment ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-          h('div', { style: { display: 'flex', gap: '8px' } },
-            h('div', { style: { flex: 1 } },
-              h('label', null, 'Payment amount'),
-              h('input', { type: 'number', value: form.paymentAmount, onChange: (e) => setForm({ ...form, paymentAmount: e.target.value }), style: { width: '100%' } })
-            ),
-            h('div', { style: { flex: 1 } },
-              h('label', null, 'Due date'),
-              h('input', { type: 'date', value: form.paymentDate, onChange: (e) => setForm({ ...form, paymentDate: e.target.value }), style: { width: '100%' } })
-            )
+        form.hasRecurringPayment ? h('div', { className: 'setup-entry-grid' },
+          h('div', { className: 'setup-field' },
+            h('label', null, 'Payment'),
+            h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: form.paymentAmount, onChange: (e) => setForm({ ...form, paymentAmount: e.target.value }) })
           ),
-          h('div', null,
-            h('label', null, 'Frequency'),
-            h('select', { value: form.paymentFreq, onChange: (e) => setForm({ ...form, paymentFreq: e.target.value }), style: { width: '100%' } },
+          h('div', { className: 'setup-field' },
+            h('label', null, 'Due date'),
+            h('input', { type: 'date', value: form.paymentDate, onChange: (e) => setForm({ ...form, paymentDate: e.target.value }) })
+          ),
+          h('div', { className: 'setup-field' },
+            h('label', null, 'Repeats'),
+            h('select', { value: form.paymentFreq, onChange: (e) => setForm({ ...form, paymentFreq: e.target.value }) },
               FREQS.filter((f) => f !== 'none').map((f) => h('option', { key: f, value: f }, FREQ_LABELS[f])))
-          ),
-          h('p', { style: { margin: 0, fontSize: '12px', color: 'var(--text-secondary)' } },
-            'This payment will show up on the calendar and count toward your bills.')
+          )
         ) : null,
-        h('div', { className: 'checkbox-row' },
-          h('input', {
-            type: 'checkbox',
+        h('div', { className: 'switch-list' },
+          h(SettingSwitch, {
             id: 'cc-apr',
-            checked: form.useApr,
-            onChange: (e) => setForm({ ...form, useApr: e.target.checked })
-          }),
-          h('label', { htmlFor: 'cc-apr', style: { margin: 0 } }, 'Track APR / interest')
+            title: 'Track interest',
+            sub: 'Simple monthly interest on what is left, updated as days pass',
+            checked: !!form.useApr,
+            onChange: (v) => setForm({ ...form, useApr: v })
+          })
         ),
-        form.useApr ? h('div', null,
-          h('label', null, 'APR %'),
-          h('input', { type: 'number', step: '0.01', placeholder: 'e.g. 24.99', value: form.apr, onChange: (e) => setForm({ ...form, apr: e.target.value }), style: { width: '160px' } }),
-          h('p', { style: { margin: '4px 0 0', fontSize: '12px', color: 'var(--text-secondary)' } },
-            'Simple monthly interest on the remaining balance. The balance shown updates as days pass.')
+        form.useApr ? h('div', { className: 'setup-entry-grid' },
+          h('div', { className: 'setup-field' },
+            h('label', null, 'APR %'),
+            h('input', { type: 'number', inputMode: 'decimal', step: '0.01', placeholder: 'e.g. 24.99', value: form.apr, onChange: (e) => setForm({ ...form, apr: e.target.value }) })
+          )
+        ) : null,
+        editingId ? h('button', { className: 'price-action-row danger', onClick: () => deleteCard(editingId) },
+          h('div', null,
+            h('span', { className: 'price-action-title' }, confirmDelete ? 'Tap again to delete' : 'Delete this card'),
+            h('span', { className: 'price-action-sub' },
+              confirmDelete ? 'This cannot be undone' : 'Removes the card and its payments from the calendar')
+          ),
+          h('span', { className: 'price-action-chevron' }, '›')
         ) : null,
         h('div', { className: 'row-between', style: { marginTop: '4px' } },
           h('button', { onClick: () => setShowForm(false) }, 'Cancel'),
-          h('button', { className: 'primary', onClick: submitForm }, editingId ? 'Save' : 'Add')
+          h('button', { className: 'primary', onClick: submitForm }, editingId ? 'Save' : 'Add card')
         )
       )
     ) : null
@@ -231,10 +271,14 @@ function ProjectionModal({ card, data, currency, onClose }) {
   const barW = (W - PAD * 2) / Math.max(1, barPoints.length) - 4;
 
   return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
-    h('div', { className: 'modal-content', style: { width: '420px' } },
-      h('div', { className: 'row-between' },
-        h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, `${card.name} - projection`),
-        h('button', { className: 'icon-btn', onClick: onClose, 'aria-label': 'Close' }, '\u00d7')
+    h('div', { className: 'modal-content as-window' },
+      h('div', { className: 'modal-window-head' },
+        h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, `${card.name} \u2014 payoff projection`),
+        h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
+          h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
+            h('path', { d: 'M6 6l12 12M18 6L6 18' })
+          )
+        )
       ),
 
       late ? h('div', { className: 'info-banner' },
@@ -242,7 +286,7 @@ function ProjectionModal({ card, data, currency, onClose }) {
           'This card\u2019s recurring payment is currently late, so the next payment isn\u2019t factored into month 1 of this projection.')
       ) : null,
 
-      h('p', { className: 'list-item-sub', style: { margin: 0 } }, 'Projected balance over the next 12 months'),
+      h('p', { className: 'stats-caption', style: { margin: 0 } }, 'Projected balance over the next 12 months'),
       h('svg', { viewBox: `0 0 ${W} ${H}`, className: 'projection-chart' },
 
         h('line', { x1: PAD, y1: H - PAD, x2: W - PAD, y2: H - PAD, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
@@ -255,7 +299,7 @@ function ProjectionModal({ card, data, currency, onClose }) {
       ),
 
       barPoints.length > 0 ? h(React.Fragment, null,
-        h('p', { className: 'list-item-sub', style: { margin: '8px 0 0' } }, 'Interest vs. principal per payment'),
+        h('p', { className: 'stats-caption', style: { margin: '8px 0 0' } }, 'Interest vs. principal per payment'),
         h('svg', { viewBox: `0 0 ${W} ${H}`, className: 'projection-chart' },
           h('line', { x1: PAD, y1: H - PAD, x2: W - PAD, y2: H - PAD, stroke: 'var(--border-tertiary)', strokeWidth: 1 }),
           barPoints.map((p, i) => {

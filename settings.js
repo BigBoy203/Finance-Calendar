@@ -4,7 +4,7 @@ const SECTION_COLOR_LABELS = [
   { key: 'subscriptions', label: 'Subscriptions' },
   { key: 'creditCards', label: 'Credit card payments' },
   { key: 'incomeSources', label: 'Income' },
-  { key: 'oneTimePayments', label: 'One-time payments' },
+  { key: 'oneTimePayments', label: 'Purchases' },
   { key: 'oneTimeIncome', label: 'One-time income' }
 ];
 
@@ -128,7 +128,7 @@ function SettingsPage({ data, setData, onRestart }) {
   if (tab === 'general') {
     tabContent = h(GeneralTab, {
       data, currency, updateSetting,
-      onAddIncome: openAddIncome, onEditIncome: openEditIncome, onDeleteIncome: deleteIncome
+      onAddIncome: openAddIncome, onEditIncome: openEditIncome
     });
   } else if (tab === 'colors') {
     tabContent = h(ColorsTab, { data, updateSectionColor });
@@ -137,9 +137,11 @@ function SettingsPage({ data, setData, onRestart }) {
   }
 
   return h('div', null,
-    h('h2', { style: { marginBottom: '2px' } }, 'Settings'),
-    h('p', { className: 'version-label' }, `Web version ${WEB_VERSION}`),
-    h('div', { className: 'segmented', style: { marginTop: '12px', marginBottom: '16px', maxWidth: '420px' } },
+    h('div', { className: 'sub-head' },
+      h('h2', { className: 'sub-title' }, 'Settings'),
+      h('p', { className: 'sub-caption' }, `Finance Calendar \u00b7 version ${WEB_VERSION}`)
+    ),
+    h('div', { className: 'segmented', style: { marginBottom: '16px', maxWidth: '420px' } },
       SETTINGS_TABS.map((t) =>
         h('div', { key: t.id, className: tab === t.id ? 'selected' : '', onClick: () => setTab(t.id) }, t.label)
       )
@@ -155,50 +157,45 @@ function SettingsPage({ data, setData, onRestart }) {
       isIncome: true,
       submitLabel: editingIncome._isNew ? 'Add' : 'Save',
       onSubmit: handleIncomeSubmit,
+      onDelete: editingIncome._isNew ? null : () => { deleteIncome(editingIncome); setEditingIncome(null); },
+      deleteLabel: `Delete ${editingIncome.name || 'this income source'}`,
       onClose: () => setEditingIncome(null)
     }) : null
   );
 }
 
-function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, onDeleteIncome }) {
+function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome }) {
   return h('div', null,
 
     h('div', { className: 'card' },
-      h('div', { className: 'row-between' },
-        h('p', { style: { margin: 0, fontWeight: 500 } }, 'Income sources'),
-        h('button', { onClick: onAddIncome }, '+ Add')
-      ),
+      h('p', { className: 'settings-card-title' }, 'Income sources'),
+      h('p', { className: 'settings-card-sub' }, 'Paychecks and anything else that lands on a schedule.'),
       data.incomeSources.length === 0
         ? h('p', { className: 'empty-state' }, 'No income sources added yet.')
-        : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' } },
+        : h('div', { className: 'entry-list' },
             data.incomeSources.map((e) => {
-              const d = parseYmd(e.date);
-              const dateLabel = formatDate(d, data.settings);
               const avg = (e.useAvgEstimate && e.useAmountRange) ? averagePaycheck(data, e) : null;
-              return h('div', { key: e.id, className: 'list-item clickable', onClick: () => onEditIncome(e) },
-                h('div', null,
-                  h('p', { className: 'list-item-name' }, e.name),
-                  h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}`),
-                  avg ? h('p', { className: 'list-item-note' },
-                    avg.ready
+              return h(EntryRow, {
+                key: e.id,
+                name: e.name,
+                sub: scheduleLabel(e, data.settings),
+                note: avg
+                  ? (avg.ready
                       ? `\u2248${fmtCurrency(avg.amount, currency)} estimated \u00b7 average of your last ${avg.count} checks`
-                      : `Estimating \u2014 ${avg.count} of 2 checks recorded so far`) : null
-                ),
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
-                  h('span', { className: 'list-item-amount', style: { color: 'var(--text-success)' } }, `+${entryAmountLabel(e, currency)}`),
-                  h('button', {
-                    className: 'x-btn',
-                    onClick: (ev) => { ev.stopPropagation(); onDeleteIncome(e); },
-                    'aria-label': `Delete ${e.name}`
-                  }, '\u00d7')
-                )
-              );
+                      : `Estimating \u2014 ${avg.count} of 2 checks recorded so far`)
+                  : null,
+                amount: `+${entryAmountLabel(e, currency)}`,
+                positive: true,
+                color: getEntryColor({ ...e, sourceList: 'incomeSources' }, data),
+                onClick: () => onEditIncome(e)
+              });
             })
-          )
+          ),
+      h('button', { className: 'add-row', onClick: onAddIncome }, '+ Add an income source')
     ),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Appearance'),
+      h('p', { className: 'settings-card-title' }, 'Appearance'),
       h('label', null, 'Theme'),
       h('div', { className: 'segmented', style: { marginBottom: '12px' } },
         ['system', 'light', 'dark'].map((t) =>
@@ -249,66 +246,82 @@ function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, 
     ),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Currency & bills'),
-      h('label', null, 'Currency'),
-      h('select', {
-        value: data.settings.currency,
-        onChange: (e) => updateSetting('currency', e.target.value),
-        style: { width: '160px', marginBottom: '12px' }
-      }, CURRENCIES.map((c) => h('option', { key: c, value: c }, c))),
-      h('div', { style: { marginBottom: '12px' } },
-        h('label', null, 'Grace period before a bill is marked late (days)'),
-        h('input', {
-          type: 'number', min: 0, max: 30,
-          value: data.settings.lateGraceDays,
-          onChange: (e) => updateSetting('lateGraceDays', parseInt(e.target.value, 10) || 0),
-          style: { width: '100px' }
-        })
+      h('p', { className: 'settings-card-title' }, 'Money & bills'),
+      h('div', { className: 'setup-entry-grid' },
+        h('div', { className: 'setup-field' },
+          h('label', null, 'Currency'),
+          h('select', {
+            value: data.settings.currency,
+            onChange: (e) => updateSetting('currency', e.target.value)
+          }, CURRENCIES.map((c) => h('option', { key: c, value: c }, c)))
+        ),
+        h('div', { className: 'setup-field' },
+          h('label', null, 'Late after'),
+          h('input', {
+            type: 'number', inputMode: 'numeric', min: 0, max: 30,
+            value: data.settings.lateGraceDays,
+            onChange: (e) => updateSetting('lateGraceDays', parseInt(e.target.value, 10) || 0)
+          })
+        ),
+        h('div', { className: 'setup-field' },
+          h('label', null, 'Flag bills early'),
+          h('input', {
+            type: 'number', inputMode: 'numeric', min: 0, max: 60,
+            value: data.settings.needsAttentionLookaheadDays,
+            onChange: (e) => updateSetting('needsAttentionLookaheadDays', parseInt(e.target.value, 10) || 0)
+          })
+        ),
+        h('div', { className: 'setup-field' },
+          h('label', null, 'Flag income early'),
+          h('input', {
+            type: 'number', inputMode: 'numeric', min: 0, max: 60,
+            value: data.settings.incomeNeedsAttentionLookaheadDays,
+            onChange: (e) => updateSetting('incomeNeedsAttentionLookaheadDays', parseInt(e.target.value, 10) || 0)
+          })
+        )
       ),
-      h('div', { style: { marginBottom: '12px' } },
-        h('label', null, 'Flag range-priced bills under "Needs attention" this many days before they\u2019re due'),
-        h('input', {
-          type: 'number', min: 0, max: 60,
-          value: data.settings.needsAttentionLookaheadDays,
-          onChange: (e) => updateSetting('needsAttentionLookaheadDays', parseInt(e.target.value, 10) || 0),
-          style: { width: '100px' }
-        })
-      ),
-      h('div', { style: { marginBottom: '12px' } },
-        h('label', null, 'Flag range-priced paychecks/income under "Needs attention" this many days before they\u2019re due'),
-        h('input', {
-          type: 'number', min: 0, max: 60,
-          value: data.settings.incomeNeedsAttentionLookaheadDays,
-          onChange: (e) => updateSetting('incomeNeedsAttentionLookaheadDays', parseInt(e.target.value, 10) || 0),
-          style: { width: '100px' }
-        })
-      ),
-      h('div', { className: 'checkbox-row' },
-        h('input', {
-          type: 'checkbox',
+      h('p', { className: 'setup-hint' },
+        'All in days. Late after: how long past due before a bill counts as late. Flag early: how far ahead a bill or paycheck with a price range shows up under Needs attention, so you can fill in the real amount.'),
+      h('div', { className: 'switch-list' },
+        h(SettingSwitch, {
           id: 'auto-deduct-cc',
+          title: 'Pay down card balances',
+          sub: 'Marking a card payment paid subtracts it from that card\u2019s balance',
           checked: data.settings.autoDeductCardPayments !== false,
-          onChange: (e) => updateSetting('autoDeductCardPayments', e.target.checked)
+          onChange: (v) => updateSetting('autoDeductCardPayments', v)
         }),
-        h('label', { htmlFor: 'auto-deduct-cc', style: { margin: 0 } }, 'Automatically deduct from a credit card\u2019s balance when its payment is marked paid')
-      ),
-      h('div', { className: 'checkbox-row' },
-        h('input', {
-          type: 'checkbox',
+        h(SettingSwitch, {
           id: 'haptics',
+          title: 'Vibrate on taps',
+          sub: 'Android only \u2014 iPhone Safari does not allow web vibration',
           checked: data.settings.hapticsEnabled !== false,
-          onChange: (e) => { updateSetting('hapticsEnabled', e.target.checked); if (e.target.checked) haptic('medium'); }
-        }),
-        h('label', { htmlFor: 'haptics', style: { margin: 0 } }, 'Vibrate on taps where supported (Android and native apps; iPhone Safari does not support web vibration)')
+          onChange: (v) => { updateSetting('hapticsEnabled', v); if (v) haptic('medium'); }
+        })
       )
     )
+  );
+}
+
+function SettingSwitch({ id, title, sub, checked, onChange }) {
+  return h('label', { className: 'switch-row', htmlFor: id },
+    h('span', { className: 'switch-text' },
+      h('span', { className: 'switch-title' }, title),
+      sub ? h('span', { className: 'switch-sub' }, sub) : null
+    ),
+    h('input', {
+      type: 'checkbox',
+      id,
+      className: 'switch',
+      checked,
+      onChange: (e) => onChange(e.target.checked)
+    })
   );
 }
 
 function ColorsTab({ data, updateSectionColor }) {
   return h('div', null,
     h('div', { className: 'card' },
-      h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Section colors'),
+      h('p', { className: 'settings-card-title' }, 'Section colors'),
       h('p', { style: { margin: '0 0 12px', fontSize: '13px', color: 'var(--text-secondary)' } },
         'These colors are used for chips and bars on the calendar. Any individual bill, subscription, ' +
         'income source, or one-time entry can override its color from its edit window.'),
@@ -435,7 +448,7 @@ function SyncCard({ data, setData, embedded }) {
   }
 
   return h('div', { className: embedded ? '' : 'card', style: embedded ? { marginTop: '4px' } : { marginTop: '12px' } },
-    embedded ? null : h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Sync'),
+    embedded ? null : h('p', { className: 'settings-card-title' }, 'Sync'),
     h('p', { style: { margin: '0 0 10px', fontSize: '13px', color: 'var(--text-secondary)' } },
       supportsFile
         ? 'Keep this device in step with a single data file. Link it once, then Sync writes your latest data to it and Load pulls the newest back in. Your data stays on your device and in your own file \u2014 never on a server.'
@@ -535,7 +548,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
 
   return h('div', null,
     h('div', { className: 'card' },
-      h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Display'),
+      h('p', { className: 'settings-card-title' }, 'Display'),
       h('label', null, 'Date format'),
       h('div', { className: 'segmented', style: { marginBottom: '12px' } },
         [
@@ -563,7 +576,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
     ),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Custom CSS'),
+      h('p', { className: 'settings-card-title' }, 'Custom CSS'),
       h('p', { style: { margin: '0 0 8px', fontSize: '13px', color: 'var(--text-secondary)' } },
         'For advanced users - add your own CSS to override styles. Applied live; clear the box to remove it.'),
       h('textarea', {
@@ -576,7 +589,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
     ),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Activity log'),
+      h('p', { className: 'settings-card-title' }, 'Activity log'),
       (!data.activityLog || data.activityLog.length === 0)
         ? h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } }, 'Nothing logged yet.')
         : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '320px', overflowY: 'auto' } },
@@ -592,7 +605,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
     h(SyncCard, { data, setData }),
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Data portability'),
+      h('p', { className: 'settings-card-title' }, 'Data portability'),
       h('p', { style: { margin: '0 0 12px', fontSize: '13px', color: 'var(--text-secondary)' } },
         'Export your data as a .json file to back it up or move it to another computer. ',
         'Import a previously exported file to restore or transfer your data \u2014 this will permanently replace everything currently saved in this app.'),
@@ -604,14 +617,14 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
       exportError ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--late-red)' } }, exportError) : null,
       importSuccess ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--text-success)' } }, 'Data imported successfully. Your app is now showing the imported data.') : null,
       importError ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--late-red)' } }, importError) : null,
-      h('div', { className: 'checkbox-row', style: { marginTop: '12px', paddingTop: '12px', borderTop: '0.5px solid var(--border-tertiary)' } },
-        h('input', {
-          type: 'checkbox',
+      h('div', { className: 'switch-list' },
+        h(SettingSwitch, {
           id: 'backup-reminder',
+          title: 'Weekly backup reminder',
+          sub: 'A nudge every Monday to download a copy of your data',
           checked: data.settings.backupReminderEnabled !== false,
-          onChange: (e) => updateSetting('backupReminderEnabled', e.target.checked)
-        }),
-        h('label', { htmlFor: 'backup-reminder', style: { margin: 0 } }, 'Remind me to download a backup every Monday')
+          onChange: (v) => updateSetting('backupReminderEnabled', v)
+        })
       )
     ),
 
@@ -630,7 +643,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
     ) : null,
 
     h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { style: { margin: '0 0 8px', fontWeight: 500 } }, 'Reset all data'),
+      h('p', { className: 'settings-card-title' }, 'Reset all data'),
       h('p', { style: { margin: '0 0 12px', fontSize: '14px', color: 'var(--text-secondary)' } },
         'This clears your income, bills, subscriptions, and paid history, then takes you back through setup.'),
       confirming
@@ -644,7 +657,7 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
     h('div', { className: 'card about-card', style: { marginTop: '12px' } },
       h('img', { src: 'assets/icon.svg', alt: '', className: 'about-logo' }),
       h('div', null,
-        h('p', { style: { margin: '0 0 4px', fontWeight: 500 } }, 'Finance Calendar'),
+        h('p', { className: 'settings-card-title' }, 'Finance Calendar'),
         h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
           'Stores all data locally on this device - nothing is sent anywhere.')
       )

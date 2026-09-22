@@ -27,35 +27,29 @@ function BillsPage({ data, setData }) {
 
   const list = data.majorBills;
 
+  const total = list.reduce((sum, e) => sum + monthlyAmount(e), 0);
+
   return h('div', null,
-    h('div', { className: 'row-between' },
-      h('h2', { style: { margin: 0 } }, 'Essentials'),
-      h('button', { onClick: openAdd }, '+ Add')
+    h('div', { className: 'sub-head' },
+      h('h2', { className: 'sub-title' }, 'Essentials'),
+      h('p', { className: 'sub-caption' },
+        list.length === 0
+          ? 'Rent, utilities, insurance \u2014 the bills that keep the lights on.'
+          : `${list.length} ${list.length === 1 ? 'bill' : 'bills'} \u00b7 about ${fmtCurrency(total, currency)} a month`)
     ),
-    h('p', { style: { color: 'var(--text-secondary)', fontSize: '14px', marginTop: '4px' } },
-      'Income sources can be managed from Settings.'),
     list.length === 0
       ? h('p', { className: 'empty-state' }, 'No bills added yet.')
-      : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' } },
-          list.map((e) => {
-            const d = parseYmd(e.date);
-            const dateLabel = formatDate(d, data.settings);
-            return h('div', { key: e.id, className: 'list-item clickable', onClick: () => openEdit(e) },
-              h('div', null,
-                h('p', { className: 'list-item-name' }, e.name),
-                h('p', { className: 'list-item-sub' }, `${dateLabel} - ${repeatLabel(e, data.settings)}${e.category ? ' - ' + e.category : ''}`)
-              ),
-              h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
-                h('span', { className: 'list-item-amount' }, entryAmountLabel(e, currency)),
-                h('button', {
-                  className: 'x-btn',
-                  onClick: (ev) => { ev.stopPropagation(); deleteEntry(e); },
-                  'aria-label': `Delete ${e.name}`
-                }, '\u00d7')
-              )
-            );
-          })
+      : h('div', { className: 'entry-list' },
+          list.map((e) => h(EntryRow, {
+            key: e.id,
+            name: e.name,
+            sub: scheduleLabel(e, data.settings),
+            amount: entryAmountLabel(e, currency),
+            color: getEntryColor({ ...e, sourceList: 'majorBills' }, data),
+            onClick: () => openEdit(e)
+          }))
         ),
+    h('button', { className: 'add-row', onClick: openAdd }, '+ Add a bill'),
 
     editing ? h(EntryFormModal, {
       data,
@@ -65,6 +59,8 @@ function BillsPage({ data, setData }) {
       dateLabel: 'Due date',
       submitLabel: editing._isNew ? 'Add' : 'Save',
       onSubmit: handleSubmit,
+      onDelete: editing._isNew ? null : () => { deleteEntry(editing); setEditing(null); },
+      deleteLabel: `Delete ${editing.name || 'this bill'}`,
       onClose: () => setEditing(null)
     }) : null
   );
