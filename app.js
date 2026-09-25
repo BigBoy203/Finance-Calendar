@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '5.0';
+const WEB_VERSION = '5.1';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -791,9 +791,9 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [page, setPage] = useState('home');
-  const [billsExpanded, setBillsExpanded] = useState(true);
   const [quickAdd, setQuickAdd] = useState(null);
   const [overviewView, setOverviewView] = useState('calendar');
+  const [walletPage, setWalletPage] = useState(0);
 
   useEffect(() => {
     const panes = document.querySelectorAll('.main-content, .main-content.mobile');
@@ -806,7 +806,6 @@ function App() {
   }, [data && data.settings && data.settings.hapticsEnabled]);
 
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
-  const [walletPrompt, setWalletPrompt] = useState(false);
   const [syncModal, setSyncModal] = useState(false);
   const [syncBanner, setSyncBanner] = useState(null);
   const isMobile = useIsMobile();
@@ -839,10 +838,6 @@ function App() {
         setLoading(false);
       });
   }, []);
-
-  useEffect(() => {
-    if (data && data.onboardingComplete && walletCheckDue(data)) setWalletPrompt(true);
-  }, [data && data.onboardingComplete]);
 
   useEffect(() => {
     if (!data || !data.onboardingComplete) return;
@@ -947,14 +942,7 @@ function App() {
     { id: 'home', label: 'Home', icon: 'home' },
     { id: 'overview', label: 'Overview', icon: 'calendar' },
     { id: 'spending', label: spendingLabel, icon: hasWallet ? 'wallet' : 'bag' },
-    {
-      id: 'allbills', label: 'Bills', icon: 'allbills',
-      children: [
-        { id: 'essentials', label: 'Essentials', icon: 'list' },
-        { id: 'creditcards', label: 'Credit cards', icon: 'card' },
-        { id: 'subscriptions', label: 'Subscriptions', icon: 'apps' }
-      ]
-    },
+    { id: 'allbills', label: 'Bills', icon: 'allbills' },
     { id: 'settings', label: 'Settings', icon: 'settings' }
   ];
 
@@ -970,13 +958,10 @@ function App() {
     });
   } else if (page === 'spending') {
     pageContent = h(SpendingPage, {
-      data, setData: persist, isMobile,
-      onAddEntry: (opts) => setQuickAdd(opts)
+      data, setData: persist,
+      onAddEntry: (opts) => setQuickAdd(opts),
+      pageIndex: walletPage, setPageIndex: setWalletPage
     });
-  } else if (page === 'essentials') {
-    pageContent = h(BillsPage, { data, setData: persist });
-  } else if (page === 'subscriptions') {
-    pageContent = h(SubscriptionsPage, { data, setData: persist });
   } else if (page === 'creditcards') {
     pageContent = h(CreditCardsPage, { data, setData: persist });
   } else if (page === 'allbills') {
@@ -994,12 +979,10 @@ function App() {
     onClose: () => setQuickAdd(null)
   }) : null;
 
-  const promptEl = walletPrompt
-    ? h(WalletCheckSheet, { data, setData: persist, prompted: true, onClose: () => setWalletPrompt(false) })
-    : showBackupPrompt ? h(BackupReminderModal, {
-        onDownloadBackup: downloadBackupNow,
-        onDismiss: dismissBackupPrompt
-      }) : null;
+  const promptEl = showBackupPrompt ? h(BackupReminderModal, {
+    onDownloadBackup: downloadBackupNow,
+    onDismiss: dismissBackupPrompt
+  }) : null;
 
   const syncBannerEl = syncBanner ? h('div', { className: 'sync-banner' },
     h('span', { className: 'sync-banner-text' }, 'A newer version of your data is in your synced file.'),
@@ -1015,8 +998,7 @@ function App() {
   if (isMobile) {
     const pageTitle = ({
       home: 'Home', overview: 'Overview', spending: spendingLabel,
-      allbills: 'Bills', essentials: 'Essentials', creditcards: 'Credit cards',
-      subscriptions: 'Subscriptions', settings: 'Settings'
+      allbills: 'Bills', creditcards: 'Credit cards', settings: 'Settings'
     })[page] || 'Finance Calendar';
 
     return h('div', { className: 'app-shell mobile' },
@@ -1053,40 +1035,17 @@ function App() {
         h('h1', null, 'Finance Calendar')
       ),
       NAV_ITEMS.map((item) => {
-        if (!item.children) {
-          return h('div', {
-            key: item.id,
-            className: `sidebar-link${page === item.id ? ' active' : ''}`,
-            onClick: () => setPage(item.id)
-          },
-            h(Icon, { name: item.icon }),
-            item.label
-          );
-        }
-
-        const openBills = () => { setPage(item.id); setBillsExpanded((v) => !v); };
-        return h('div', { key: item.id },
-          h('div', {
-            className: `sidebar-link${page === item.id ? ' active' : ''}`,
-            onClick: openBills
-          },
-            h(Icon, { name: item.icon }),
-            item.label,
-            attention.length > 0
-              ? h('span', { className: 'nav-badge round attention' }, attention.length)
-              : null,
-            h('span', { className: `sidebar-caret${billsExpanded ? ' open' : ''}` }, '\u203a')
-          ),
-          billsExpanded ? h('div', { className: 'sidebar-sublist' },
-            item.children.map((child) => h('div', {
-              key: child.id,
-              className: `sidebar-link sidebar-sublink${page === child.id ? ' active' : ''}`,
-              onClick: () => setPage(child.id)
-            },
-              h(Icon, { name: child.icon }),
-              child.label
-            ))
-          ) : null
+        const active = page === item.id || (item.id === 'allbills' && page === 'creditcards');
+        return h('div', {
+          key: item.id,
+          className: `sidebar-link${active ? ' active' : ''}`,
+          onClick: () => setPage(item.id)
+        },
+          h(Icon, { name: item.icon }),
+          item.label,
+          item.id === 'allbills' && attention.length > 0
+            ? h('span', { className: 'nav-badge round attention' }, attention.length)
+            : null
         );
       }),
 
@@ -1179,11 +1138,8 @@ function Icon({ name }) {
   const paths = {
     home: 'M3 12l9-9 9 9M5 10v10h14V10',
     calendar: 'M3 4h18v18H3zM16 2v4M8 2v4M3 10h18',
-    list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
-    apps: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
     settings: 'M 18.24 8.40 L 20.79 9.28 L 20.79 14.72 L 18.24 15.60 L 18.75 18.25 L 14.04 20.97 L 12.00 19.20 L 9.96 20.97 L 5.25 18.25 L 5.76 15.60 L 3.21 14.72 L 3.21 9.28 L 5.76 8.40 L 5.25 5.75 L 9.96 3.03 L 12.00 4.80 L 14.04 3.03 L 18.75 5.75 Z M 8.8 12 A 3.2 3.2 0 1 0 15.2 12 A 3.2 3.2 0 1 0 8.8 12 Z',
     alert: 'M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z',
-    card: 'M2 7h20v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7zM2 10h20M6 15h4',
     allbills: 'M9 2h6l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2zM14 2v6h6M9 13h6M9 17h6',
     bag: 'M6 8h12l-1 12H7L6 8zM9 8V6a3 3 0 016 0v2',
     wallet: 'M4 6.5A2.5 2.5 0 016.5 4H17v3.5M4 6.5V18a2 2 0 002 2h14V7.5H6.5A2.5 2.5 0 014 6.5zM16.5 14h.01',
@@ -1237,9 +1193,7 @@ const TAB_FOR_PAGE = {
   overview: 'overview',
   spending: 'spending',
   allbills: 'allbills',
-  essentials: 'allbills',
-  creditcards: 'allbills',
-  subscriptions: 'allbills'
+  creditcards: 'allbills'
 };
 
 function MobileTabBar({ page, setPage, onAdd, attentionCount, walletOn }) {
@@ -1310,7 +1264,7 @@ function MobileHeader({ title, titleEl, onSettings, onBack, onSync, lastExported
   );
 }
 
-const MOBILE_SUBPAGES = ['essentials', 'creditcards', 'subscriptions'];
+const MOBILE_SUBPAGES = ['creditcards'];
 
 function useSheetDismiss(onClose) {
   const startY = useRef(null);
@@ -1529,6 +1483,51 @@ function SectionHead({ title, caption, right }) {
   );
 }
 
+function Pager({ pages, index, onIndex }) {
+  const ref = useRef(null);
+  const placed = useRef(false);
+  const settle = useRef(null);
+
+  useEffect(() => () => clearTimeout(settle.current), []);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const target = index * el.clientWidth;
+    if (!placed.current) {
+      placed.current = true;
+      el.scrollLeft = target;
+      return;
+    }
+    if (Math.abs(el.scrollLeft - target) > 2) el.scrollTo({ left: target, behavior: 'smooth' });
+  }, [index]);
+
+  function onScroll(e) {
+    const el = e.currentTarget;
+    clearTimeout(settle.current);
+    settle.current = setTimeout(() => {
+      const next = Math.round(el.scrollLeft / Math.max(1, el.clientWidth));
+      if (next !== index) onIndex(next);
+    }, 90);
+  }
+
+  return h('div', { className: 'pager-wrap' },
+    h('div', { className: 'pager-tabs' },
+      h(ChipToggle, {
+        wide: true,
+        value: index,
+        onChange: onIndex,
+        options: pages.map((p, i) => ({ id: i, label: p.label }))
+      })
+    ),
+    h('div', { className: 'pager', ref, onScroll },
+      pages.map((p) => h('div', { key: p.id, className: 'pager-page' },
+        h('div', { className: 'pager-page-inner' }, p.body)
+      ))
+    )
+  );
+}
+
 const PAYMENT_PLAN = 'Payment plan';
 const PLAN_COUNTS = [3, 4, 6, 12];
 
@@ -1716,10 +1715,10 @@ function EntryFormModal({ data, title, entry, categories, dateLabel, showFreq, i
       }),
       canEstimate ? h(SettingSwitch, {
         id: 'ef-avg',
-        title: 'Estimate checks from past ones',
+        title: 'Estimate paychecks from past ones',
         sub: avg.ready
-          ? `Your last ${avg.count} recorded checks average ${fmtCurrency(avg.amount, currency)} — upcoming dates use that`
-          : `Needs two checks with a recorded amount — you have ${avg.count}. Until then the middle of the range is used.`,
+          ? `Your last ${avg.count} paychecks averaged ${fmtCurrency(avg.amount, currency)} — upcoming paychecks use that`
+          : `Needs 2 paychecks with a real amount entered — you have ${avg.count}. Until then it uses the middle of your range.`,
         checked: !!form.useAvgEstimate,
         onChange: (v) => update('useAvgEstimate', v)
       }) : null,
@@ -1862,8 +1861,6 @@ function OnboardingWizard({ data, onComplete }) {
   const [importError, setImportError] = useState(null);
   const [importing, setImporting] = useState(false);
   const [markPastPaid, setMarkPastPaid] = useState(true);
-  const [walletAmount, setWalletAmount] = useState('');
-  const [trackWallet, setTrackWallet] = useState(true);
 
   const [income, setIncome] = useState(
     data.incomeSources && data.incomeSources.length
@@ -1884,8 +1881,7 @@ function OnboardingWizard({ data, onComplete }) {
     { title: 'Your income', subtitle: 'When does money come in?' },
     { title: 'Your bills', subtitle: 'The essentials you pay every month.' },
     { title: 'Subscriptions', subtitle: 'The smaller recurring stuff.' },
-    { title: 'Credit cards', subtitle: 'Optional \u2014 track balances and payments. You can skip this.' },
-    { title: 'Your wallet', subtitle: 'Optional \u2014 how much money do you have right now?' }
+    { title: 'Credit cards', subtitle: 'Optional \u2014 track balances and payments. You can skip this.' }
   ];
 
   function updateRow(list, setList, id, field, value) {
@@ -1956,12 +1952,6 @@ function OnboardingWizard({ data, onComplete }) {
         cleanedCards.forEach((c) => { if (c.hasRecurringPayment) markIfPast(`cc-${c.id}`, dayOfMonthFor(c)); });
         finalData = { ...finalData, paidHistory: paid };
       }
-
-      finalData = { ...finalData, settings: { ...finalData.settings, walletEnabled: trackWallet } };
-      const startingBalance = parseFloat(walletAmount);
-      finalData = (trackWallet && !isNaN(startingBalance))
-        ? recordWalletCheck(finalData, startingBalance)
-        : snoozeWalletCheck(finalData);
 
       haptic('success');
       onComplete(finalData);
@@ -2037,7 +2027,7 @@ function OnboardingWizard({ data, onComplete }) {
       settings: data.settings,
       emptyHint: 'Tap any you pay for \u2014 skip the rest.'
     });
-  } else if (step === 3) {
+  } else {
     body = h(CreditCardEntryList, {
       cards: creditCards,
       settings: data.settings,
@@ -2045,26 +2035,6 @@ function OnboardingWizard({ data, onComplete }) {
       onAdd: () => setCreditCards([...creditCards, blankCreditCard()]),
       onRemove: (id) => setCreditCards(creditCards.filter((c) => c.id !== id))
     });
-  } else {
-    body = h('div', { className: 'setup-list' },
-      h(AmountField, {
-        value: walletAmount,
-        onChange: setWalletAmount,
-        currency: data.settings.currency,
-        label: 'In your checking account and cash'
-      }),
-      h('p', { className: 'setup-empty-hint' },
-        'The app keeps a running balance from here \u2014 paychecks add to it, bills and purchases take from it \u2014 and asks again at the start of each month so it stays accurate. Leave it blank to do this later.'),
-      h('div', { className: 'switch-list' },
-        h(SettingSwitch, {
-          id: 'wiz-wallet',
-          title: 'Track my wallet',
-          sub: 'You can turn this off any time in Settings',
-          checked: trackWallet,
-          onChange: setTrackWallet
-        })
-      )
-    );
   }
 
   async function handleImportFromFile() {
@@ -2668,7 +2638,7 @@ function QuickAddModal({ data, setData, initialDate, initialType, preset, entry:
       ? h(SettingSwitch, {
           id: 'qa-paid',
           title: 'Already paid for',
-          sub: alreadyPaid ? 'Counts as spent right away' : 'Stays on the calendar until you check it off',
+          sub: alreadyPaid ? 'Counts as spent right away' : 'Stays on the calendar until you mark it paid',
           checked: alreadyPaid,
           onChange: (v) => { setPaidTouched(true); setAlreadyPaid(v); }
         })
@@ -2793,7 +2763,7 @@ function BillChecklist({ rows, data, currency, onToggle, onOpen }) {
         h('div', { className: 'bill-check-text' },
           h('p', { className: 'bill-check-name' },
             late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
-            o.pushedTo ? h(PushedMark, { title: `Pushed to ${formatDate(parseYmd(o.pushedTo), data.settings)}` }) : null,
+            o.pushedTo ? h(PushedMark, { title: `Moved to ${formatDate(parseYmd(o.pushedTo), data.settings)}` }) : null,
             o.name
           ),
           h('p', { className: 'bill-check-sub' },
@@ -2823,7 +2793,7 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
         h('div', { className: 'bill-tile-top' },
           h('p', { className: 'bill-tile-name' },
             late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
-            o.pushedTo ? h(PushedMark, { title: `Pushed to ${formatDate(parseYmd(o.pushedTo), data.settings)}` }) : null,
+            o.pushedTo ? h(PushedMark, { title: `Moved to ${formatDate(parseYmd(o.pushedTo), data.settings)}` }) : null,
             o.name
           ),
           o.autoRepay
@@ -2854,12 +2824,12 @@ function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }
   const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
 
   const headingText = period === 0
-    ? 'Before your next check'
+    ? 'Before your next paycheck'
     : period === 1 ? 'The next pay period' : `${period} pay periods ahead`;
 
   const whenText = check
     ? `${check.name} \u00b7 ${dateLabel}`
-    : `No income scheduled \u2014 showing through ${dateLabel}`;
+    : `No paycheck scheduled \u2014 showing bills through ${dateLabel}`;
 
   const noteText = overdueCount > 0
     ? `${overdueCount} overdue \u00b7 ${bills.length} to pay`
@@ -2911,27 +2881,27 @@ function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }
 
     checkAmount > 0 ? h('p', { className: `nextcheck-verdict${shortfall > 0 ? ' short' : ''}` },
       shortfall > 0
-        ? `${fmtCurrency(shortfall, currency)} more than that check covers`
-        : `${fmtCurrency(-shortfall, currency)} of it left over`
+        ? `${fmtCurrency(shortfall, currency)} more than this paycheck covers`
+        : `${fmtCurrency(-shortfall, currency)} of this paycheck left after bills${spent > 0 ? ' and spending' : ''}`
     ) : null,
 
     spent > 0 ? h('p', { className: 'nextcheck-spent' },
-      `${fmtCurrency(spent, currency)} spent since ${formatDate(spendStart, data.settings)}`
+      `${fmtCurrency(spent, currency)} spent on purchases since ${formatDate(spendStart, data.settings)}`
     ) : null,
 
     estimate ? h('p', { className: 'nextcheck-est' },
-      `Check estimated at ${fmtCurrency(estimate.amount, currency)} \u2014 average of your last ${estimate.count} recorded paychecks`
+      `Paycheck estimated at ${fmtCurrency(estimate.amount, currency)} \u2014 the average of your last ${estimate.count}`
     ) : null,
 
     takes.length > 0 ? h('p', { className: 'nextcheck-est' },
-      `${takes.map((t) => t.name.replace(/ payback$/, '')).join(' and ')} ${takes.length === 1 ? 'takes' : 'take'} ${fmtCurrency(takes.reduce((sum, t) => sum + t.amount, 0), currency)} back from this check \u2014 the figures above already count it`
+      `${takes.map((t) => t.name.replace(/ payback$/, '')).join(' and ')} ${takes.length === 1 ? 'takes' : 'take'} ${fmtCurrency(takes.reduce((sum, t) => sum + t.amount, 0), currency)} back out of this paycheck \u2014 already counted above`
     ) : null,
 
     bills.length === 0
       ? h('p', { className: 'empty-state' },
           pushedOut.count > 0
-            ? 'Everything in this stretch is pushed forward.'
-            : period === 0 ? 'Nothing due before then \u2014 you\u2019re clear.' : 'Nothing due in this stretch.')
+            ? 'Everything here was moved to a later paycheck.'
+            : period === 0 ? 'Nothing due before then \u2014 you\u2019re clear.' : 'Nothing due in this pay period.')
       : overdueCount > OVERDUE_FOLD
         ? h(React.Fragment, null,
             h('button', {
@@ -2942,7 +2912,7 @@ function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }
               h('span', { className: 'late-dot' }),
               h('span', { className: 'overdue-fold-text' },
                 h('span', { className: 'overdue-fold-title' }, `${overdueCount} overdue`),
-                h('span', { className: 'overdue-fold-sub' }, overdueOpen ? 'Tap to fold them away' : 'Tap to see them and check off what you have paid')
+                h('span', { className: 'overdue-fold-sub' }, overdueOpen ? 'Tap to hide them' : 'Tap to see them and tick off what you\u2019ve paid')
               ),
               h('span', { className: 'overdue-fold-amt' }, fmtCurrency(overdue.reduce((sum, o) => sum + o.amount, 0), currency)),
               h('span', { className: `drop-chevron${overdueOpen ? ' open' : ''}` }, '\u203a')
@@ -2953,8 +2923,8 @@ function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }
         : renderList(bills),
 
     pushedOut.count > 0 ? h('p', { className: 'nextcheck-pushed' },
-      h(PushedMark, { title: 'Pushed forward' }),
-      `${pushedOut.count} pushed to ${formatDate(parseYmd(pushedOut.to), data.settings)} \u00b7 ${fmtCurrency(pushedOut.amount, currency)}`
+      h(PushedMark, { title: 'Moved to a later paycheck' }),
+      `${pushedOut.count} moved to your ${formatDate(parseYmd(pushedOut.to), data.settings)} paycheck \u00b7 ${fmtCurrency(pushedOut.amount, currency)}`
     ) : null
   );
 }
@@ -2989,7 +2959,6 @@ function HomePage({ data, setData, isMobile }) {
   }
 
   const netSoFar = fin.incomeReceived - fin.billsPaid;
-  const netProjected = fin.totalProjectedIncome - fin.totalBills;
   const leftToPay = Math.max(0, fin.totalBills - fin.billsPaid);
   const coveredPct = fin.totalBills > 0 ? Math.min(100, (fin.billsPaid / fin.totalBills) * 100) : 0;
 
@@ -3001,16 +2970,12 @@ function HomePage({ data, setData, isMobile }) {
     h('div', { className: `home-wash${netSoFar >= 0 ? '' : ' neg'}` },
       h(MonthHeader, { cursor, onChange: changeMonth }),
       h('div', { className: 'home-hero' },
-        h('p', { className: 'home-hero-label' }, 'Net so far'),
+        h('p', { className: 'home-hero-label' }, isCurrentMonth ? 'So far this month' : `${MONTH_NAMES[cursor.getMonth()]} so far`),
         h('p', {
           className: 'home-hero-value',
           style: { color: netSoFar >= 0 ? 'var(--text-success)' : 'var(--late-red)' }
         }, `${netSoFar >= 0 ? '+' : ''}${fmtCurrency(netSoFar, currency)}`),
-        h('p', { className: 'home-hero-proj' },
-          'Projected ',
-          h('b', { style: { color: netProjected >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
-            `${netProjected >= 0 ? '+' : ''}${fmtCurrency(netProjected, currency)}`)
-        )
+        h('p', { className: 'home-hero-sub' }, 'Money that came in, minus what you\u2019ve paid out')
       )
     ),
 
@@ -3030,7 +2995,7 @@ function HomePage({ data, setData, isMobile }) {
         h('span', { className: 'drop-head-text' },
           h('span', { className: 'drop-head-title' }, 'Bills this month'),
           h('span', { className: 'drop-head-sub' },
-            `${fmtCurrency(fin.billsPaid, currency)} covered \u00b7 ${fmtCurrency(leftToPay, currency)} left`)
+            `${fmtCurrency(fin.billsPaid, currency)} paid \u00b7 ${fmtCurrency(leftToPay, currency)} to go`)
         ),
         h('span', { className: 'drop-head-amt' }, fmtCurrency(fin.totalBills, currency)),
         h('span', { className: `drop-chevron${billsOpen ? ' open' : ''}` }, '\u203a')
@@ -3135,13 +3100,13 @@ function CashFlowChart({ points, currency, todayDay, colors }) {
   const series = [
     { key: incomeKey, label: 'In', color: colors.income },
     { key: billsKey, label: 'Out', color: colors.bills },
-    { key: netKey, label: 'Net', color: 'var(--accent)', signed: true }
+    { key: netKey, label: 'Left', color: 'var(--accent)', signed: true }
   ];
 
   return h('section', { className: 'stats-section' },
     h(SectionHead, {
       title: 'Cash flow',
-      caption: hovered ? `Day ${hovered.day}` : (view === 'cumulative' ? 'Running totals through the month' : 'What moves each day'),
+      caption: hovered ? `Day ${hovered.day}` : (view === 'cumulative' ? 'Totals so far on each day \u2014 drag across to see one' : 'What comes in and goes out each day'),
       right: h(ChipToggle, {
         value: view,
         onChange: (v) => { setView(v); setHoverIdx(null); },
@@ -3332,8 +3297,8 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
       next = setDeferred(next, occ.id, occ.occDate, pushTo);
     }
     next = logActivity(next, coverVal > 0
-      ? `Covered ${fmtCurrency(coverVal, currency)} of "${occ.name}"`
-      : `Cleared the covered amount on "${occ.name}"`);
+      ? `Paid ${fmtCurrency(coverVal, currency)} of "${occ.name}"`
+      : `Cleared the part payment on "${occ.name}"`);
     setData(next);
     setCoverOpen(false);
   }
@@ -3343,8 +3308,8 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
     const target = pushedTo ? null : pushTo;
     let next = setDeferred(data, occ.id, occ.occDate, target);
     next = logActivity(next, target
-      ? `Pushed "${occ.name}" to ${formatDate(parseYmd(target), data.settings)}`
-      : `Pulled "${occ.name}" back to this pay period`);
+      ? `Moved "${occ.name}" to the ${formatDate(parseYmd(target), data.settings)} paycheck`
+      : `Moved "${occ.name}" back to this paycheck`);
     setData(next);
   }
 
@@ -3422,19 +3387,19 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
     showCheckActions ? h('div', { className: 'action-list' },
       pushTo ? h(ActionRow, {
         active: !!pushedTo,
-        title: pushedTo ? `Pushed to ${formatDate(parseYmd(pushedTo), data.settings)}` : 'Push to next check',
+        title: pushedTo ? `Moved to your ${formatDate(parseYmd(pushedTo), data.settings)} paycheck` : 'Pay it from the next paycheck',
         sub: pushedTo
-          ? 'Tap to pull it back to this pay period'
-          : `Moves it to ${formatDate(parseYmd(pushTo), data.settings)} on Home \u2014 the calendar and totals stay put`,
+          ? 'Tap to move it back to this paycheck'
+          : `Moves it to your ${formatDate(parseYmd(pushTo), data.settings)} paycheck on Home \u2014 the due date on the calendar stays the same`,
         mark: pushedTo ? '\u2713' : '\u203a',
         onClick: togglePush
       }) : null,
       h(ActionRow, {
         active: covered > 0,
-        title: covered > 0 ? `Covering ${fmtCurrency(covered, currency)}` : 'Cover part of it',
+        title: covered > 0 ? `${fmtCurrency(covered, currency)} paid so far` : 'Pay part of it now',
         sub: covered > 0
           ? `${fmtCurrency(Math.max(0, fullAmount - covered), currency)} still owed`
-          : 'Put down what you can, carry the rest',
+          : 'Pay what you can now and the rest later',
         mark: h('span', { className: `drop-chevron${coverOpen ? ' open' : ''}` }, '\u203a'),
         onClick: () => { haptic('light'); setCoverOpen((v) => !v); }
       }),
@@ -3466,10 +3431,10 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
           disabled: coverVal <= 0 && covered <= 0
         },
           coverVal <= 0
-            ? 'Clear the covered amount'
+            ? 'Clear the part payment'
             : (pushTo && !pushedTo)
-              ? `Cover ${fmtCurrency(coverVal, currency)} \u00b7 push the rest`
-              : `Cover ${fmtCurrency(coverVal, currency)}`)
+              ? `Pay ${fmtCurrency(coverVal, currency)} \u00b7 rest from next paycheck`
+              : `Pay ${fmtCurrency(coverVal, currency)} now`)
       ) : null
     ) : null,
 
@@ -3477,15 +3442,15 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
       h(ActionRow, {
         active: paid,
         title: paid ? 'Paid' : 'Mark as paid',
-        sub: paid ? 'Tap to undo' : 'Check it off for this date',
+        sub: paid ? 'Tap to undo' : 'Marks this date as paid',
         mark: paid ? '\u2713' : '\u203a',
         onClick: togglePaid
       }),
       forced
         ? h(ActionRow, { active: true, tone: 'late', title: 'Marked late', sub: 'Tap to clear', mark: '\u2713', onClick: toggleLate })
         : late
-          ? h(ActionRow, { tone: 'late', title: 'Late', sub: 'Tap to dismiss the late flag', onClick: dismissLate })
-          : paid ? null : h(ActionRow, { title: 'Mark as late', sub: 'Flag this date', onClick: toggleLate })
+          ? h(ActionRow, { tone: 'late', title: 'Late', sub: 'Tap to clear the late flag', onClick: dismissLate })
+          : paid ? null : h(ActionRow, { title: 'Mark as late', sub: 'Flags this date as late', onClick: toggleLate })
     ),
 
     editable ? h('div', { className: 'action-list' },
@@ -4123,31 +4088,6 @@ function useMonthFinancials(data, cursor) {
   const totalProjectedIncome = incomeOccurrences.reduce((sum, o) => sum + o.amount, 0)
     + oneTimeIncome.reduce((sum, o) => sum + entryAmount(o), 0);
 
-  const projectedIncomeRange = useMemo(() => {
-    let min = 0;
-    let max = 0;
-    incomeOccurrences.forEach((o) => {
-      if (o.useAmountRange) {
-        min += Number(o.amountMin) || 0;
-        max += Number(o.amountMax) || 0;
-      } else {
-        min += o.amount;
-        max += o.amount;
-      }
-    });
-    oneTimeIncome.forEach((o) => {
-      if (o.useAmountRange) {
-        min += Number(o.amountMin) || 0;
-        max += Number(o.amountMax) || 0;
-      } else {
-        const amt = entryAmount(o);
-        min += amt;
-        max += amt;
-      }
-    });
-    return { min, max };
-  }, [incomeOccurrences, oneTimeIncome]);
-
   const incomeReceived = incomeOccurrences
     .filter((o) => parseYmd(o.occDate) <= today)
     .reduce((sum, o) => sum + o.amount, 0)
@@ -4238,27 +4178,6 @@ function useMonthFinancials(data, cursor) {
     return { biggestBill, avgBill, billCount: billRows.length };
   }, [billOccurrences, oneTimePayments]);
 
-  const next7Days = useMemo(() => {
-    const start = new Date(today);
-    const end = new Date(today);
-    end.setDate(end.getDate() + 7);
-    const within = (dateStr) => {
-      const d = parseYmd(dateStr);
-      return d >= start && d <= end;
-    };
-
-    const bills7 = expandAll(allBills, 'bill', start, end, data).map((o) => ({ ...o, sourceList: sourceListById[o.id] }));
-    const income7 = [
-      ...expandAll(data.incomeSources, 'income', start, end, data).map((o) => ({ ...o, sourceList: 'incomeSources' })),
-      ...advanceInflows(data, start, end)
-    ];
-    const oneTime7 = data.oneTimeEntries
-      .filter((e) => e.date && within(e.date))
-      .map((e) => ({ ...oneTimeOccurrence(data, e), sourceList: 'oneTimeEntries' }));
-
-    return [...bills7, ...income7, ...oneTime7].sort((a, b) => a.occDate.localeCompare(b.occDate));
-  }, [data, cursor]);
-
   return {
     today,
     monthStart,
@@ -4269,15 +4188,12 @@ function useMonthFinancials(data, cursor) {
     oneTimeIncome,
     totalBills,
     totalProjectedIncome,
-    projectedIncomeRange,
-    hasIncomeRange: projectedIncomeRange.min !== projectedIncomeRange.max,
     incomeReceived,
     billsPaid,
     allTiles,
     cashFlowSeries,
     lastMonthTotals,
-    monthSummary,
-    next7Days
+    monthSummary
   };
 }
 
@@ -4431,7 +4347,6 @@ function useNextCheck(data, period) {
   }, [data, period]);
 }
 
-const UPCOMING_PREVIEW = 6;
 
 function Chevron({ dir }) {
   return h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.4, strokeLinecap: 'round', strokeLinejoin: 'round' },
@@ -4468,7 +4383,7 @@ function OverviewSwitch({ view, setView }) {
 function OverviewPage({ data, setData, isMobile, onAddEntry, view, setView }) {
   const body = view === 'calendar'
     ? h(CalendarPage, { data, setData, isMobile, onAddEntry })
-    : h(StatisticsPage, { data, setData, isMobile });
+    : h(StatisticsPage, { data, isMobile });
 
   if (isMobile) return body;
 
@@ -4478,7 +4393,7 @@ function OverviewPage({ data, setData, isMobile, onAddEntry, view, setView }) {
   );
 }
 
-function StatisticsPage({ data, setData, isMobile }) {
+function StatisticsPage({ data, isMobile }) {
   const currency = data.settings.currency;
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
@@ -4486,8 +4401,6 @@ function StatisticsPage({ data, setData, isMobile }) {
   });
   const [groupBy, setGroupBy] = useState('source');
   const [filter, setFilter] = useState('bills');
-  const [priceModal, setPriceModal] = useState(null);
-  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
 
   const fin = useMonthFinancials(data, cursor);
 
@@ -4533,7 +4446,6 @@ function StatisticsPage({ data, setData, isMobile }) {
   }, [fin, groupBy, filter, data]);
 
   function changeMonth(delta) {
-    setShowAllUpcoming(false);
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
   }
 
@@ -4541,66 +4453,6 @@ function StatisticsPage({ data, setData, isMobile }) {
   const isCurrentMonth = cursor.getFullYear() === now.getFullYear() && cursor.getMonth() === now.getMonth();
   const sc = data.settings.sectionColors || {};
   const colors = { income: sc.incomeSources || '#4FAE6B', bills: sc.majorBills || '#D85A5A' };
-
-  const moneyIn = fin.totalProjectedIncome;
-  const moneyOut = fin.totalBills;
-  const net = moneyIn - moneyOut;
-  const outPct = moneyIn > 0 ? Math.min(100, (moneyOut / moneyIn) * 100) : 100;
-
-  const summary = h('section', { className: 'stats-summary' },
-    h('div', { className: 'stats-summary-row' },
-      h('div', { className: 'stats-summary-cell' },
-        h('span', { className: 'spend-stat-label' }, 'Coming in'),
-        h('span', { className: 'stats-summary-value good' }, fmtCurrency(moneyIn, currency))
-      ),
-      h('div', { className: 'stats-summary-cell' },
-        h('span', { className: 'spend-stat-label' }, 'Going out'),
-        h('span', { className: 'stats-summary-value' }, fmtCurrency(moneyOut, currency))
-      )
-    ),
-    h('div', { className: 'stats-summary-bar' },
-      h('span', { className: `stats-summary-fill${net < 0 ? ' over' : ''}`, style: { width: `${outPct}%` } })
-    ),
-    h('p', { className: `stats-summary-net${net < 0 ? ' short' : ''}` },
-      moneyIn <= 0
-        ? 'Add an income source in Settings to compare in against out.'
-        : net >= 0
-          ? `${fmtCurrency(net, currency)} left after everything \u2014 ${Math.round(100 - outPct)}% of what comes in`
-          : `${fmtCurrency(-net, currency)} more going out than coming in`),
-    fin.hasIncomeRange ? h('p', { className: 'stats-summary-range' },
-      `Income could land anywhere from ${fmtRange(fin.projectedIncomeRange.min, fin.projectedIncomeRange.max, currency)}`) : null
-  );
-
-  const upcoming = fin.next7Days.filter((o) => o.kind === 'income' || !isPaid(data, o.id, o.occDate));
-  const visibleUpcoming = showAllUpcoming ? upcoming : upcoming.slice(0, UPCOMING_PREVIEW);
-  const todayStr = todayYmd();
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = ymd(tomorrow);
-  const dayWord = (dateStr) => dateStr === todayStr ? 'Today'
-    : dateStr === tomorrowStr ? 'Tomorrow'
-    : parseYmd(dateStr).toLocaleDateString('en-US', { weekday: 'long' });
-
-  const next7 = h('section', { className: 'stats-section' },
-    h(SectionHead, { title: 'Coming up', caption: 'The next 7 days, still to pay or receive' }),
-    upcoming.length === 0
-      ? h('p', { className: 'empty-state' }, 'Nothing due in the next 7 days.')
-      : h('div', { className: 'entry-list' },
-          visibleUpcoming.map((o, i) => h(EntryRow, {
-            key: `${o.id}-${o.occDate}-${i}`,
-            name: o.name,
-            sub: `${dayWord(o.occDate)} \u00b7 ${formatDate(parseYmd(o.occDate), data.settings)}`,
-            amount: `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`,
-            positive: o.kind === 'income',
-            color: getEntryColor(o, data),
-            onClick: () => setPriceModal(o)
-          }))
-        ),
-    upcoming.length > UPCOMING_PREVIEW
-      ? h('button', { className: 'att-more', onClick: () => setShowAllUpcoming(!showAllUpcoming) },
-          showAllUpcoming ? 'Show less' : `Show all ${upcoming.length}`)
-      : null
-  );
 
   const monthHeader = h(MonthHeader, { cursor, onChange: changeMonth });
   const chart = h(CashFlowChart, {
@@ -4610,24 +4462,16 @@ function StatisticsPage({ data, setData, isMobile }) {
   const donut = h(CategoryDonut, { data: breakdown, currency, groupBy, setGroupBy, filter, setFilter });
   const glance = h(GlanceGrid, { fin, currency });
 
-  const priceModalEl = priceModal ? h(PriceOverrideModal, {
-    data, setData, occ: priceModal, currency,
-    onClose: () => setPriceModal(null)
-  }) : null;
-
   if (isMobile) {
-    return h('div', { className: 'stats-page' },
-      monthHeader, summary, isCurrentMonth ? next7 : null, chart, donut, glance, priceModalEl
-    );
+    return h('div', { className: 'stats-page' }, monthHeader, chart, donut, glance);
   }
 
   return h('div', { className: 'stats-page' },
     monthHeader,
     h('div', { className: 'stats-desktop' },
-      h('div', { className: 'stats-col' }, summary, chart, glance),
-      h('div', { className: 'stats-col' }, isCurrentMonth ? next7 : null, donut)
-    ),
-    priceModalEl
+      h('div', { className: 'stats-col' }, chart, glance),
+      h('div', { className: 'stats-col' }, donut)
+    )
   );
 }
 
@@ -4769,7 +4613,7 @@ function BudgetRow({ row, currency, daysLeft, onOpen }) {
   );
 }
 
-function SpendingPage({ data, setData, isMobile, onAddEntry }) {
+function SpendingPage({ data, setData, onAddEntry, pageIndex, setPageIndex }) {
   const currency = data.settings.currency;
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
@@ -4779,9 +4623,12 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const [priceModal, setPriceModal] = useState(null);
   const [showAllPurchases, setShowAllPurchases] = useState(false);
   const [catFilter, setCatFilter] = useState(null);
-  const [walletCheck, setWalletCheck] = useState(false);
-  const [walletDetails, setWalletDetails] = useState(false);
+  const [balanceSheet, setBalanceSheet] = useState(() => (balanceUpdateDue(data) ? 'prompt' : null));
   const [advanceEdit, setAdvanceEdit] = useState(null);
+
+  useEffect(() => {
+    if (balanceSheet === 'prompt') setPageIndex(0);
+  }, []);
 
   const fin = useMonthFinancials(data, cursor);
   const nextCheck = useNextCheck(data, 0);
@@ -4802,13 +4649,15 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const spent = purchases.reduce((sum, o) => sum + o.amount, 0);
   const recurringTotal = fin.billOccurrences.reduce((sum, o) => sum + o.amount, 0);
   const income = fin.totalProjectedIncome;
-  const leftForLife = income - recurringTotal - spent;
+  const advanceIn = fin.incomeOccurrences.filter((o) => o.sourceList === 'advances').reduce((sum, o) => sum + o.amount, 0);
+  const leftToSpend = income - recurringTotal - spent;
   const hasIncome = income > 0;
 
   const monthKey = ymd(cursor).slice(0, 7);
   const prevCursor = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1);
   const prevKey = ymd(prevCursor).slice(0, 7);
   const prevMonthName = MONTH_NAMES[prevCursor.getMonth()];
+  const monthName = MONTH_NAMES[cursor.getMonth()];
 
   const byCategory = useMemo(() => categoryTotals(data, monthKey), [data, monthKey]);
   const prevTotals = useMemo(() => categoryTotals(data, prevKey), [data, prevKey]);
@@ -4828,32 +4677,20 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
     })
     .sort((a, b) => b.amount - a.amount), [byCategory, prevTotals, spent]);
 
-  const budgetRows = useMemo(() => {
-    const keys = new Set([...Object.keys(budgets), ...Object.keys(byCategory)]);
-    return [...keys]
-      .map((category) => ({
-        category,
-        budget: Number(budgets[category]) || 0,
-        spent: byCategory[category] || 0
-      }))
-      .sort((a, b) => {
-        if (!!a.budget !== !!b.budget) return a.budget ? -1 : 1;
-        if (a.budget && b.budget) return (b.spent / b.budget) - (a.spent / a.budget);
-        return b.spent - a.spent;
-      });
-  }, [budgets, byCategory]);
-
-  const budgeted = budgetRows.filter((r) => r.budget > 0);
-  const unbudgeted = budgetRows.filter((r) => r.budget <= 0);
+  const budgeted = useMemo(() => Object.keys(budgets)
+    .map((category) => ({ category, budget: Number(budgets[category]) || 0, spent: byCategory[category] || 0 }))
+    .filter((r) => r.budget > 0)
+    .sort((a, b) => (b.spent / b.budget) - (a.spent / a.budget)), [budgets, byCategory]);
   const budgetTotal = budgeted.reduce((sum, r) => sum + r.budget, 0);
   const budgetSpent = budgeted.reduce((sum, r) => sum + r.spent, 0);
+  const unusedCategories = useMemo(() => ONE_TIME_PAYMENT_CATEGORIES
+    .filter((c) => !budgets[c])
+    .sort((a, b) => (byCategory[b] || 0) - (byCategory[a] || 0)), [budgets, byCategory]);
 
   const history = useMemo(() => spendingHistory(data, cursor), [data, cursor]);
   const lastMonthSpent = history.length > 1 ? history[history.length - 2].total : 0;
   const spendDelta = spent - lastMonthSpent;
   const suggestions = useMemo(() => (isCurrentMonth ? repeatBuys(data) : []), [data, isCurrentMonth]);
-
-  const unusedCategories = ONE_TIME_PAYMENT_CATEGORIES.filter((c) => !budgets[c]);
 
   function saveBudget(category, amount) {
     setData(logActivity(
@@ -4875,62 +4712,104 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
   }
 
+  const monthHeader = h(MonthHeader, { cursor, onChange: changeMonth });
   const logAdvance = () => { haptic('medium'); onAddEntry({ date: todayYmd(), type: 'advance' }); };
+  const advancesBlock = h(AdvancesSection, { data, onOpen: setAdvanceEdit, onAdd: logAdvance, showEmpty: hasWallet });
 
-  const walletBlock = hasWallet ? h(WalletCard, {
-    data,
-    summary,
-    nextCheck,
-    due: !!summary && summary.check.date.slice(0, 7) < todayYmd().slice(0, 7),
-    onCheck: () => { haptic('medium'); setWalletCheck(true); },
-    onAdvance: logAdvance,
-    onOpen: () => { haptic('light'); setWalletDetails(true); }
-  }) : null;
+  const balancePage = h(React.Fragment, null,
+    h(WalletCard, {
+      data,
+      summary,
+      nextCheck,
+      due: !!summary && data.settings.walletMonthlyCheck !== false && summary.check.date.slice(0, 7) < todayYmd().slice(0, 7),
+      onUpdate: () => { haptic('medium'); setBalanceSheet('manual'); }
+    }),
+    summary ? h(WalletActivity, { data, summary }) : null,
+    advancesBlock
+  );
 
-  const advancesBlock = h(AdvancesSection, {
-    data,
-    onOpen: setAdvanceEdit,
-    onAdd: hasWallet ? null : logAdvance
-  });
-
-  const monthLabel = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-
-  const pool = spent + Math.max(0, leftForLife);
+  const pool = spent + Math.max(0, leftToSpend);
   const spentPct = pool > 0 ? Math.min(100, (spent / pool) * 100) : 0;
   const monthPct = (daysElapsed / daysThisMonth) * 100;
   const pace = (isCurrentMonth && hasIncome && pool > 0)
     ? (spentPct <= monthPct
-        ? 'You’re pacing under your money for the month.'
-        : 'You’re spending faster than the month is passing.')
+        ? 'On track — you’re spending slower than the month is going by.'
+        : 'Heads up — you’re spending faster than the month is going by.')
     : null;
 
-  const hero = h('section', { className: `spend-hero${leftForLife < 0 ? ' short' : ''}` },
+  const hero = h('section', { className: `spend-hero${leftToSpend < 0 ? ' short' : ''}` },
     h('p', { className: 'spend-hero-label' },
-      hasIncome ? (isCurrentMonth ? 'Left for daily life' : 'Was left for daily life') : 'Spent this month'),
-    h('p', { className: 'spend-hero-value' },
-      fmtCurrency(hasIncome ? leftForLife : spent, currency)),
-    h('p', { className: 'spend-hero-sub' },
-      hasIncome
-        ? `${fmtCurrency(income, currency)} in · ${fmtCurrency(recurringTotal, currency)} of bills · ${fmtCurrency(spent, currency)} spent`
-        : `${purchases.length} ${purchases.length === 1 ? 'purchase' : 'purchases'} logged · add an income source to see what’s left`),
+      hasIncome ? (isCurrentMonth ? 'Left to spend this month' : `Left to spend in ${monthName}`) : `Spent in ${monthName}`),
+    h('p', { className: 'spend-hero-value' }, fmtCurrency(hasIncome ? leftToSpend : spent, currency)),
     hasIncome ? h('div', { className: 'spend-bar' },
       h('span', { className: 'spend-bar-fill', style: { width: `${spentPct}%` } }),
       isCurrentMonth ? h('span', { className: 'spend-bar-pace', style: { left: `${monthPct}%` } }) : null
     ) : null,
     (hasIncome && isCurrentMonth) ? h('p', { className: 'spend-hero-rate' },
-      leftForLife > 0
-        ? `${fmtCurrency(leftForLife / Math.max(1, daysLeft), currency)} a day for the ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'} left`
-        : 'This month is already spent — anything more comes out of savings'
+      leftToSpend > 0
+        ? `That’s about ${fmtCurrency(leftToSpend / Math.max(1, daysLeft), currency)} a day for the ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'} left.`
+        : 'This month’s money is used up — anything more comes out of savings.'
     ) : null,
-    pace ? h('p', { className: 'spend-hero-pace' }, pace) : null
+    pace ? h('p', { className: 'spend-hero-pace' }, pace) : null,
+    hasIncome ? null : h('p', { className: 'spend-hero-sub' }, 'Add an income source in Settings to see what’s left to spend.')
+  );
+
+  const heroMath = hasIncome ? h('section', { className: 'spend-section' },
+    h(SectionHead, { title: 'How this month adds up', caption: `Everything scheduled for ${monthName}` }),
+    h('div', { className: 'calc-list' },
+      h('div', { className: 'calc-row' },
+        h('span', null, advanceIn > 0 ? `Money coming in, including ${fmtCurrency(advanceIn, currency)} of advances` : 'Money coming in'),
+        h('span', { className: 'calc-amt good' }, signedMoney(income, currency))),
+      h('div', { className: 'calc-row' },
+        h('span', null, 'Bills and subscriptions'),
+        h('span', { className: 'calc-amt' }, signedMoney(-recurringTotal, currency))),
+      h('div', { className: 'calc-row' },
+        h('span', null, 'Already spent on purchases'),
+        h('span', { className: 'calc-amt' }, signedMoney(-spent, currency))),
+      h('div', { className: 'calc-row total' },
+        h('span', null, 'Left to spend'),
+        h('span', { className: 'calc-amt' }, fmtCurrency(leftToSpend, currency)))
+    )
+  ) : null;
+
+  const resetsOn = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+  const budgetSection = h('section', { className: 'spend-section' },
+    h(SectionHead, {
+      title: 'Budgets',
+      caption: budgeted.length > 0
+        ? `Monthly limits · reset ${formatDate(resetsOn, data.settings)}`
+        : 'A monthly limit per category',
+      right: budgeted.length > 0
+        ? h('span', { className: 'section-total' }, `${fmtCurrency(budgetSpent, currency)} of ${fmtCurrency(budgetTotal, currency)}`)
+        : null
+    }),
+    budgeted.length === 0
+      ? h('div', { className: 'info-banner' },
+          'Set a limit for the things you buy often — groceries, gas, eating out. Every purchase you log fills the bar, so you can see what’s left without doing the math.')
+      : h('div', { className: 'budget-list' },
+          budgeted.map((row) => h(BudgetRow, {
+            key: row.category, row, currency, daysLeft,
+            onOpen: (r) => setBudgetModal({ category: r.category, amount: r.budget })
+          }))
+        ),
+    unusedCategories.length > 0
+      ? h('button', { className: 'add-row', onClick: () => setBudgetModal({}) },
+          budgeted.length === 0 ? '+ Set your first budget' : '+ Add a budget')
+      : null
+  );
+
+  const budgetPage = h(React.Fragment, null,
+    monthHeader,
+    hero,
+    heroMath,
+    budgetSection,
+    hasWallet ? null : advancesBlock
   );
 
   const dueAgain = suggestions.filter((s) => s.gap > 0 && s.daysSince >= s.gap)[0];
-
-  const quickLog = h('div', { className: 'spend-quick' },
+  const buyAgain = suggestions.length === 0 ? null : h('section', { className: 'spend-section' },
+    h(SectionHead, { title: 'Buy again', caption: 'Things you buy often — tap one to log it' }),
     h('div', { className: 'chip-row' },
-      h('button', { className: 'setup-chip custom', onClick: () => { haptic('medium'); onAddEntry({ date: todayYmd() }); } },
-        h('span', { className: 'setup-chip-plus' }, '+'), 'Log a purchase'),
       suggestions.map((s) =>
         h('button', {
           key: s.name,
@@ -4943,48 +4822,7 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
       )
     ),
     dueAgain ? h('p', { className: 'spend-note' },
-      `You buy ${dueAgain.name} about every ${dueAgain.gap} ${dueAgain.gap === 1 ? 'day' : 'days'} — it has been ${dueAgain.daysSince}.`) : null
-  );
-
-  const resetsOn = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
-  const budgetSection = h('section', { className: 'spend-section' },
-    h(SectionHead, {
-      title: 'Monthly budgets',
-      caption: budgeted.length > 0
-        ? `${monthLabel} · starts over ${formatDate(resetsOn, data.settings)}`
-        : 'One amount per category, for a whole month',
-      right: budgeted.length > 0
-        ? h('span', { className: 'section-total' }, `${fmtCurrency(budgetSpent, currency)} of ${fmtCurrency(budgetTotal, currency)}`)
-        : null
-    }),
-    budgeted.length === 0
-      ? h('div', { className: 'info-banner' },
-          'Set a budget for the things you buy often — groceries, gas, eating out. Every purchase you log fills the bar, so you can see what is left without doing the math.')
-      : h('div', { className: 'budget-list' },
-          budgeted.map((row) => h(BudgetRow, {
-            key: row.category, row, currency, daysLeft,
-            onOpen: (r) => setBudgetModal({ category: r.category, amount: r.budget })
-          }))
-        ),
-    unbudgeted.length > 0
-      ? h('div', { className: 'spend-unbudgeted' },
-          h('p', { className: 'spend-unbudgeted-head' }, 'No budget yet'),
-          h('div', { className: 'entry-list' },
-            unbudgeted.map((row) => h(EntryRow, {
-              key: row.category,
-              name: row.category,
-              sub: 'Tap to give it a monthly limit',
-              amount: fmtCurrency(row.spent, currency),
-              color: categoryColor(row.category),
-              onClick: () => setBudgetModal({ category: row.category, amount: 0 })
-            }))
-          )
-        )
-      : null,
-    unusedCategories.length > 0
-      ? h('button', { className: 'add-row', onClick: () => setBudgetModal({}) },
-          budgeted.length === 0 ? '+ Set your first budget' : '+ Add another budget')
-      : null
+      `You buy ${dueAgain.name} about every ${dueAgain.gap} ${dueAgain.gap === 1 ? 'day' : 'days'} — it’s been ${dueAgain.daysSince}.`) : null
   );
 
   function deltaNote(row) {
@@ -5001,10 +4839,8 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
     h(SectionHead, {
       title: 'Where it went',
       caption: catFilter
-        ? `Showing ${catFilter} below · tap it again to clear`
-        : hasPrev
-          ? `${breakdown.length} ${breakdown.length === 1 ? 'category' : 'categories'} · compared with ${prevMonthName}`
-          : `${breakdown.length} ${breakdown.length === 1 ? 'category' : 'categories'} this month`,
+        ? `Showing only ${catFilter} below · tap it again to show everything`
+        : 'Tap a category to see just those purchases',
       right: h('span', { className: 'section-total' }, fmtCurrency(spent, currency))
     }),
     h('div', { className: 'cat-list' },
@@ -5034,7 +4870,7 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
             })
           ),
           h('span', { className: 'cat-meta' },
-            `${row.pct}% of spending`,
+            `${row.pct}% of your spending`,
             note ? h('span', { className: `cat-delta ${note.dir}` }, note.text) : null
           )
         );
@@ -5048,13 +4884,13 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const purchaseSection = h('section', { className: 'spend-section' },
     h(SectionHead, {
       title: 'Purchases',
-      caption: catFilter ? `${catFilter} only` : null,
-      right: h('span', { className: 'section-total' }, fmtCurrency(filteredTotal, currency))
+      caption: catFilter ? `${catFilter} only` : `Everything you logged in ${monthName}`,
+      right: purchases.length > 0 ? h('span', { className: 'section-total' }, fmtCurrency(filteredTotal, currency)) : null
     }),
     purchases.length === 0
       ? h('p', { className: 'empty-state' },
           isCurrentMonth
-            ? 'Nothing logged yet this month. Log a coffee, a tank of gas, a grocery run — anything you spend outside your bills.'
+            ? 'Nothing logged yet this month. Tap + to log a coffee, a tank of gas, a grocery run — anything you spend outside your bills.'
             : 'Nothing was logged this month.')
       : h('div', { className: 'entry-list' },
           visiblePurchases.map((o) => h(EntryRow, {
@@ -5074,45 +4910,71 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
       : null
   );
 
+  const spendingPage = h(React.Fragment, null,
+    monthHeader,
+    isCurrentMonth ? buyAgain : null,
+    breakdownSection,
+    purchaseSection
+  );
+
   const historyMax = Math.max(...history.map((b) => b.total), 1);
   const hasHistory = history.some((b) => b.total > 0);
-  const trendSection = !hasHistory ? null : h('section', { className: 'spend-section' },
-    h(SectionHead, {
-      title: 'Day-to-day spending by month',
-      caption: `Totals for the last ${SPEND_HISTORY_MONTHS} months`
-    }),
-    h('div', { className: 'spend-bars' },
-      history.map((b, i) => h('div', { key: b.key, className: `spend-bar-col${i === history.length - 1 ? ' current' : ''}` },
-        h('span', { className: 'spend-bar-value' }, b.total > 0 ? fmtCompact(b.total, currency) : ''),
-        h('span', { className: 'spend-bar-track' },
-          h('span', { className: 'spend-bar-col-fill', style: { height: `${(b.total / historyMax) * 100}%` } })
-        ),
-        h('span', { className: 'spend-bar-label' }, b.label)
-      ))
+  const trendsPage = h(React.Fragment, null,
+    monthHeader,
+    h('section', { className: 'spend-section' },
+      h(SectionHead, {
+        title: 'Spending by month',
+        caption: `Purchases you logged, over the ${SPEND_HISTORY_MONTHS} months up to ${monthName}`
+      }),
+      hasHistory
+        ? h('div', { className: 'spend-bars' },
+            history.map((b, i) => h('div', { key: b.key, className: `spend-bar-col${i === history.length - 1 ? ' current' : ''}` },
+              h('span', { className: 'spend-bar-value' }, b.total > 0 ? fmtCompact(b.total, currency) : ''),
+              h('span', { className: 'spend-bar-track' },
+                h('span', { className: 'spend-bar-col-fill', style: { height: `${(b.total / historyMax) * 100}%` } })
+              ),
+              h('span', { className: 'spend-bar-label' }, b.label)
+            ))
+          )
+        : h('p', { className: 'empty-state' }, 'Once you’ve logged a few purchases, this shows how each month compares.')
     ),
-    h('div', { className: 'spend-stats' },
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'Per day'),
-        h('span', { className: 'spend-stat-value' }, fmtCurrency(spent / Math.max(1, daysElapsed), currency))
-      ),
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'vs last month'),
-        h('span', { className: `spend-stat-value ${spendDelta > 0 ? 'bad' : 'good'}` },
-          `${spendDelta >= 0 ? '+' : '−'}${fmtCurrency(Math.abs(spendDelta), currency)}`)
-      ),
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'Avg purchase'),
-        h('span', { className: 'spend-stat-value' },
-          fmtCurrency(spent / Math.max(1, purchases.length), currency))
-      ),
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'Purchases'),
-        h('span', { className: 'spend-stat-value' }, purchases.length)
+    h('section', { className: 'spend-section' },
+      h(SectionHead, { title: `${monthName} in numbers` }),
+      h('div', { className: 'spend-stats' },
+        h('div', { className: 'spend-stat' },
+          h('span', { className: 'spend-stat-label' }, 'Per day'),
+          h('span', { className: 'spend-stat-value' }, fmtCurrency(spent / Math.max(1, daysElapsed), currency)),
+          h('span', { className: 'spend-stat-sub' }, 'on purchases')
+        ),
+        h('div', { className: 'spend-stat' },
+          h('span', { className: 'spend-stat-label' }, `vs ${prevMonthName}`),
+          h('span', { className: `spend-stat-value ${spendDelta > 0 ? 'bad' : 'good'}` },
+            `${spendDelta >= 0 ? '+' : '−'}${fmtCurrency(Math.abs(spendDelta), currency)}`),
+          h('span', { className: 'spend-stat-sub' }, spendDelta > 0 ? 'more spent' : 'less spent')
+        ),
+        h('div', { className: 'spend-stat' },
+          h('span', { className: 'spend-stat-label' }, 'Typical purchase'),
+          h('span', { className: 'spend-stat-value' }, fmtCurrency(spent / Math.max(1, purchases.length), currency)),
+          h('span', { className: 'spend-stat-sub' }, 'average')
+        ),
+        h('div', { className: 'spend-stat' },
+          h('span', { className: 'spend-stat-label' }, 'Purchases'),
+          h('span', { className: 'spend-stat-value' }, purchases.length),
+          h('span', { className: 'spend-stat-sub' }, 'logged')
+        )
       )
     )
   );
 
-  const modals = h(React.Fragment, null,
+  const pages = [
+    hasWallet ? { id: 'balance', label: 'Balance', body: balancePage } : null,
+    { id: 'budget', label: 'Budget', body: budgetPage },
+    { id: 'spending', label: 'Spending', body: spendingPage },
+    { id: 'trends', label: 'Trends', body: trendsPage }
+  ].filter(Boolean);
+
+  return h('div', { className: 'spend-page' },
+    h(Pager, { pages, index: Math.min(pageIndex, pages.length - 1), onIndex: setPageIndex }),
     budgetModal ? h(BudgetModal, {
       categories: budgetModal.category ? [budgetModal.category] : unusedCategories,
       budget: budgetModal,
@@ -5125,50 +4987,17 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
       data, setData, occ: priceModal, currency,
       onClose: () => setPriceModal(null)
     }) : null,
-    walletCheck ? h(WalletCheckSheet, { data, setData, onClose: () => setWalletCheck(false) }) : null,
-    (walletDetails && summary) ? h(WalletSheet, {
+    balanceSheet ? h(BalanceSheet, {
       data,
-      summary,
-      onClose: () => setWalletDetails(false),
-      onCheck: () => { setWalletDetails(false); setWalletCheck(true); }
+      setData,
+      prompted: balanceSheet === 'prompt',
+      onClose: () => setBalanceSheet(null)
     }) : null,
     advanceEdit ? h(AdvanceSheet, { data, setData, advance: advanceEdit, onClose: () => setAdvanceEdit(null) }) : null
   );
-
-  const monthHeader = h(MonthHeader, { cursor, onChange: changeMonth });
-
-  if (isMobile) {
-    return h('div', { className: 'spend-page' },
-      walletBlock,
-      advancesBlock,
-      monthHeader,
-      hero,
-      isCurrentMonth ? quickLog : null,
-      budgetSection,
-      breakdownSection,
-      purchaseSection,
-      trendSection,
-      modals
-    );
-  }
-
-  return h('div', { className: 'spend-page' },
-    monthHeader,
-    h('div', { className: 'spend-desktop' },
-      h('div', null,
-        walletBlock,
-        advancesBlock,
-        hero,
-        isCurrentMonth ? quickLog : null,
-        budgetSection
-      ),
-      h('div', null, breakdownSection, purchaseSection, trendSection)
-    ),
-    modals
-  );
 }
 
-const WALLET_CHECK_HISTORY = 24;
+const BALANCE_HISTORY = 24;
 
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
@@ -5277,7 +5106,7 @@ function advanceStatus(data, a) {
   };
 }
 
-function lastWalletCheck(data) {
+function lastBalance(data) {
   const checks = (data.wallet && data.wallet.checks) || [];
   return checks[0] || null;
 }
@@ -5354,7 +5183,7 @@ function walletMoves(data, check) {
 }
 
 function walletSummary(data) {
-  const check = lastWalletCheck(data);
+  const check = lastBalance(data);
   if (!check) return null;
   const moves = walletMoves(data, check);
   const moneyIn = moves.filter((m) => m.amount > 0).reduce((sum, m) => sum + m.amount, 0);
@@ -5366,15 +5195,15 @@ function walletOn(data) {
   return data.settings.walletEnabled !== false;
 }
 
-function walletCheckDue(data) {
+function balanceUpdateDue(data) {
   if (!walletOn(data) || data.settings.walletMonthlyCheck === false) return false;
   const todayStr = todayYmd();
   if (data.wallet && data.wallet.snoozed === todayStr) return false;
-  const last = lastWalletCheck(data);
+  const last = lastBalance(data);
   return !last || last.date.slice(0, 7) < todayStr.slice(0, 7);
 }
 
-function recordWalletCheck(data, amount) {
+function recordBalance(data, amount) {
   const summary = walletSummary(data);
   const check = {
     id: uid(),
@@ -5383,15 +5212,38 @@ function recordWalletCheck(data, amount) {
     amount: round2(amount),
     expected: summary ? summary.balance : null
   };
-  const checks = [check, ...((data.wallet && data.wallet.checks) || [])].slice(0, WALLET_CHECK_HISTORY);
+  const checks = [check, ...((data.wallet && data.wallet.checks) || [])].slice(0, BALANCE_HISTORY);
   return logActivity(
     { ...data, wallet: { ...(data.wallet || {}), checks, snoozed: null } },
-    `Wallet check: ${fmtCurrency(check.amount, data.settings.currency)}`
+    `Updated balance to ${fmtCurrency(check.amount, data.settings.currency)}`
   );
 }
 
-function snoozeWalletCheck(data) {
+function snoozeBalancePrompt(data) {
   return { ...data, wallet: { ...(data.wallet || { checks: [] }), snoozed: todayYmd() } };
+}
+
+function resetSpendingHistory(data) {
+  const gone = new Set(purchaseEntries(data).map((e) => `${e.id}|${e.date}`));
+  const keep = (map) => {
+    const out = {};
+    Object.keys(map || {}).forEach((k) => { if (!gone.has(k)) out[k] = map[k]; });
+    return out;
+  };
+  return logActivity({
+    ...data,
+    oneTimeEntries: data.oneTimeEntries.filter((e) => e.oneTimeKind !== 'payment'),
+    paidHistory: keep(data.paidHistory),
+    paidAt: keep(data.paidAt),
+    overrides: keep(data.overrides),
+    forcedLate: keep(data.forcedLate),
+    dismissedLate: keep(data.dismissedLate),
+    deferred: keep(data.deferred),
+    covered: keep(data.covered),
+    coverLog: keep(data.coverLog),
+    removedOccurrences: keep(data.removedOccurrences),
+    wallet: { checks: [], snoozed: null }
+  }, 'Reset spending history');
 }
 
 function signedMoney(n, currency) {
@@ -5399,37 +5251,37 @@ function signedMoney(n, currency) {
   return `${n > 0 ? '+' : '−'}${fmtCurrency(Math.abs(n), currency)}`;
 }
 
-function checkDiffText(diff, currency) {
-  if (Math.abs(diff) < 0.005) return { text: 'Right on what the app expected', tone: 'good' };
+function balanceDiffText(diff, currency) {
+  if (Math.abs(diff) < 0.005) return { text: 'Exactly what the app thought', tone: 'good' };
   return diff > 0
-    ? { text: `${fmtCurrency(diff, currency)} more than the app tracked`, tone: 'good' }
-    : { text: `${fmtCurrency(-diff, currency)} less than the app tracked — something may not be logged`, tone: 'bad' };
+    ? { text: `${fmtCurrency(diff, currency)} more than the app thought`, tone: 'good' }
+    : { text: `${fmtCurrency(-diff, currency)} less than the app thought — something may not be logged yet`, tone: 'bad' };
 }
 
-function WalletCheckSheet({ data, setData, prompted, onClose }) {
+function BalanceSheet({ data, setData, prompted, onClose }) {
   const currency = data.settings.currency;
   const summary = useMemo(() => walletSummary(data), [data]);
   const [amount, setAmount] = useState('');
   const value = parseFloat(amount);
   const canSave = amount !== '' && !isNaN(value);
   const diff = (summary && canSave) ? round2(value - summary.balance) : null;
-  const note = diff === null ? null : checkDiffText(diff, currency);
+  const note = diff === null ? null : balanceDiffText(diff, currency);
 
   function save() {
     if (!canSave) return;
     haptic('success');
-    setData(recordWalletCheck(data, value));
+    setData(recordBalance(data, value));
     onClose();
   }
 
   function later() {
     haptic('light');
-    setData(snoozeWalletCheck(data));
+    setData(snoozeBalancePrompt(data));
     onClose();
   }
 
   return h(Sheet, {
-    title: prompted ? 'Monthly wallet check' : 'Wallet check',
+    title: !summary ? 'What’s your balance?' : prompted ? 'New month — update your balance' : 'Update your balance',
     sub: formatDate(new Date(), data.settings, { weekday: true }),
     onClose: prompted ? later : onClose,
     foot: h('div', { className: 'sheet-actions' },
@@ -5439,140 +5291,132 @@ function WalletCheckSheet({ data, setData, prompted, onClose }) {
     )
   },
     h('p', { className: 'sheet-lead' },
-      'How much money do you have right now? Add up your checking account and any cash — whatever you could spend today.'),
+      'How much money do you have right now? Add up your bank account and any cash. Include any paycheck that has already landed.'),
     h(AmountField, { value: amount, onChange: setAmount, currency, autoFocus: true }),
     summary ? h('div', { className: 'calc-list' },
       h('div', { className: 'calc-row' },
-        h('span', null, 'The app expects'),
+        h('span', null, 'The app thinks you have'),
         h('span', { className: 'calc-amt' }, fmtCurrency(summary.balance, currency))
       ),
       note ? h('div', { className: `calc-row note ${note.tone}` }, h('span', null, note.text)) : null
     ) : null,
-    prompted
-      ? h('p', { className: 'setup-hint' },
-          summary
-            ? 'It’s a new month, so the app is checking its math against your real balance. Monthly checks can be turned off in Settings.'
-            : 'The app keeps a running balance from here — paychecks add to it, bills and purchases take from it. Monthly checks can be turned off in Settings.')
-      : null
+    h('p', { className: 'setup-hint' },
+      summary
+        ? (prompted
+            ? 'A new month started, so the app is checking its math against your real balance. You can turn this off in Settings.'
+            : 'Whatever you enter becomes your new starting point.')
+        : 'After this, paychecks add to your balance and bills and purchases come out of it. You can turn this off in Settings.')
   );
 }
 
-function WalletMoveRow({ m, data, onOpen }) {
+function WalletCard({ data, summary, nextCheck, due, onUpdate }) {
   const currency = data.settings.currency;
-  return h(EntryRow, {
-    name: m.name,
-    sub: `${m.kind} · ${formatDate(parseYmd(m.date), data.settings)}`,
-    amount: signedMoney(m.amount, currency),
-    positive: m.amount > 0,
-    color: m.amount > 0 ? 'var(--text-success)' : 'var(--border-secondary)',
-    onClick: onOpen ? () => onOpen(m) : undefined
-  });
+  if (!summary) {
+    return h('section', { className: 'wallet-card' },
+      h('p', { className: 'wallet-label' }, 'Wallet'),
+      h('p', { className: 'wallet-empty-title' }, 'How much money do you have?'),
+      h('p', { className: 'wallet-sub' },
+        'Enter your balance once. After that, paychecks add to it and bills and purchases come out of it.'),
+      h('div', { className: 'wallet-actions' },
+        h('button', { className: 'wallet-btn solid', onClick: onUpdate }, 'Enter my balance'))
+    );
+  }
+
+  const balance = summary.balance;
+  const billsDue = nextCheck ? nextCheck.due : 0;
+  const afterBills = balance - billsDue;
+  const payday = nextCheck && nextCheck.check
+    ? `your ${formatDate(parseYmd(nextCheck.check.occDate), data.settings)} paycheck`
+    : 'your next paycheck';
+
+  return h('section', { className: `wallet-card${balance < 0 ? ' short' : ''}` },
+    h('div', { className: 'wallet-top' },
+      h('p', { className: 'wallet-label' }, 'Available now'),
+      due ? h('span', { className: 'wallet-pill' }, 'Update due') : null
+    ),
+    h('p', { className: 'wallet-balance' }, fmtCurrency(balance, currency)),
+    h('p', { className: 'wallet-sub' }, 'The money in your account right now, as far as the app knows'),
+    billsDue > 0 ? h('p', { className: `wallet-safe${afterBills < 0 ? ' short' : ''}` },
+      afterBills >= 0
+        ? `After the ${fmtCurrency(billsDue, currency)} of bills due before ${payday}, you’ll have ${fmtCurrency(afterBills, currency)} left.`
+        : `You’re ${fmtCurrency(-afterBills, currency)} short of the ${fmtCurrency(billsDue, currency)} of bills due before ${payday}.`) : null,
+    h('div', { className: 'wallet-actions' },
+      h('button', { className: `wallet-btn${due ? ' solid' : ''}`, onClick: onUpdate }, 'Update balance')
+    )
+  );
 }
 
-function WalletSheet({ data, summary, onClose, onCheck }) {
+const ACTIVITY_PREVIEW = 8;
+
+function WalletActivity({ data, summary }) {
   const currency = data.settings.currency;
-  const checks = ((data.wallet && data.wallet.checks) || []);
+  const [showAll, setShowAll] = useState(false);
   const { check, moves, moneyIn, moneyOut, balance } = summary;
   const checkDate = formatDate(parseYmd(check.date), data.settings);
+  const checks = (data.wallet && data.wallet.checks) || [];
+  const visible = showAll ? moves : moves.slice(0, ACTIVITY_PREVIEW);
 
-  return h(Sheet, {
-    title: 'Wallet',
-    sub: `Since your wallet check on ${checkDate}`,
-    tall: true,
-    onClose,
-    foot: h('div', { className: 'sheet-actions' },
-      h('button', { className: 'primary', onClick: onCheck }, 'Do a wallet check'))
-  },
-    h('div', { className: 'calc-list' },
-      h('div', { className: 'calc-row' },
-        h('span', null, `Wallet check · ${checkDate}`),
-        h('span', { className: 'calc-amt' }, fmtCurrency(check.amount, currency))),
-      h('div', { className: 'calc-row' },
-        h('span', null, 'Money in'),
-        h('span', { className: 'calc-amt good' }, signedMoney(moneyIn, currency))),
-      h('div', { className: 'calc-row' },
-        h('span', null, 'Money out'),
-        h('span', { className: 'calc-amt' }, signedMoney(-moneyOut, currency))),
-      h('div', { className: 'calc-row total' },
-        h('span', null, 'Available now'),
-        h('span', { className: 'calc-amt' }, fmtCurrency(balance, currency)))
+  return h(React.Fragment, null,
+    h('section', { className: 'spend-section' },
+      h(SectionHead, { title: 'How your balance adds up' }),
+      h('div', { className: 'calc-list' },
+        h('div', { className: 'calc-row' },
+          h('span', null, `Your balance on ${checkDate}`),
+          h('span', { className: 'calc-amt' }, fmtCurrency(check.amount, currency))),
+        h('div', { className: 'calc-row' },
+          h('span', null, 'Money in since then'),
+          h('span', { className: 'calc-amt good' }, signedMoney(moneyIn, currency))),
+        h('div', { className: 'calc-row' },
+          h('span', null, 'Money out since then'),
+          h('span', { className: 'calc-amt' }, signedMoney(-moneyOut, currency))),
+        h('div', { className: 'calc-row total' },
+          h('span', null, 'Available now'),
+          h('span', { className: 'calc-amt' }, fmtCurrency(balance, currency)))
+      )
     ),
-    h('div', { className: 'sheet-section' },
+    h('section', { className: 'spend-section' },
       h(SectionHead, {
         title: 'What changed',
-        caption: moves.length === 0 ? 'Nothing has moved since then' : `${moves.length} ${moves.length === 1 ? 'change' : 'changes'}, newest first`
+        caption: moves.length === 0 ? `Nothing has moved since ${checkDate}` : `Since ${checkDate}, newest first`
       }),
       moves.length === 0
         ? h('p', { className: 'empty-state' }, 'Paychecks, bills you mark paid and purchases you log will show up here.')
         : h('div', { className: 'entry-list' },
-            moves.map((m) => h(WalletMoveRow, { key: m.key, m, data })))
+            visible.map((m) => h(EntryRow, {
+              key: m.key,
+              name: m.name,
+              sub: `${m.kind} · ${formatDate(parseYmd(m.date), data.settings)}`,
+              amount: signedMoney(m.amount, currency),
+              positive: m.amount > 0,
+              color: m.amount > 0 ? 'var(--text-success)' : 'var(--border-secondary)'
+            }))
+          ),
+      moves.length > ACTIVITY_PREVIEW
+        ? h('button', { className: 'att-more', onClick: () => setShowAll(!showAll) },
+            showAll ? 'Show less' : `Show all ${moves.length}`)
+        : null
     ),
-    checks.length > 1 ? h('div', { className: 'sheet-section' },
-      h(SectionHead, { title: 'Past wallet checks', caption: 'What you had, and how close the app was' }),
+    checks.length > 1 ? h('section', { className: 'spend-section' },
+      h(SectionHead, { title: 'Past balance updates', caption: 'What you had, and how close the app was' }),
       h('div', { className: 'entry-list' },
         checks.map((c) => {
           const diff = c.expected === null || c.expected === undefined ? null : round2(c.amount - c.expected);
-          return h('div', { key: c.id, className: 'entry-row static' },
-            h('span', { className: 'entry-row-text' },
-              h('span', { className: 'entry-row-name' }, formatDate(parseYmd(c.date), data.settings, { year: true })),
-              h('span', { className: 'entry-row-sub' },
-                diff === null ? 'First check' : Math.abs(diff) < 0.005 ? 'Matched exactly' : `${signedMoney(diff, currency)} vs what the app tracked`)
-            ),
-            h('span', { className: 'entry-row-amt' }, fmtCurrency(c.amount, currency))
-          );
+          return h(EntryRow, {
+            key: c.id,
+            name: formatDate(parseYmd(c.date), data.settings, { year: true }),
+            sub: diff === null
+              ? 'Your first balance'
+              : Math.abs(diff) < 0.005 ? 'Matched the app exactly' : `${fmtCurrency(Math.abs(diff), currency)} ${diff > 0 ? 'more' : 'less'} than expected`,
+            amount: fmtCurrency(c.amount, currency),
+            color: diff === null || Math.abs(diff) < 1 ? 'var(--text-success)' : diff > 0 ? 'var(--accent)' : 'var(--text-warning)'
+          });
         })
       )
     ) : null
   );
 }
 
-function WalletCard({ data, summary, nextCheck, due, onCheck, onAdvance, onOpen }) {
-  const currency = data.settings.currency;
-  if (!summary) {
-    return h('section', { className: 'wallet-card empty' },
-      h('p', { className: 'wallet-label' }, 'Wallet'),
-      h('p', { className: 'wallet-empty-title' }, 'How much do you have right now?'),
-      h('p', { className: 'wallet-sub' },
-        'Do a wallet check and the app keeps a running balance — paychecks add to it, bills and purchases take from it.'),
-      h('div', { className: 'wallet-actions one' },
-        h('button', { className: 'wallet-btn solid', onClick: onCheck }, 'Do your first wallet check'))
-    );
-  }
-
-  const { check, moves, moneyIn, moneyOut, balance } = summary;
-  const checkDate = formatDate(parseYmd(check.date), data.settings);
-  const billsDue = nextCheck ? nextCheck.due : 0;
-  const afterBills = balance - billsDue;
-  const checkLabel = nextCheck && nextCheck.check
-    ? `your ${formatDate(parseYmd(nextCheck.check.occDate), data.settings)} check`
-    : 'your next check';
-
-  return h('section', { className: `wallet-card${balance < 0 ? ' short' : ''}` },
-    h('div', { className: 'wallet-top' },
-      h('p', { className: 'wallet-label' }, 'Available now'),
-      due ? h('span', { className: 'wallet-pill' }, 'New month · check in') : null
-    ),
-    h('p', { className: 'wallet-balance' }, fmtCurrency(balance, currency)),
-    h('p', { className: 'wallet-sub' },
-      moves.length === 0
-        ? `Wallet check on ${checkDate} · nothing has moved since`
-        : `${signedMoney(moneyIn, currency)} in · ${signedMoney(-moneyOut, currency)} out since ${checkDate}`),
-    billsDue > 0 ? h('p', { className: `wallet-safe${afterBills < 0 ? ' short' : ''}` },
-      afterBills >= 0
-        ? `${fmtCurrency(afterBills, currency)} left after the ${fmtCurrency(billsDue, currency)} due before ${checkLabel}`
-        : `${fmtCurrency(-afterBills, currency)} short of the ${fmtCurrency(billsDue, currency)} due before ${checkLabel}`) : null,
-    h('div', { className: 'wallet-actions' },
-      h('button', { className: `wallet-btn${due ? ' solid' : ''}`, onClick: onCheck }, 'Wallet check'),
-      h('button', { className: 'wallet-btn', onClick: onAdvance }, 'Log an advance')
-    ),
-    h('button', { className: 'wallet-foot', onClick: onOpen },
-      h('span', null, moves.length === 0 ? 'Wallet details' : `${moves.length} ${moves.length === 1 ? 'change' : 'changes'} since ${checkDate}`),
-      h('span', { className: 'wallet-foot-chevron' }, '›')
-    )
-  );
-}
-
-function AdvancesSection({ data, onOpen, onAdd }) {
+function AdvancesSection({ data, onOpen, onAdd, showEmpty }) {
   const currency = data.settings.currency;
   const [showPaid, setShowPaid] = useState(false);
   const rows = useMemo(() => (data.advances || [])
@@ -5580,7 +5424,7 @@ function AdvancesSection({ data, onOpen, onAdd }) {
     .sort((x, y) => (x.s.repayDate || '').localeCompare(y.s.repayDate || '')), [data]);
   const open = rows.filter((r) => !r.s.paidBack);
   const paid = rows.filter((r) => r.s.paidBack).reverse();
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && !showEmpty) return null;
   const owed = open.reduce((sum, r) => sum + r.s.total, 0);
 
   const row = ({ a, s }) => h(EntryRow, {
@@ -5591,7 +5435,7 @@ function AdvancesSection({ data, onOpen, onAdd }) {
       : s.late
         ? `Was due ${formatDate(parseYmd(s.repayDate), data.settings)} · not marked paid back`
         : a.repayFromCheck
-          ? `Comes out of your ${formatDate(parseYmd(s.repayDate), data.settings)} check`
+          ? `Comes out of your ${formatDate(parseYmd(s.repayDate), data.settings)} paycheck`
           : `Pay back by ${formatDate(parseYmd(s.repayDate), data.settings)}`,
     note: s.cost > 0 && !s.paidBack ? `${fmtCurrency(a.amount, currency)} + ${fmtCurrency(s.cost, currency)} fee` : null,
     amount: fmtCurrency(s.total, currency),
@@ -5602,9 +5446,11 @@ function AdvancesSection({ data, onOpen, onAdd }) {
   return h('section', { className: 'spend-section' },
     h(SectionHead, {
       title: 'Advances',
-      caption: open.length > 0
-        ? `${fmtCurrency(owed, currency)} still to pay back`
-        : 'All paid back'
+      caption: rows.length === 0
+        ? 'Money borrowed against a paycheck — EarnIn, Dave, work, family'
+        : open.length > 0
+          ? `${fmtCurrency(owed, currency)} still to pay back`
+          : 'All paid back'
     }),
     open.length > 0 ? h('div', { className: 'entry-list' }, open.map(row)) : null,
     paid.length > 0
@@ -5612,7 +5458,7 @@ function AdvancesSection({ data, onOpen, onAdd }) {
           showPaid ? 'Hide paid back' : `Paid back (${paid.length})`)
       : null,
     showPaid ? h('div', { className: 'entry-list' }, paid.map(row)) : null,
-    onAdd ? h('button', { className: 'add-row', onClick: onAdd }, '+ Log an advance') : null
+    h('button', { className: 'add-row', onClick: onAdd }, '+ Log an advance')
   );
 }
 
@@ -5704,7 +5550,7 @@ function AdvanceFields({ data, adv, autoFocus }) {
         id: 'adv-from-check',
         title: 'Take it out of my next paycheck',
         sub: nextCheckDate
-          ? `Paid back automatically from your ${formatDate(parseYmd(nextCheckDate), data.settings, { weekday: true })} check`
+          ? `Paid back automatically from your ${formatDate(parseYmd(nextCheckDate), data.settings, { weekday: true })} paycheck`
           : 'Add an income source in Settings to use this',
         checked: repayFromCheck,
         onChange: (v) => set('repayFromCheck', v)
@@ -5839,139 +5685,6 @@ function AdvanceSheet({ data, setData, advance, onClose }) {
   );
 }
 
-function BillsPage({ data, setData }) {
-  const currency = data.settings.currency;
-  const [editing, setEditing] = useState(null);
-
-  function openAdd() {
-    setEditing({ ...blankEntry({ freq: 'monthly', category: 'Other' }), _isNew: true });
-  }
-
-  function openEdit(entry) {
-    setEditing({ ...entryToFormShape(entry), _isNew: false });
-  }
-
-  function handleSubmit(cleaned) {
-    const { _isNew, ...entry } = cleaned;
-    if (_isNew) {
-      setData(logActivity({ ...data, majorBills: [...data.majorBills, entry] }, `Added bill "${entry.name}"`));
-    } else {
-      setData(logActivity({ ...data, majorBills: data.majorBills.map((e) => (e.id === entry.id ? entry : e)) }, `Edited "${entry.name}"`));
-    }
-    setEditing(null);
-  }
-
-  function deleteEntry(entry) {
-    setData(logActivity({ ...data, majorBills: data.majorBills.filter((e) => e.id !== entry.id) }, `Deleted "${entry.name}"`));
-  }
-
-  const list = data.majorBills;
-
-  const total = list.reduce((sum, e) => sum + monthlyAmount(e), 0);
-
-  return h('div', { className: 'page-stack' },
-    h('div', { className: 'sub-head' },
-      h('h2', { className: 'sub-title' }, 'Essentials'),
-      h('p', { className: 'sub-caption' },
-        list.length === 0
-          ? 'Rent, utilities, insurance \u2014 the bills that keep the lights on.'
-          : `${list.length} ${list.length === 1 ? 'bill' : 'bills'} \u00b7 about ${fmtCurrency(total, currency)} a month`)
-    ),
-    list.length === 0
-      ? h('p', { className: 'empty-state' }, 'No bills added yet.')
-      : h('div', { className: 'entry-list' },
-          list.map((e) => h(EntryRow, {
-            key: e.id,
-            name: e.name,
-            sub: scheduleLabel(e, data),
-            amount: entryAmountLabel(e, currency),
-            color: getEntryColor({ ...e, sourceList: 'majorBills' }, data),
-            onClick: () => openEdit(e)
-          }))
-        ),
-    h('button', { className: 'add-row', onClick: openAdd }, '+ Add a bill'),
-
-    editing ? h(EntryFormModal, {
-      data,
-      title: editing._isNew ? 'Add bill' : 'Edit bill',
-      entry: editing,
-      categories: MAJOR_CATEGORIES,
-      dateLabel: 'Due date',
-      submitLabel: editing._isNew ? 'Add' : 'Save',
-      onSubmit: handleSubmit,
-      onDelete: editing._isNew ? null : () => { deleteEntry(editing); setEditing(null); },
-      deleteLabel: `Delete ${editing.name || 'this bill'}`,
-      onClose: () => setEditing(null)
-    }) : null
-  );
-}
-
-function SubscriptionsPage({ data, setData }) {
-  const currency = data.settings.currency;
-  const [editing, setEditing] = useState(null);
-
-  function openAdd() {
-    setEditing({ ...blankEntry({ freq: 'monthly', category: 'Streaming' }), _isNew: true });
-  }
-
-  function openEdit(entry) {
-    setEditing({ ...entryToFormShape(entry), _isNew: false });
-  }
-
-  function handleSubmit(cleaned) {
-    const { _isNew, ...entry } = cleaned;
-    if (_isNew) {
-      setData(logActivity({ ...data, subscriptions: [...data.subscriptions, entry] }, `Added subscription "${entry.name}"`));
-    } else {
-      setData(logActivity({ ...data, subscriptions: data.subscriptions.map((e) => (e.id === entry.id ? entry : e)) }, `Edited "${entry.name}"`));
-    }
-    setEditing(null);
-  }
-
-  function deleteEntry(entry) {
-    setData(logActivity({ ...data, subscriptions: data.subscriptions.filter((e) => e.id !== entry.id) }, `Deleted "${entry.name}"`));
-  }
-
-  const list = data.subscriptions;
-  const total = list.reduce((sum, e) => sum + monthlyAmount(e), 0);
-
-  return h('div', { className: 'page-stack' },
-    h('div', { className: 'sub-head' },
-      h('h2', { className: 'sub-title' }, 'Subscriptions'),
-      h('p', { className: 'sub-caption' },
-        list.length === 0
-          ? 'Streaming, apps, memberships \u2014 anything that renews on its own.'
-          : `${list.length} ${list.length === 1 ? 'subscription' : 'subscriptions'} \u00b7 about ${fmtCurrency(total, currency)} a month \u00b7 ${fmtCurrency(total * 12, currency)} a year`)
-    ),
-    list.length === 0
-      ? h('p', { className: 'empty-state' }, 'No subscriptions added yet.')
-      : h('div', { className: 'entry-list' },
-          list.map((e) => h(EntryRow, {
-            key: e.id,
-            name: e.name,
-            sub: scheduleLabel(e, data),
-            amount: entryAmountLabel(e, currency),
-            color: getEntryColor({ ...e, sourceList: 'subscriptions' }, data),
-            onClick: () => openEdit(e)
-          }))
-        ),
-    h('button', { className: 'add-row', onClick: openAdd }, '+ Add a subscription'),
-
-    editing ? h(EntryFormModal, {
-      data,
-      title: editing._isNew ? 'Add subscription' : 'Edit subscription',
-      entry: editing,
-      categories: MINOR_CATEGORIES,
-      dateLabel: 'Billing date',
-      submitLabel: editing._isNew ? 'Add' : 'Save',
-      onSubmit: handleSubmit,
-      onDelete: editing._isNew ? null : () => { deleteEntry(editing); setEditing(null); },
-      deleteLabel: `Delete ${editing.name || 'this subscription'}`,
-      onClose: () => setEditing(null)
-    }) : null
-  );
-}
-
 function blankCreditCard() {
   return {
     id: uid(),
@@ -6062,12 +5775,6 @@ function CreditCardsPage({ data, setData }) {
 
   const cards = data.creditCards || [];
 
-  const totals = cards.reduce((acc, c) => {
-    acc.totalDebt += Number(c.totalDebt) || 0;
-    acc.totalPaid += Number(c.amountPaid) || 0;
-    return acc;
-  }, { totalDebt: 0, totalPaid: 0 });
-  const totalRemaining = Math.max(0, totals.totalDebt - totals.totalPaid);
   const totalOwedNow = cards.reduce((sum, c) => sum + getCurrentCardBalance(c), 0);
 
   function submitForm(form) {
@@ -6099,7 +5806,6 @@ function CreditCardsPage({ data, setData }) {
   const monthlyPayments = cards
     .filter((c) => c.hasRecurringPayment)
     .reduce((sum, c) => sum + monthlyAmount({ amount: c.paymentAmount, freq: c.paymentFreq }), 0);
-  const hasInterest = cards.some((c) => c.useApr && c.apr);
 
   return h('div', { className: 'page-stack' },
     h('div', { className: 'sub-head' },
@@ -6107,31 +5813,8 @@ function CreditCardsPage({ data, setData }) {
       h('p', { className: 'sub-caption' },
         cards.length === 0
           ? 'Track what you owe, what you have paid, and when it will be gone.'
-          : `${cards.length} ${cards.length === 1 ? 'card' : 'cards'} · ${fmtCurrency(totalOwedNow, currency)} owed now`)
+          : `${cards.length} ${cards.length === 1 ? 'card' : 'cards'} · ${fmtCurrency(totalOwedNow, currency)} owed now${monthlyPayments > 0 ? ` · about ${fmtCurrency(monthlyPayments, currency)} a month in payments` : ''}`)
     ),
-
-    cards.length > 0 ? h('div', { className: 'spend-stats' },
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'Owed now'),
-        h('span', { className: 'spend-stat-value bad' }, fmtCurrency(totalOwedNow, currency)),
-        h('span', { className: 'spend-stat-sub' }, hasInterest ? 'including interest' : 'across all cards')
-      ),
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'Paid so far'),
-        h('span', { className: 'spend-stat-value good' }, fmtCurrency(totals.totalPaid, currency)),
-        h('span', { className: 'spend-stat-sub' }, `of ${fmtCurrency(totals.totalDebt, currency)} borrowed`)
-      ),
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'Principal left'),
-        h('span', { className: 'spend-stat-value' }, fmtCurrency(totalRemaining, currency)),
-        h('span', { className: 'spend-stat-sub' }, 'before interest')
-      ),
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'Payments'),
-        h('span', { className: 'spend-stat-value' }, fmtCurrency(monthlyPayments, currency)),
-        h('span', { className: 'spend-stat-sub' }, 'about a month')
-      )
-    ) : null,
 
     cards.length === 0
       ? h('p', { className: 'empty-state' }, 'No credit cards added yet.')
@@ -6265,13 +5948,13 @@ function attentionSummary(items, currency) {
   const lateTotal = late.reduce((sum, o) => sum + o.amount, 0);
 
   if (late.length && priced.length) {
-    return `${fmtCurrency(lateTotal, currency)} past due across ${late.length} ${late.length === 1 ? 'bill' : 'bills'}, and ${priced.length} more ${priced.length === 1 ? 'needs' : 'need'} a real price.`;
+    return `${fmtCurrency(lateTotal, currency)} past due across ${late.length} ${late.length === 1 ? 'bill' : 'bills'}, and ${priced.length} more ${priced.length === 1 ? 'needs' : 'need'} the real amount.`;
   }
   if (late.length) {
-    return `${fmtCurrency(lateTotal, currency)} past due across ${late.length} ${late.length === 1 ? 'bill' : 'bills'} — tap one to pay it off or dismiss it.`;
+    return `${fmtCurrency(lateTotal, currency)} past due across ${late.length} ${late.length === 1 ? 'bill' : 'bills'} — tap one to mark it paid or clear the late flag.`;
   }
   if (priced.length) {
-    return `${priced.length} ${priced.length === 1 ? 'entry still uses' : 'entries still use'} a price range — add the real amount to keep your totals honest.`;
+    return `${priced.length} ${priced.length === 1 ? 'item only has' : 'items only have'} a price range — enter the real amount so your totals are right.`;
   }
   return 'All clear — everything is paid and every amount is filled in.';
 }
@@ -6285,7 +5968,7 @@ function AttentionRow({ o, data, currency, onOpen }) {
       h('span', { className: 'att-name' }, o.name),
       h('span', { className: 'att-sub' },
         `${o.late ? 'Was due' : 'Due'} ${dateLabel}${o.category ? ' · ' + o.category : ''}`),
-      o.needsPrice ? h('span', { className: 'att-need' }, 'Needs a real price') : null
+      o.needsPrice ? h('span', { className: 'att-need' }, 'Needs the real amount') : null
     ),
     h('span', { className: 'att-side' },
       o.late ? h('span', { className: 'age-pill' }, ageText) : null,
@@ -6297,6 +5980,8 @@ function AttentionRow({ o, data, currency, onOpen }) {
 }
 
 const ATTENTION_PREVIEW = 5;
+const BILL_GROUPS = ['majorBills', 'subscriptions', 'creditCards'];
+const BILL_ADD_LABELS = { majorBills: '+ Add a bill', subscriptions: '+ Add a subscription' };
 
 function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
   const currency = data.settings.currency;
@@ -6323,10 +6008,17 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
     setEditing({ sourceList: e.sourceList, form: { ...entryToFormShape(e), _isNew: false } });
   }
 
+  function openAdd(sourceList) {
+    const category = sourceList === 'subscriptions' ? 'Streaming' : 'Other';
+    setEditing({ sourceList, form: { ...blankEntry({ freq: 'monthly', category }), _isNew: true } });
+  }
+
   function handleEditSubmit(cleaned) {
-    let next = applyEditedEntry(data, editing.sourceList, cleaned);
-    next = logActivity(next, `Edited "${cleaned.name}"`);
-    setData(next);
+    const { _isNew, ...entry } = cleaned;
+    const next = _isNew
+      ? { ...data, [editing.sourceList]: [...data[editing.sourceList], entry] }
+      : applyEditedEntry(data, editing.sourceList, cleaned);
+    setData(logActivity(next, `${_isNew ? 'Added' : 'Edited'} "${entry.name}"`));
     setEditing(null);
   }
 
@@ -6341,19 +6033,10 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
     return rows.map((e) => ({ ...e, _next: nextOf(e) })).sort((a, b) => a._next.localeCompare(b._next));
   }, [data]);
 
-  const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards'];
-
-  const SUBPAGE_FOR_GROUP = {
-    majorBills: 'essentials',
-    subscriptions: 'subscriptions',
-    creditCards: 'creditcards'
-  };
   const grouped = useMemo(() => {
-    const map = {};
-    unified.forEach((e) => {
-      (map[e.sourceList] = map[e.sourceList] || []).push(e);
-    });
-    return SOURCE_GROUP_ORDER.filter((key) => map[key] && map[key].length > 0).map((key) => [key, map[key]]);
+    const map = { majorBills: [], subscriptions: [], creditCards: [] };
+    unified.forEach((e) => map[e.sourceList].push(e));
+    return BILL_GROUPS.map((key) => [key, map[key]]);
   }, [unified]);
 
   const visibleGroups = categoryFilter === 'all' ? grouped : grouped.filter(([key]) => key === categoryFilter);
@@ -6399,7 +6082,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
     );
 
   const filterBlock = h('div', { className: 'bill-filter-row' },
-      h('p', { className: 'bill-filter-caption' }, 'About a month of recurring commitments'),
+      h('p', { className: 'bill-filter-caption' }, 'What your regular bills cost in a month'),
       h('button', {
         className: `bill-filter-chip${categoryFilter === 'all' ? ' active' : ''}`,
         onClick: () => setCategoryFilter('all')
@@ -6408,7 +6091,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
         h('span', { className: 'bill-filter-total' }, fmtCurrency(
           Object.values(groupMonthlyTotals).reduce((a, b) => a + b, 0), currency))
       ),
-      SOURCE_GROUP_ORDER.filter((key) => grouped.some(([k]) => k === key)).map((key) =>
+      grouped.filter(([, rows]) => rows.length > 0).map(([key]) =>
         h('button', {
           key,
           className: `bill-filter-chip${categoryFilter === key ? ' active' : ''}`,
@@ -6426,32 +6109,30 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
     attentionBlock,
     filterBlock,
 
-    unified.length === 0
-      ? h('p', { className: 'empty-state' }, 'Nothing added yet.')
-      : h('div', { className: 'bill-groups' },
-          visibleGroups.map(([key, rows]) =>
-            h('div', { key },
-              h('div', { className: 'category-group-header' },
-                h('span', null, SOURCE_GROUP_LABELS[key]),
-                h('span', { className: 'category-group-count' }, rows.length),
-                (isMobile && setPage) ? h('button', {
-                  className: 'setup-link category-group-link',
-                  onClick: () => setPage(SUBPAGE_FOR_GROUP[key])
-                }, key === 'creditCards' ? 'Cards \u203a' : 'Add \u203a') : null
-              ),
-              h('div', { className: 'entry-list' },
-                rows.map((e) => h(EntryRow, {
-                  key: `${e.sourceList}-${e.id}`,
-                  name: e.name,
-                  sub: scheduleLabel(e, data),
-                  amount: entryAmountLabel(e, currency),
-                  color: getEntryColor(e, data),
-                  onClick: () => openEdit(e)
-                }))
-              )
-            )
-          )
-        ),
+    h('div', { className: 'bill-groups' },
+      visibleGroups.map(([key, rows]) =>
+        h('div', { key, className: 'bill-group' },
+          h('div', { className: 'category-group-header' },
+            h('span', null, SOURCE_GROUP_LABELS[key]),
+            rows.length ? h('span', { className: 'category-group-count' }, rows.length) : null
+          ),
+          rows.length ? h('div', { className: 'entry-list' },
+            rows.map((e) => h(EntryRow, {
+              key: `${e.sourceList}-${e.id}`,
+              name: e.name,
+              sub: scheduleLabel(e, data),
+              amount: entryAmountLabel(e, currency),
+              color: getEntryColor(e, data),
+              onClick: () => openEdit(e)
+            }))
+          ) : null,
+          key === 'creditCards'
+            ? h('button', { className: 'add-row', onClick: () => setPage('creditcards') },
+                rows.length ? 'Manage credit cards' : '+ Add a credit card')
+            : h('button', { className: 'add-row', onClick: () => openAdd(key) }, BILL_ADD_LABELS[key])
+        )
+      )
+    ),
 
     priceModal ? h(PriceOverrideModal, {
       data, setData, occ: priceModal, currency,
@@ -6461,10 +6142,12 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
     editing ? h(EntryFormModal, Object.assign(
       { data, entry: editing.form, onSubmit: handleEditSubmit, onClose: () => setEditing(null), submitLabel: 'Save' },
       getEditModalConfig(editing.sourceList),
-      {
-        deleteLabel: `Delete ${editing.form.name || 'this entry'}`,
-        onDelete: () => { deleteEntry({ ...editing.form, sourceList: editing.sourceList }); setEditing(null); }
-      }
+      editing.form._isNew
+        ? { title: editing.sourceList === 'subscriptions' ? 'Add a subscription' : 'Add a bill', submitLabel: 'Add' }
+        : {
+            deleteLabel: `Delete ${editing.form.name || 'this entry'}`,
+            onDelete: () => { deleteEntry({ ...editing.form, sourceList: editing.sourceList }); setEditing(null); }
+          }
     )) : null
   );
 }
@@ -6561,9 +6244,7 @@ function CustomAccentPicker({ hex, onChange }) {
 
 function SettingsPage({ data, setData, onRestart }) {
   const [tab, setTab] = useState('general');
-  const [confirming, setConfirming] = useState(false);
   const [editingIncome, setEditingIncome] = useState(null);
-  const [walletCheck, setWalletCheck] = useState(false);
   const currency = data.settings.currency;
 
   function updateSetting(field, value) {
@@ -6600,13 +6281,12 @@ function SettingsPage({ data, setData, onRestart }) {
   if (tab === 'general') {
     tabContent = h(GeneralTab, {
       data, currency, updateSetting,
-      onAddIncome: openAddIncome, onEditIncome: openEditIncome,
-      onWalletCheck: () => setWalletCheck(true)
+      onAddIncome: openAddIncome, onEditIncome: openEditIncome
     });
   } else if (tab === 'colors') {
     tabContent = h(ColorsTab, { data, updateSectionColor });
   } else {
-    tabContent = h(AdvancedTab, { data, setData, updateSetting, onRestart, confirming, setConfirming });
+    tabContent = h(AdvancedTab, { data, setData, updateSetting, onRestart });
   }
 
   return h('div', { className: 'page-stack' },
@@ -6615,7 +6295,6 @@ function SettingsPage({ data, setData, onRestart }) {
       h(ChipToggle, { wide: true, options: SETTINGS_TABS, value: tab, onChange: setTab })
     ),
     tabContent,
-    walletCheck ? h(WalletCheckSheet, { data, setData, onClose: () => setWalletCheck(false) }) : null,
 
     editingIncome ? h(EntryFormModal, {
       data,
@@ -6633,7 +6312,7 @@ function SettingsPage({ data, setData, onRestart }) {
   );
 }
 
-function WalletSettingsCard({ data, updateSetting, onWalletCheck }) {
+function WalletSettingsCard({ data, updateSetting }) {
   const on = walletOn(data);
   const summary = on ? walletSummary(data) : null;
   const currency = data.settings.currency;
@@ -6641,38 +6320,28 @@ function WalletSettingsCard({ data, updateSetting, onWalletCheck }) {
     h('p', { className: 'settings-card-title' }, 'Wallet'),
     h('p', { className: 'settings-card-sub' },
       summary
-        ? `${fmtCurrency(summary.balance, currency)} available \u00b7 last wallet check ${formatDate(parseYmd(summary.check.date), data.settings)}`
-        : 'A running balance of the money you actually have, kept honest by a quick check each month.'),
+        ? `${fmtCurrency(summary.balance, currency)} available \u00b7 balance last updated ${formatDate(parseYmd(summary.check.date), data.settings)}`
+        : 'Keeps a running total of the money you actually have. You tell it your balance on the Wallet tab and it keeps count from there.'),
     h('div', { className: 'switch-list' },
       h(SettingSwitch, {
         id: 'wallet-on',
         title: 'Track my wallet',
-        sub: 'Turns Spending into your Wallet \u2014 paychecks add to it, bills and purchases take from it',
+        sub: 'Adds a Wallet tab \u2014 paychecks add to your balance, bills and purchases take away from it',
         checked: on,
-        onChange: (v) => {
-          updateSetting('walletEnabled', v);
-          if (v && !lastWalletCheck(data)) onWalletCheck();
-        }
+        onChange: (v) => updateSetting('walletEnabled', v)
       }),
       on ? h(SettingSwitch, {
         id: 'wallet-monthly',
-        title: 'Monthly wallet check',
-        sub: 'Asks what you have the first time you open the app each month',
+        title: 'Ask for my balance each month',
+        sub: 'The Wallet tab asks the first time you open it in a new month',
         checked: data.settings.walletMonthlyCheck !== false,
         onChange: (v) => updateSetting('walletMonthlyCheck', v)
       }) : null
-    ),
-    on ? h('div', { className: 'action-list' },
-      h(ActionRow, {
-        title: 'Do a wallet check now',
-        sub: 'Tell the app what you have so the balance matches your bank',
-        onClick: onWalletCheck
-      })
-    ) : null
+    )
   );
 }
 
-function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, onWalletCheck }) {
+function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome }) {
   return h('div', { className: 'settings-stack' },
 
     h('div', { className: 'card' },
@@ -6689,8 +6358,8 @@ function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, 
                 sub: scheduleLabel(e, data),
                 note: avg
                   ? (avg.ready
-                      ? `\u2248${fmtCurrency(avg.amount, currency)} estimated \u00b7 average of your last ${avg.count} checks`
-                      : `Estimating \u2014 ${avg.count} of 2 checks recorded so far`)
+                      ? `About ${fmtCurrency(avg.amount, currency)} a paycheck \u00b7 the average of your last ${avg.count}`
+                      : `Averaging starts after 2 paychecks with a real amount \u2014 ${avg.count} so far`)
                   : null,
                 amount: `+${entryAmountLabel(e, currency)}`,
                 positive: true,
@@ -6702,7 +6371,7 @@ function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, 
       h('button', { className: 'add-row', onClick: onAddIncome }, '+ Add an income source')
     ),
 
-    h(WalletSettingsCard, { data, updateSetting, onWalletCheck }),
+    h(WalletSettingsCard, { data, updateSetting }),
 
     h('div', { className: 'card' },
       h('p', { className: 'settings-card-title' }, 'Appearance'),
@@ -6780,7 +6449,7 @@ function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, 
         )
       ),
       h('p', { className: 'setup-hint' },
-        'All in days. Late after: how long past due before a bill counts as late. Flag early: how far ahead a bill or paycheck with a price range shows up under Needs attention, so you can fill in the real amount.'),
+        'All in days. Late after: how long a bill can go past its due date before it shows as late. Flag early: how far ahead a bill or paycheck that has a price range asks you for the real amount.'),
       h('div', { className: 'switch-list' },
         h(SettingSwitch, {
           id: 'auto-deduct-cc',
@@ -6959,12 +6628,13 @@ function SyncModal({ data, setData, onClose }) {
   );
 }
 
-function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setConfirming }) {
+function AdvancedTab({ data, setData, updateSetting, onRestart }) {
   const [importWarning, setImportWarning] = useState(false);
   const [importError, setImportError] = useState(null);
   const [importSuccess, setImportSuccess] = useState(false);
   const [exportError, setExportError] = useState(null);
   const [exportSuccess, setExportSuccess] = useState(false);
+  const [spendReset, setSpendReset] = useState(0);
 
   async function handleExport() {
     setExportError(null);
@@ -7013,11 +6683,6 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
         value: data.settings.density,
         onChange: (v) => updateSetting('density', v)
       })
-    ),
-
-    h('div', { className: 'card' },
-      h('p', { className: 'settings-card-title' }, 'Sync'),
-      h(SyncCard, { data, setData })
     ),
 
     h('div', { className: 'card' },
@@ -7083,17 +6748,23 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
     ),
 
     h('div', { className: 'card' },
-      h('p', { className: 'settings-card-title' }, 'Reset all data'),
+      h('p', { className: 'settings-card-title' }, 'Start fresh'),
       h('p', { className: 'settings-card-sub' },
-        'Clears your income, bills, subscriptions, wallet and paid history, then takes you back through setup.'),
-      confirming
-        ? h('div', { className: 'button-row' },
-            h('button', { onClick: () => setConfirming(false) }, 'Cancel'),
-            h('button', { className: 'danger', onClick: onRestart }, 'Yes, reset everything')
-          )
-        : h('div', { className: 'button-row' },
-            h('button', { className: 'danger', onClick: () => setConfirming(true) }, 'Reset and run setup again')
-          )
+        'Resetting spending history deletes every purchase you\u2019ve logged and your past balance updates, so the Wallet starts over. Your bills, income, budgets and advances stay.'),
+      h(DeleteRow, {
+        key: spendReset,
+        label: 'Reset spending history',
+        sub: 'The Wallet will ask for your balance again',
+        armedLabel: 'Tap again to reset spending history',
+        onConfirm: () => { setData(resetSpendingHistory(data)); setSpendReset((n) => n + 1); }
+      }),
+      h(DeleteRow, {
+        label: 'Reset everything',
+        sub: 'Deletes all your data and runs setup again',
+        armedLabel: 'Tap again to delete everything',
+        onConfirm: onRestart
+      }),
+      spendReset ? h('p', { className: 'form-msg good' }, 'Spending history cleared. Open the Wallet tab to enter your balance.') : null
     ),
 
     h('div', { className: 'card about-card' },

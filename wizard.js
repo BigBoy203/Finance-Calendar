@@ -49,8 +49,6 @@ function OnboardingWizard({ data, onComplete }) {
   const [importError, setImportError] = useState(null);
   const [importing, setImporting] = useState(false);
   const [markPastPaid, setMarkPastPaid] = useState(true);
-  const [walletAmount, setWalletAmount] = useState('');
-  const [trackWallet, setTrackWallet] = useState(true);
 
   const [income, setIncome] = useState(
     data.incomeSources && data.incomeSources.length
@@ -71,8 +69,7 @@ function OnboardingWizard({ data, onComplete }) {
     { title: 'Your income', subtitle: 'When does money come in?' },
     { title: 'Your bills', subtitle: 'The essentials you pay every month.' },
     { title: 'Subscriptions', subtitle: 'The smaller recurring stuff.' },
-    { title: 'Credit cards', subtitle: 'Optional \u2014 track balances and payments. You can skip this.' },
-    { title: 'Your wallet', subtitle: 'Optional \u2014 how much money do you have right now?' }
+    { title: 'Credit cards', subtitle: 'Optional \u2014 track balances and payments. You can skip this.' }
   ];
 
   function updateRow(list, setList, id, field, value) {
@@ -143,12 +140,6 @@ function OnboardingWizard({ data, onComplete }) {
         cleanedCards.forEach((c) => { if (c.hasRecurringPayment) markIfPast(`cc-${c.id}`, dayOfMonthFor(c)); });
         finalData = { ...finalData, paidHistory: paid };
       }
-
-      finalData = { ...finalData, settings: { ...finalData.settings, walletEnabled: trackWallet } };
-      const startingBalance = parseFloat(walletAmount);
-      finalData = (trackWallet && !isNaN(startingBalance))
-        ? recordWalletCheck(finalData, startingBalance)
-        : snoozeWalletCheck(finalData);
 
       haptic('success');
       onComplete(finalData);
@@ -224,7 +215,7 @@ function OnboardingWizard({ data, onComplete }) {
       settings: data.settings,
       emptyHint: 'Tap any you pay for \u2014 skip the rest.'
     });
-  } else if (step === 3) {
+  } else {
     body = h(CreditCardEntryList, {
       cards: creditCards,
       settings: data.settings,
@@ -232,26 +223,6 @@ function OnboardingWizard({ data, onComplete }) {
       onAdd: () => setCreditCards([...creditCards, blankCreditCard()]),
       onRemove: (id) => setCreditCards(creditCards.filter((c) => c.id !== id))
     });
-  } else {
-    body = h('div', { className: 'setup-list' },
-      h(AmountField, {
-        value: walletAmount,
-        onChange: setWalletAmount,
-        currency: data.settings.currency,
-        label: 'In your checking account and cash'
-      }),
-      h('p', { className: 'setup-empty-hint' },
-        'The app keeps a running balance from here \u2014 paychecks add to it, bills and purchases take from it \u2014 and asks again at the start of each month so it stays accurate. Leave it blank to do this later.'),
-      h('div', { className: 'switch-list' },
-        h(SettingSwitch, {
-          id: 'wiz-wallet',
-          title: 'Track my wallet',
-          sub: 'You can turn this off any time in Settings',
-          checked: trackWallet,
-          onChange: setTrackWallet
-        })
-      )
-    );
   }
 
   async function handleImportFromFile() {

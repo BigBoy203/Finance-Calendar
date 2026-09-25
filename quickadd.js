@@ -323,7 +323,7 @@ function QuickAddModal({ data, setData, initialDate, initialType, preset, entry:
       ? h(SettingSwitch, {
           id: 'qa-paid',
           title: 'Already paid for',
-          sub: alreadyPaid ? 'Counts as spent right away' : 'Stays on the calendar until you check it off',
+          sub: alreadyPaid ? 'Counts as spent right away' : 'Stays on the calendar until you mark it paid',
           checked: alreadyPaid,
           onChange: (v) => { setPaidTouched(true); setAlreadyPaid(v); }
         })

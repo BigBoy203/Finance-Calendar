@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '5.0';
+const WEB_VERSION = '5.1';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -791,9 +791,9 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [page, setPage] = useState('home');
-  const [billsExpanded, setBillsExpanded] = useState(true);
   const [quickAdd, setQuickAdd] = useState(null);
   const [overviewView, setOverviewView] = useState('calendar');
+  const [walletPage, setWalletPage] = useState(0);
 
   useEffect(() => {
     const panes = document.querySelectorAll('.main-content, .main-content.mobile');
@@ -806,7 +806,6 @@ function App() {
   }, [data && data.settings && data.settings.hapticsEnabled]);
 
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
-  const [walletPrompt, setWalletPrompt] = useState(false);
   const [syncModal, setSyncModal] = useState(false);
   const [syncBanner, setSyncBanner] = useState(null);
   const isMobile = useIsMobile();
@@ -839,10 +838,6 @@ function App() {
         setLoading(false);
       });
   }, []);
-
-  useEffect(() => {
-    if (data && data.onboardingComplete && walletCheckDue(data)) setWalletPrompt(true);
-  }, [data && data.onboardingComplete]);
 
   useEffect(() => {
     if (!data || !data.onboardingComplete) return;
@@ -947,14 +942,7 @@ function App() {
     { id: 'home', label: 'Home', icon: 'home' },
     { id: 'overview', label: 'Overview', icon: 'calendar' },
     { id: 'spending', label: spendingLabel, icon: hasWallet ? 'wallet' : 'bag' },
-    {
-      id: 'allbills', label: 'Bills', icon: 'allbills',
-      children: [
-        { id: 'essentials', label: 'Essentials', icon: 'list' },
-        { id: 'creditcards', label: 'Credit cards', icon: 'card' },
-        { id: 'subscriptions', label: 'Subscriptions', icon: 'apps' }
-      ]
-    },
+    { id: 'allbills', label: 'Bills', icon: 'allbills' },
     { id: 'settings', label: 'Settings', icon: 'settings' }
   ];
 
@@ -970,13 +958,10 @@ function App() {
     });
   } else if (page === 'spending') {
     pageContent = h(SpendingPage, {
-      data, setData: persist, isMobile,
-      onAddEntry: (opts) => setQuickAdd(opts)
+      data, setData: persist,
+      onAddEntry: (opts) => setQuickAdd(opts),
+      pageIndex: walletPage, setPageIndex: setWalletPage
     });
-  } else if (page === 'essentials') {
-    pageContent = h(BillsPage, { data, setData: persist });
-  } else if (page === 'subscriptions') {
-    pageContent = h(SubscriptionsPage, { data, setData: persist });
   } else if (page === 'creditcards') {
     pageContent = h(CreditCardsPage, { data, setData: persist });
   } else if (page === 'allbills') {
@@ -994,12 +979,10 @@ function App() {
     onClose: () => setQuickAdd(null)
   }) : null;
 
-  const promptEl = walletPrompt
-    ? h(WalletCheckSheet, { data, setData: persist, prompted: true, onClose: () => setWalletPrompt(false) })
-    : showBackupPrompt ? h(BackupReminderModal, {
-        onDownloadBackup: downloadBackupNow,
-        onDismiss: dismissBackupPrompt
-      }) : null;
+  const promptEl = showBackupPrompt ? h(BackupReminderModal, {
+    onDownloadBackup: downloadBackupNow,
+    onDismiss: dismissBackupPrompt
+  }) : null;
 
   const syncBannerEl = syncBanner ? h('div', { className: 'sync-banner' },
     h('span', { className: 'sync-banner-text' }, 'A newer version of your data is in your synced file.'),
@@ -1015,8 +998,7 @@ function App() {
   if (isMobile) {
     const pageTitle = ({
       home: 'Home', overview: 'Overview', spending: spendingLabel,
-      allbills: 'Bills', essentials: 'Essentials', creditcards: 'Credit cards',
-      subscriptions: 'Subscriptions', settings: 'Settings'
+      allbills: 'Bills', creditcards: 'Credit cards', settings: 'Settings'
     })[page] || 'Finance Calendar';
 
     return h('div', { className: 'app-shell mobile' },
@@ -1053,40 +1035,17 @@ function App() {
         h('h1', null, 'Finance Calendar')
       ),
       NAV_ITEMS.map((item) => {
-        if (!item.children) {
-          return h('div', {
-            key: item.id,
-            className: `sidebar-link${page === item.id ? ' active' : ''}`,
-            onClick: () => setPage(item.id)
-          },
-            h(Icon, { name: item.icon }),
-            item.label
-          );
-        }
-
-        const openBills = () => { setPage(item.id); setBillsExpanded((v) => !v); };
-        return h('div', { key: item.id },
-          h('div', {
-            className: `sidebar-link${page === item.id ? ' active' : ''}`,
-            onClick: openBills
-          },
-            h(Icon, { name: item.icon }),
-            item.label,
-            attention.length > 0
-              ? h('span', { className: 'nav-badge round attention' }, attention.length)
-              : null,
-            h('span', { className: `sidebar-caret${billsExpanded ? ' open' : ''}` }, '\u203a')
-          ),
-          billsExpanded ? h('div', { className: 'sidebar-sublist' },
-            item.children.map((child) => h('div', {
-              key: child.id,
-              className: `sidebar-link sidebar-sublink${page === child.id ? ' active' : ''}`,
-              onClick: () => setPage(child.id)
-            },
-              h(Icon, { name: child.icon }),
-              child.label
-            ))
-          ) : null
+        const active = page === item.id || (item.id === 'allbills' && page === 'creditcards');
+        return h('div', {
+          key: item.id,
+          className: `sidebar-link${active ? ' active' : ''}`,
+          onClick: () => setPage(item.id)
+        },
+          h(Icon, { name: item.icon }),
+          item.label,
+          item.id === 'allbills' && attention.length > 0
+            ? h('span', { className: 'nav-badge round attention' }, attention.length)
+            : null
         );
       }),
 
@@ -1179,11 +1138,8 @@ function Icon({ name }) {
   const paths = {
     home: 'M3 12l9-9 9 9M5 10v10h14V10',
     calendar: 'M3 4h18v18H3zM16 2v4M8 2v4M3 10h18',
-    list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
-    apps: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
     settings: 'M 18.24 8.40 L 20.79 9.28 L 20.79 14.72 L 18.24 15.60 L 18.75 18.25 L 14.04 20.97 L 12.00 19.20 L 9.96 20.97 L 5.25 18.25 L 5.76 15.60 L 3.21 14.72 L 3.21 9.28 L 5.76 8.40 L 5.25 5.75 L 9.96 3.03 L 12.00 4.80 L 14.04 3.03 L 18.75 5.75 Z M 8.8 12 A 3.2 3.2 0 1 0 15.2 12 A 3.2 3.2 0 1 0 8.8 12 Z',
     alert: 'M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z',
-    card: 'M2 7h20v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7zM2 10h20M6 15h4',
     allbills: 'M9 2h6l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2zM14 2v6h6M9 13h6M9 17h6',
     bag: 'M6 8h12l-1 12H7L6 8zM9 8V6a3 3 0 016 0v2',
     wallet: 'M4 6.5A2.5 2.5 0 016.5 4H17v3.5M4 6.5V18a2 2 0 002 2h14V7.5H6.5A2.5 2.5 0 014 6.5zM16.5 14h.01',

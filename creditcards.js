@@ -89,12 +89,6 @@ function CreditCardsPage({ data, setData }) {
 
   const cards = data.creditCards || [];
 
-  const totals = cards.reduce((acc, c) => {
-    acc.totalDebt += Number(c.totalDebt) || 0;
-    acc.totalPaid += Number(c.amountPaid) || 0;
-    return acc;
-  }, { totalDebt: 0, totalPaid: 0 });
-  const totalRemaining = Math.max(0, totals.totalDebt - totals.totalPaid);
   const totalOwedNow = cards.reduce((sum, c) => sum + getCurrentCardBalance(c), 0);
 
   function submitForm(form) {
@@ -126,7 +120,6 @@ function CreditCardsPage({ data, setData }) {
   const monthlyPayments = cards
     .filter((c) => c.hasRecurringPayment)
     .reduce((sum, c) => sum + monthlyAmount({ amount: c.paymentAmount, freq: c.paymentFreq }), 0);
-  const hasInterest = cards.some((c) => c.useApr && c.apr);
 
   return h('div', { className: 'page-stack' },
     h('div', { className: 'sub-head' },
@@ -134,31 +127,8 @@ function CreditCardsPage({ data, setData }) {
       h('p', { className: 'sub-caption' },
         cards.length === 0
           ? 'Track what you owe, what you have paid, and when it will be gone.'
-          : `${cards.length} ${cards.length === 1 ? 'card' : 'cards'} · ${fmtCurrency(totalOwedNow, currency)} owed now`)
+          : `${cards.length} ${cards.length === 1 ? 'card' : 'cards'} · ${fmtCurrency(totalOwedNow, currency)} owed now${monthlyPayments > 0 ? ` · about ${fmtCurrency(monthlyPayments, currency)} a month in payments` : ''}`)
     ),
-
-    cards.length > 0 ? h('div', { className: 'spend-stats' },
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'Owed now'),
-        h('span', { className: 'spend-stat-value bad' }, fmtCurrency(totalOwedNow, currency)),
-        h('span', { className: 'spend-stat-sub' }, hasInterest ? 'including interest' : 'across all cards')
-      ),
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'Paid so far'),
-        h('span', { className: 'spend-stat-value good' }, fmtCurrency(totals.totalPaid, currency)),
-        h('span', { className: 'spend-stat-sub' }, `of ${fmtCurrency(totals.totalDebt, currency)} borrowed`)
-      ),
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'Principal left'),
-        h('span', { className: 'spend-stat-value' }, fmtCurrency(totalRemaining, currency)),
-        h('span', { className: 'spend-stat-sub' }, 'before interest')
-      ),
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'Payments'),
-        h('span', { className: 'spend-stat-value' }, fmtCurrency(monthlyPayments, currency)),
-        h('span', { className: 'spend-stat-sub' }, 'about a month')
-      )
-    ) : null,
 
     cards.length === 0
       ? h('p', { className: 'empty-state' }, 'No credit cards added yet.')

@@ -29,10 +29,10 @@ function load() {
     navigator: {}, window: { addEventListener: noop, matchMedia: null }, document: {}
   };
   vm.createContext(ctx);
-  const names = ['walletMoves', 'walletSummary', 'walletCheckDue', 'recordWalletCheck', 'snoozeWalletCheck', 'lastWalletCheck',
+  const names = ['walletMoves', 'walletSummary', 'balanceUpdateDue', 'recordBalance', 'snoozeBalancePrompt', 'lastBalance',
     'advanceCost', 'advanceTotal', 'advanceRepayDate', 'nextPaycheckAfter', 'getAdvanceEntries', 'advanceInflows', 'advanceStatus',
     'isPaid', 'togglePaidStatus', 'setCovered', 'getLateBills', 'getAttentionItems', 'useNextCheck', 'useMonthFinancials',
-    'planProgress', 'paymentCount', 'untilForCount', 'scheduleLabel', 'saveAdvance', 'removeAdvance', 'toggleForcedLate', 'getBlankData'];
+    'planProgress', 'paymentCount', 'untilForCount', 'scheduleLabel', 'saveAdvance', 'removeAdvance', 'toggleForcedLate', 'getBlankData', 'resetSpendingHistory'];
   vm.runInContext(src + '\n;globalThis.__t = {' + names.join(',') + '};', ctx);
   return ctx.__t;
 }
@@ -62,21 +62,21 @@ const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 0.005, `${msg || ''} exp
 test('no check means no summary and a due prompt', () => {
   const d = base();
   assert.strictEqual(t.walletSummary(d), null);
-  assert.strictEqual(t.walletCheckDue(d), true);
+  assert.strictEqual(t.balanceUpdateDue(d), true);
 });
 
 test('check this month is not due; last month is; snoozed today is not; disabled is not', () => {
   const d = base({ wallet: { checks: [check('2026-09-01', 100)], snoozed: null } });
-  assert.strictEqual(t.walletCheckDue(d), false);
+  assert.strictEqual(t.balanceUpdateDue(d), false);
   const old = base({ wallet: { checks: [check('2026-08-30', 100)], snoozed: null } });
-  assert.strictEqual(t.walletCheckDue(old), true);
-  assert.strictEqual(t.walletCheckDue(t.snoozeWalletCheck(old)), false);
+  assert.strictEqual(t.balanceUpdateDue(old), true);
+  assert.strictEqual(t.balanceUpdateDue(t.snoozeBalancePrompt(old)), false);
   const off = base({ wallet: { checks: [] } });
   off.settings.walletEnabled = false;
-  assert.strictEqual(t.walletCheckDue(off), false);
+  assert.strictEqual(t.balanceUpdateDue(off), false);
   const quiet = base({ wallet: { checks: [] } });
   quiet.settings.walletMonthlyCheck = false;
-  assert.strictEqual(t.walletCheckDue(quiet), false);
+  assert.strictEqual(t.balanceUpdateDue(quiet), false);
 });
 
 test('paychecks after the check date add; one on the check date does not', () => {
@@ -226,10 +226,10 @@ test('month financials count the advance as money in and the payback as money ou
   assert.ok(fin.incomeOccurrences.some((o) => o.sourceList === 'advances'));
 });
 
-test('recordWalletCheck stores what the app expected', () => {
+test('recordBalance stores what the app expected', () => {
   let d = base({ incomeSources: [e('pay', 'Pay', 1000, '2026-09-11', 'biweekly', 'Income')], wallet: { checks: [check('2026-09-01', 100)] } });
-  d = t.recordWalletCheck(d, 1150);
-  const c = t.lastWalletCheck(d);
+  d = t.recordBalance(d, 1150);
+  const c = t.lastBalance(d);
   near(c.expected, 2100);
   near(c.amount, 1150);
   assert.strictEqual(c.date, '2026-09-25');
@@ -280,7 +280,31 @@ test('raw imported data without wallet fields does not crash', () => {
   delete d.wallet; delete d.advances; delete d.paidAt; delete d.coverLog;
   assert.strictEqual(t.walletSummary(d), null);
   assert.strictEqual(t.getAdvanceEntries(d).length, 0);
-  assert.strictEqual(t.walletCheckDue(d), true);
+  assert.strictEqual(t.balanceUpdateDue(d), true);
+});
+
+test('resetting spending history drops purchases and balance updates only', () => {
+  const buy = e('p1', 'Coffee', 5, '2026-09-20', 'none', 'Food & drink', { oneTimeKind: 'payment' });
+  const gift = e('g1', 'Gift', 40, '2026-09-18', 'none', 'Gift', { oneTimeKind: 'income' });
+  const phone = e('ph', 'Phone', 60, '2026-01-20', 'monthly', 'Phone');
+  let d = base({
+    oneTimeEntries: [buy, gift],
+    majorBills: [phone],
+    budgets: { 'Food & drink': 200 },
+    wallet: { checks: [check('2026-09-01', 500)], snoozed: null }
+  });
+  d = t.togglePaidStatus(d, 'p1', '2026-09-20');
+  d = t.togglePaidStatus(d, 'ph', '2026-09-20');
+  const r = t.resetSpendingHistory(d);
+  assert.deepStrictEqual(r.oneTimeEntries.map((x) => x.id), ['g1']);
+  assert.strictEqual(r.paidHistory['p1|2026-09-20'], undefined);
+  assert.strictEqual(r.paidAt['p1|2026-09-20'], undefined);
+  assert.strictEqual(r.paidHistory['ph|2026-09-20'], true);
+  assert.strictEqual(r.majorBills.length, 1);
+  assert.strictEqual(r.budgets['Food & drink'], 200);
+  assert.strictEqual(r.wallet.checks.length, 0);
+  assert.strictEqual(t.walletSummary(r), null);
+  assert.strictEqual(t.balanceUpdateDue(r), true);
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', some FAILED' : ''}`);

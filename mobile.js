@@ -41,9 +41,7 @@ const TAB_FOR_PAGE = {
   overview: 'overview',
   spending: 'spending',
   allbills: 'allbills',
-  essentials: 'allbills',
-  creditcards: 'allbills',
-  subscriptions: 'allbills'
+  creditcards: 'allbills'
 };
 
 function MobileTabBar({ page, setPage, onAdd, attentionCount, walletOn }) {
@@ -114,7 +112,7 @@ function MobileHeader({ title, titleEl, onSettings, onBack, onSync, lastExported
   );
 }
 
-const MOBILE_SUBPAGES = ['essentials', 'creditcards', 'subscriptions'];
+const MOBILE_SUBPAGES = ['creditcards'];
 
 function useSheetDismiss(onClose) {
   const startY = useRef(null);

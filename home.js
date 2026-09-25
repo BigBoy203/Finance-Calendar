@@ -35,7 +35,7 @@ function BillChecklist({ rows, data, currency, onToggle, onOpen }) {
         h('div', { className: 'bill-check-text' },
           h('p', { className: 'bill-check-name' },
             late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
-            o.pushedTo ? h(PushedMark, { title: `Pushed to ${formatDate(parseYmd(o.pushedTo), data.settings)}` }) : null,
+            o.pushedTo ? h(PushedMark, { title: `Moved to ${formatDate(parseYmd(o.pushedTo), data.settings)}` }) : null,
             o.name
           ),
           h('p', { className: 'bill-check-sub' },
@@ -65,7 +65,7 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
         h('div', { className: 'bill-tile-top' },
           h('p', { className: 'bill-tile-name' },
             late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
-            o.pushedTo ? h(PushedMark, { title: `Pushed to ${formatDate(parseYmd(o.pushedTo), data.settings)}` }) : null,
+            o.pushedTo ? h(PushedMark, { title: `Moved to ${formatDate(parseYmd(o.pushedTo), data.settings)}` }) : null,
             o.name
           ),
           o.autoRepay
@@ -96,12 +96,12 @@ function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }
   const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
 
   const headingText = period === 0
-    ? 'Before your next check'
+    ? 'Before your next paycheck'
     : period === 1 ? 'The next pay period' : `${period} pay periods ahead`;
 
   const whenText = check
     ? `${check.name} \u00b7 ${dateLabel}`
-    : `No income scheduled \u2014 showing through ${dateLabel}`;
+    : `No paycheck scheduled \u2014 showing bills through ${dateLabel}`;
 
   const noteText = overdueCount > 0
     ? `${overdueCount} overdue \u00b7 ${bills.length} to pay`
@@ -153,27 +153,27 @@ function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }
 
     checkAmount > 0 ? h('p', { className: `nextcheck-verdict${shortfall > 0 ? ' short' : ''}` },
       shortfall > 0
-        ? `${fmtCurrency(shortfall, currency)} more than that check covers`
-        : `${fmtCurrency(-shortfall, currency)} of it left over`
+        ? `${fmtCurrency(shortfall, currency)} more than this paycheck covers`
+        : `${fmtCurrency(-shortfall, currency)} of this paycheck left after bills${spent > 0 ? ' and spending' : ''}`
     ) : null,
 
     spent > 0 ? h('p', { className: 'nextcheck-spent' },
-      `${fmtCurrency(spent, currency)} spent since ${formatDate(spendStart, data.settings)}`
+      `${fmtCurrency(spent, currency)} spent on purchases since ${formatDate(spendStart, data.settings)}`
     ) : null,
 
     estimate ? h('p', { className: 'nextcheck-est' },
-      `Check estimated at ${fmtCurrency(estimate.amount, currency)} \u2014 average of your last ${estimate.count} recorded paychecks`
+      `Paycheck estimated at ${fmtCurrency(estimate.amount, currency)} \u2014 the average of your last ${estimate.count}`
     ) : null,
 
     takes.length > 0 ? h('p', { className: 'nextcheck-est' },
-      `${takes.map((t) => t.name.replace(/ payback$/, '')).join(' and ')} ${takes.length === 1 ? 'takes' : 'take'} ${fmtCurrency(takes.reduce((sum, t) => sum + t.amount, 0), currency)} back from this check \u2014 the figures above already count it`
+      `${takes.map((t) => t.name.replace(/ payback$/, '')).join(' and ')} ${takes.length === 1 ? 'takes' : 'take'} ${fmtCurrency(takes.reduce((sum, t) => sum + t.amount, 0), currency)} back out of this paycheck \u2014 already counted above`
     ) : null,
 
     bills.length === 0
       ? h('p', { className: 'empty-state' },
           pushedOut.count > 0
-            ? 'Everything in this stretch is pushed forward.'
-            : period === 0 ? 'Nothing due before then \u2014 you\u2019re clear.' : 'Nothing due in this stretch.')
+            ? 'Everything here was moved to a later paycheck.'
+            : period === 0 ? 'Nothing due before then \u2014 you\u2019re clear.' : 'Nothing due in this pay period.')
       : overdueCount > OVERDUE_FOLD
         ? h(React.Fragment, null,
             h('button', {
@@ -184,7 +184,7 @@ function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }
               h('span', { className: 'late-dot' }),
               h('span', { className: 'overdue-fold-text' },
                 h('span', { className: 'overdue-fold-title' }, `${overdueCount} overdue`),
-                h('span', { className: 'overdue-fold-sub' }, overdueOpen ? 'Tap to fold them away' : 'Tap to see them and check off what you have paid')
+                h('span', { className: 'overdue-fold-sub' }, overdueOpen ? 'Tap to hide them' : 'Tap to see them and tick off what you\u2019ve paid')
               ),
               h('span', { className: 'overdue-fold-amt' }, fmtCurrency(overdue.reduce((sum, o) => sum + o.amount, 0), currency)),
               h('span', { className: `drop-chevron${overdueOpen ? ' open' : ''}` }, '\u203a')
@@ -195,8 +195,8 @@ function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }
         : renderList(bills),
 
     pushedOut.count > 0 ? h('p', { className: 'nextcheck-pushed' },
-      h(PushedMark, { title: 'Pushed forward' }),
-      `${pushedOut.count} pushed to ${formatDate(parseYmd(pushedOut.to), data.settings)} \u00b7 ${fmtCurrency(pushedOut.amount, currency)}`
+      h(PushedMark, { title: 'Moved to a later paycheck' }),
+      `${pushedOut.count} moved to your ${formatDate(parseYmd(pushedOut.to), data.settings)} paycheck \u00b7 ${fmtCurrency(pushedOut.amount, currency)}`
     ) : null
   );
 }
@@ -231,7 +231,6 @@ function HomePage({ data, setData, isMobile }) {
   }
 
   const netSoFar = fin.incomeReceived - fin.billsPaid;
-  const netProjected = fin.totalProjectedIncome - fin.totalBills;
   const leftToPay = Math.max(0, fin.totalBills - fin.billsPaid);
   const coveredPct = fin.totalBills > 0 ? Math.min(100, (fin.billsPaid / fin.totalBills) * 100) : 0;
 
@@ -243,16 +242,12 @@ function HomePage({ data, setData, isMobile }) {
     h('div', { className: `home-wash${netSoFar >= 0 ? '' : ' neg'}` },
       h(MonthHeader, { cursor, onChange: changeMonth }),
       h('div', { className: 'home-hero' },
-        h('p', { className: 'home-hero-label' }, 'Net so far'),
+        h('p', { className: 'home-hero-label' }, isCurrentMonth ? 'So far this month' : `${MONTH_NAMES[cursor.getMonth()]} so far`),
         h('p', {
           className: 'home-hero-value',
           style: { color: netSoFar >= 0 ? 'var(--text-success)' : 'var(--late-red)' }
         }, `${netSoFar >= 0 ? '+' : ''}${fmtCurrency(netSoFar, currency)}`),
-        h('p', { className: 'home-hero-proj' },
-          'Projected ',
-          h('b', { style: { color: netProjected >= 0 ? 'var(--text-success)' : 'var(--late-red)' } },
-            `${netProjected >= 0 ? '+' : ''}${fmtCurrency(netProjected, currency)}`)
-        )
+        h('p', { className: 'home-hero-sub' }, 'Money that came in, minus what you\u2019ve paid out')
       )
     ),
 
@@ -272,7 +267,7 @@ function HomePage({ data, setData, isMobile }) {
         h('span', { className: 'drop-head-text' },
           h('span', { className: 'drop-head-title' }, 'Bills this month'),
           h('span', { className: 'drop-head-sub' },
-            `${fmtCurrency(fin.billsPaid, currency)} covered \u00b7 ${fmtCurrency(leftToPay, currency)} left`)
+            `${fmtCurrency(fin.billsPaid, currency)} paid \u00b7 ${fmtCurrency(leftToPay, currency)} to go`)
         ),
         h('span', { className: 'drop-head-amt' }, fmtCurrency(fin.totalBills, currency)),
         h('span', { className: `drop-chevron${billsOpen ? ' open' : ''}` }, '\u203a')
@@ -377,13 +372,13 @@ function CashFlowChart({ points, currency, todayDay, colors }) {
   const series = [
     { key: incomeKey, label: 'In', color: colors.income },
     { key: billsKey, label: 'Out', color: colors.bills },
-    { key: netKey, label: 'Net', color: 'var(--accent)', signed: true }
+    { key: netKey, label: 'Left', color: 'var(--accent)', signed: true }
   ];
 
   return h('section', { className: 'stats-section' },
     h(SectionHead, {
       title: 'Cash flow',
-      caption: hovered ? `Day ${hovered.day}` : (view === 'cumulative' ? 'Running totals through the month' : 'What moves each day'),
+      caption: hovered ? `Day ${hovered.day}` : (view === 'cumulative' ? 'Totals so far on each day \u2014 drag across to see one' : 'What comes in and goes out each day'),
       right: h(ChipToggle, {
         value: view,
         onChange: (v) => { setView(v); setHoverIdx(null); },
@@ -574,8 +569,8 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
       next = setDeferred(next, occ.id, occ.occDate, pushTo);
     }
     next = logActivity(next, coverVal > 0
-      ? `Covered ${fmtCurrency(coverVal, currency)} of "${occ.name}"`
-      : `Cleared the covered amount on "${occ.name}"`);
+      ? `Paid ${fmtCurrency(coverVal, currency)} of "${occ.name}"`
+      : `Cleared the part payment on "${occ.name}"`);
     setData(next);
     setCoverOpen(false);
   }
@@ -585,8 +580,8 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
     const target = pushedTo ? null : pushTo;
     let next = setDeferred(data, occ.id, occ.occDate, target);
     next = logActivity(next, target
-      ? `Pushed "${occ.name}" to ${formatDate(parseYmd(target), data.settings)}`
-      : `Pulled "${occ.name}" back to this pay period`);
+      ? `Moved "${occ.name}" to the ${formatDate(parseYmd(target), data.settings)} paycheck`
+      : `Moved "${occ.name}" back to this paycheck`);
     setData(next);
   }
 
@@ -664,19 +659,19 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
     showCheckActions ? h('div', { className: 'action-list' },
       pushTo ? h(ActionRow, {
         active: !!pushedTo,
-        title: pushedTo ? `Pushed to ${formatDate(parseYmd(pushedTo), data.settings)}` : 'Push to next check',
+        title: pushedTo ? `Moved to your ${formatDate(parseYmd(pushedTo), data.settings)} paycheck` : 'Pay it from the next paycheck',
         sub: pushedTo
-          ? 'Tap to pull it back to this pay period'
-          : `Moves it to ${formatDate(parseYmd(pushTo), data.settings)} on Home \u2014 the calendar and totals stay put`,
+          ? 'Tap to move it back to this paycheck'
+          : `Moves it to your ${formatDate(parseYmd(pushTo), data.settings)} paycheck on Home \u2014 the due date on the calendar stays the same`,
         mark: pushedTo ? '\u2713' : '\u203a',
         onClick: togglePush
       }) : null,
       h(ActionRow, {
         active: covered > 0,
-        title: covered > 0 ? `Covering ${fmtCurrency(covered, currency)}` : 'Cover part of it',
+        title: covered > 0 ? `${fmtCurrency(covered, currency)} paid so far` : 'Pay part of it now',
         sub: covered > 0
           ? `${fmtCurrency(Math.max(0, fullAmount - covered), currency)} still owed`
-          : 'Put down what you can, carry the rest',
+          : 'Pay what you can now and the rest later',
         mark: h('span', { className: `drop-chevron${coverOpen ? ' open' : ''}` }, '\u203a'),
         onClick: () => { haptic('light'); setCoverOpen((v) => !v); }
       }),
@@ -708,10 +703,10 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
           disabled: coverVal <= 0 && covered <= 0
         },
           coverVal <= 0
-            ? 'Clear the covered amount'
+            ? 'Clear the part payment'
             : (pushTo && !pushedTo)
-              ? `Cover ${fmtCurrency(coverVal, currency)} \u00b7 push the rest`
-              : `Cover ${fmtCurrency(coverVal, currency)}`)
+              ? `Pay ${fmtCurrency(coverVal, currency)} \u00b7 rest from next paycheck`
+              : `Pay ${fmtCurrency(coverVal, currency)} now`)
       ) : null
     ) : null,
 
@@ -719,15 +714,15 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
       h(ActionRow, {
         active: paid,
         title: paid ? 'Paid' : 'Mark as paid',
-        sub: paid ? 'Tap to undo' : 'Check it off for this date',
+        sub: paid ? 'Tap to undo' : 'Marks this date as paid',
         mark: paid ? '\u2713' : '\u203a',
         onClick: togglePaid
       }),
       forced
         ? h(ActionRow, { active: true, tone: 'late', title: 'Marked late', sub: 'Tap to clear', mark: '\u2713', onClick: toggleLate })
         : late
-          ? h(ActionRow, { tone: 'late', title: 'Late', sub: 'Tap to dismiss the late flag', onClick: dismissLate })
-          : paid ? null : h(ActionRow, { title: 'Mark as late', sub: 'Flag this date', onClick: toggleLate })
+          ? h(ActionRow, { tone: 'late', title: 'Late', sub: 'Tap to clear the late flag', onClick: dismissLate })
+          : paid ? null : h(ActionRow, { title: 'Mark as late', sub: 'Flags this date as late', onClick: toggleLate })
     ),
 
     editable ? h('div', { className: 'action-list' },

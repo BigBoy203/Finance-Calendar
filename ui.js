@@ -182,3 +182,48 @@ function SectionHead({ title, caption, right }) {
     right || null
   );
 }
+
+function Pager({ pages, index, onIndex }) {
+  const ref = useRef(null);
+  const placed = useRef(false);
+  const settle = useRef(null);
+
+  useEffect(() => () => clearTimeout(settle.current), []);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const target = index * el.clientWidth;
+    if (!placed.current) {
+      placed.current = true;
+      el.scrollLeft = target;
+      return;
+    }
+    if (Math.abs(el.scrollLeft - target) > 2) el.scrollTo({ left: target, behavior: 'smooth' });
+  }, [index]);
+
+  function onScroll(e) {
+    const el = e.currentTarget;
+    clearTimeout(settle.current);
+    settle.current = setTimeout(() => {
+      const next = Math.round(el.scrollLeft / Math.max(1, el.clientWidth));
+      if (next !== index) onIndex(next);
+    }, 90);
+  }
+
+  return h('div', { className: 'pager-wrap' },
+    h('div', { className: 'pager-tabs' },
+      h(ChipToggle, {
+        wide: true,
+        value: index,
+        onChange: onIndex,
+        options: pages.map((p, i) => ({ id: i, label: p.label }))
+      })
+    ),
+    h('div', { className: 'pager', ref, onScroll },
+      pages.map((p) => h('div', { key: p.id, className: 'pager-page' },
+        h('div', { className: 'pager-page-inner' }, p.body)
+      ))
+    )
+  );
+}

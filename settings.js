@@ -91,9 +91,7 @@ function CustomAccentPicker({ hex, onChange }) {
 
 function SettingsPage({ data, setData, onRestart }) {
   const [tab, setTab] = useState('general');
-  const [confirming, setConfirming] = useState(false);
   const [editingIncome, setEditingIncome] = useState(null);
-  const [walletCheck, setWalletCheck] = useState(false);
   const currency = data.settings.currency;
 
   function updateSetting(field, value) {
@@ -130,13 +128,12 @@ function SettingsPage({ data, setData, onRestart }) {
   if (tab === 'general') {
     tabContent = h(GeneralTab, {
       data, currency, updateSetting,
-      onAddIncome: openAddIncome, onEditIncome: openEditIncome,
-      onWalletCheck: () => setWalletCheck(true)
+      onAddIncome: openAddIncome, onEditIncome: openEditIncome
     });
   } else if (tab === 'colors') {
     tabContent = h(ColorsTab, { data, updateSectionColor });
   } else {
-    tabContent = h(AdvancedTab, { data, setData, updateSetting, onRestart, confirming, setConfirming });
+    tabContent = h(AdvancedTab, { data, setData, updateSetting, onRestart });
   }
 
   return h('div', { className: 'page-stack' },
@@ -145,7 +142,6 @@ function SettingsPage({ data, setData, onRestart }) {
       h(ChipToggle, { wide: true, options: SETTINGS_TABS, value: tab, onChange: setTab })
     ),
     tabContent,
-    walletCheck ? h(WalletCheckSheet, { data, setData, onClose: () => setWalletCheck(false) }) : null,
 
     editingIncome ? h(EntryFormModal, {
       data,
@@ -163,7 +159,7 @@ function SettingsPage({ data, setData, onRestart }) {
   );
 }
 
-function WalletSettingsCard({ data, updateSetting, onWalletCheck }) {
+function WalletSettingsCard({ data, updateSetting }) {
   const on = walletOn(data);
   const summary = on ? walletSummary(data) : null;
   const currency = data.settings.currency;
@@ -171,38 +167,28 @@ function WalletSettingsCard({ data, updateSetting, onWalletCheck }) {
     h('p', { className: 'settings-card-title' }, 'Wallet'),
     h('p', { className: 'settings-card-sub' },
       summary
-        ? `${fmtCurrency(summary.balance, currency)} available \u00b7 last wallet check ${formatDate(parseYmd(summary.check.date), data.settings)}`
-        : 'A running balance of the money you actually have, kept honest by a quick check each month.'),
+        ? `${fmtCurrency(summary.balance, currency)} available \u00b7 balance last updated ${formatDate(parseYmd(summary.check.date), data.settings)}`
+        : 'Keeps a running total of the money you actually have. You tell it your balance on the Wallet tab and it keeps count from there.'),
     h('div', { className: 'switch-list' },
       h(SettingSwitch, {
         id: 'wallet-on',
         title: 'Track my wallet',
-        sub: 'Turns Spending into your Wallet \u2014 paychecks add to it, bills and purchases take from it',
+        sub: 'Adds a Wallet tab \u2014 paychecks add to your balance, bills and purchases take away from it',
         checked: on,
-        onChange: (v) => {
-          updateSetting('walletEnabled', v);
-          if (v && !lastWalletCheck(data)) onWalletCheck();
-        }
+        onChange: (v) => updateSetting('walletEnabled', v)
       }),
       on ? h(SettingSwitch, {
         id: 'wallet-monthly',
-        title: 'Monthly wallet check',
-        sub: 'Asks what you have the first time you open the app each month',
+        title: 'Ask for my balance each month',
+        sub: 'The Wallet tab asks the first time you open it in a new month',
         checked: data.settings.walletMonthlyCheck !== false,
         onChange: (v) => updateSetting('walletMonthlyCheck', v)
       }) : null
-    ),
-    on ? h('div', { className: 'action-list' },
-      h(ActionRow, {
-        title: 'Do a wallet check now',
-        sub: 'Tell the app what you have so the balance matches your bank',
-        onClick: onWalletCheck
-      })
-    ) : null
+    )
   );
 }
 
-function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, onWalletCheck }) {
+function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome }) {
   return h('div', { className: 'settings-stack' },
 
     h('div', { className: 'card' },
@@ -219,8 +205,8 @@ function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, 
                 sub: scheduleLabel(e, data),
                 note: avg
                   ? (avg.ready
-                      ? `\u2248${fmtCurrency(avg.amount, currency)} estimated \u00b7 average of your last ${avg.count} checks`
-                      : `Estimating \u2014 ${avg.count} of 2 checks recorded so far`)
+                      ? `About ${fmtCurrency(avg.amount, currency)} a paycheck \u00b7 the average of your last ${avg.count}`
+                      : `Averaging starts after 2 paychecks with a real amount \u2014 ${avg.count} so far`)
                   : null,
                 amount: `+${entryAmountLabel(e, currency)}`,
                 positive: true,
@@ -232,7 +218,7 @@ function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, 
       h('button', { className: 'add-row', onClick: onAddIncome }, '+ Add an income source')
     ),
 
-    h(WalletSettingsCard, { data, updateSetting, onWalletCheck }),
+    h(WalletSettingsCard, { data, updateSetting }),
 
     h('div', { className: 'card' },
       h('p', { className: 'settings-card-title' }, 'Appearance'),
@@ -310,7 +296,7 @@ function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, 
         )
       ),
       h('p', { className: 'setup-hint' },
-        'All in days. Late after: how long past due before a bill counts as late. Flag early: how far ahead a bill or paycheck with a price range shows up under Needs attention, so you can fill in the real amount.'),
+        'All in days. Late after: how long a bill can go past its due date before it shows as late. Flag early: how far ahead a bill or paycheck that has a price range asks you for the real amount.'),
       h('div', { className: 'switch-list' },
         h(SettingSwitch, {
           id: 'auto-deduct-cc',
@@ -489,12 +475,13 @@ function SyncModal({ data, setData, onClose }) {
   );
 }
 
-function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setConfirming }) {
+function AdvancedTab({ data, setData, updateSetting, onRestart }) {
   const [importWarning, setImportWarning] = useState(false);
   const [importError, setImportError] = useState(null);
   const [importSuccess, setImportSuccess] = useState(false);
   const [exportError, setExportError] = useState(null);
   const [exportSuccess, setExportSuccess] = useState(false);
+  const [spendReset, setSpendReset] = useState(0);
 
   async function handleExport() {
     setExportError(null);
@@ -543,11 +530,6 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
         value: data.settings.density,
         onChange: (v) => updateSetting('density', v)
       })
-    ),
-
-    h('div', { className: 'card' },
-      h('p', { className: 'settings-card-title' }, 'Sync'),
-      h(SyncCard, { data, setData })
     ),
 
     h('div', { className: 'card' },
@@ -613,17 +595,23 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
     ),
 
     h('div', { className: 'card' },
-      h('p', { className: 'settings-card-title' }, 'Reset all data'),
+      h('p', { className: 'settings-card-title' }, 'Start fresh'),
       h('p', { className: 'settings-card-sub' },
-        'Clears your income, bills, subscriptions, wallet and paid history, then takes you back through setup.'),
-      confirming
-        ? h('div', { className: 'button-row' },
-            h('button', { onClick: () => setConfirming(false) }, 'Cancel'),
-            h('button', { className: 'danger', onClick: onRestart }, 'Yes, reset everything')
-          )
-        : h('div', { className: 'button-row' },
-            h('button', { className: 'danger', onClick: () => setConfirming(true) }, 'Reset and run setup again')
-          )
+        'Resetting spending history deletes every purchase you\u2019ve logged and your past balance updates, so the Wallet starts over. Your bills, income, budgets and advances stay.'),
+      h(DeleteRow, {
+        key: spendReset,
+        label: 'Reset spending history',
+        sub: 'The Wallet will ask for your balance again',
+        armedLabel: 'Tap again to reset spending history',
+        onConfirm: () => { setData(resetSpendingHistory(data)); setSpendReset((n) => n + 1); }
+      }),
+      h(DeleteRow, {
+        label: 'Reset everything',
+        sub: 'Deletes all your data and runs setup again',
+        armedLabel: 'Tap again to delete everything',
+        onConfirm: onRestart
+      }),
+      spendReset ? h('p', { className: 'form-msg good' }, 'Spending history cleared. Open the Wallet tab to enter your balance.') : null
     ),
 
     h('div', { className: 'card about-card' },

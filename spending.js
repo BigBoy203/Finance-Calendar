@@ -137,7 +137,7 @@ function BudgetRow({ row, currency, daysLeft, onOpen }) {
   );
 }
 
-function SpendingPage({ data, setData, isMobile, onAddEntry }) {
+function SpendingPage({ data, setData, onAddEntry, pageIndex, setPageIndex }) {
   const currency = data.settings.currency;
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
@@ -147,9 +147,12 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const [priceModal, setPriceModal] = useState(null);
   const [showAllPurchases, setShowAllPurchases] = useState(false);
   const [catFilter, setCatFilter] = useState(null);
-  const [walletCheck, setWalletCheck] = useState(false);
-  const [walletDetails, setWalletDetails] = useState(false);
+  const [balanceSheet, setBalanceSheet] = useState(() => (balanceUpdateDue(data) ? 'prompt' : null));
   const [advanceEdit, setAdvanceEdit] = useState(null);
+
+  useEffect(() => {
+    if (balanceSheet === 'prompt') setPageIndex(0);
+  }, []);
 
   const fin = useMonthFinancials(data, cursor);
   const nextCheck = useNextCheck(data, 0);
@@ -170,13 +173,15 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const spent = purchases.reduce((sum, o) => sum + o.amount, 0);
   const recurringTotal = fin.billOccurrences.reduce((sum, o) => sum + o.amount, 0);
   const income = fin.totalProjectedIncome;
-  const leftForLife = income - recurringTotal - spent;
+  const advanceIn = fin.incomeOccurrences.filter((o) => o.sourceList === 'advances').reduce((sum, o) => sum + o.amount, 0);
+  const leftToSpend = income - recurringTotal - spent;
   const hasIncome = income > 0;
 
   const monthKey = ymd(cursor).slice(0, 7);
   const prevCursor = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1);
   const prevKey = ymd(prevCursor).slice(0, 7);
   const prevMonthName = MONTH_NAMES[prevCursor.getMonth()];
+  const monthName = MONTH_NAMES[cursor.getMonth()];
 
   const byCategory = useMemo(() => categoryTotals(data, monthKey), [data, monthKey]);
   const prevTotals = useMemo(() => categoryTotals(data, prevKey), [data, prevKey]);
@@ -196,32 +201,20 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
     })
     .sort((a, b) => b.amount - a.amount), [byCategory, prevTotals, spent]);
 
-  const budgetRows = useMemo(() => {
-    const keys = new Set([...Object.keys(budgets), ...Object.keys(byCategory)]);
-    return [...keys]
-      .map((category) => ({
-        category,
-        budget: Number(budgets[category]) || 0,
-        spent: byCategory[category] || 0
-      }))
-      .sort((a, b) => {
-        if (!!a.budget !== !!b.budget) return a.budget ? -1 : 1;
-        if (a.budget && b.budget) return (b.spent / b.budget) - (a.spent / a.budget);
-        return b.spent - a.spent;
-      });
-  }, [budgets, byCategory]);
-
-  const budgeted = budgetRows.filter((r) => r.budget > 0);
-  const unbudgeted = budgetRows.filter((r) => r.budget <= 0);
+  const budgeted = useMemo(() => Object.keys(budgets)
+    .map((category) => ({ category, budget: Number(budgets[category]) || 0, spent: byCategory[category] || 0 }))
+    .filter((r) => r.budget > 0)
+    .sort((a, b) => (b.spent / b.budget) - (a.spent / a.budget)), [budgets, byCategory]);
   const budgetTotal = budgeted.reduce((sum, r) => sum + r.budget, 0);
   const budgetSpent = budgeted.reduce((sum, r) => sum + r.spent, 0);
+  const unusedCategories = useMemo(() => ONE_TIME_PAYMENT_CATEGORIES
+    .filter((c) => !budgets[c])
+    .sort((a, b) => (byCategory[b] || 0) - (byCategory[a] || 0)), [budgets, byCategory]);
 
   const history = useMemo(() => spendingHistory(data, cursor), [data, cursor]);
   const lastMonthSpent = history.length > 1 ? history[history.length - 2].total : 0;
   const spendDelta = spent - lastMonthSpent;
   const suggestions = useMemo(() => (isCurrentMonth ? repeatBuys(data) : []), [data, isCurrentMonth]);
-
-  const unusedCategories = ONE_TIME_PAYMENT_CATEGORIES.filter((c) => !budgets[c]);
 
   function saveBudget(category, amount) {
     setData(logActivity(
@@ -243,62 +236,104 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
   }
 
+  const monthHeader = h(MonthHeader, { cursor, onChange: changeMonth });
   const logAdvance = () => { haptic('medium'); onAddEntry({ date: todayYmd(), type: 'advance' }); };
+  const advancesBlock = h(AdvancesSection, { data, onOpen: setAdvanceEdit, onAdd: logAdvance, showEmpty: hasWallet });
 
-  const walletBlock = hasWallet ? h(WalletCard, {
-    data,
-    summary,
-    nextCheck,
-    due: !!summary && summary.check.date.slice(0, 7) < todayYmd().slice(0, 7),
-    onCheck: () => { haptic('medium'); setWalletCheck(true); },
-    onAdvance: logAdvance,
-    onOpen: () => { haptic('light'); setWalletDetails(true); }
-  }) : null;
+  const balancePage = h(React.Fragment, null,
+    h(WalletCard, {
+      data,
+      summary,
+      nextCheck,
+      due: !!summary && data.settings.walletMonthlyCheck !== false && summary.check.date.slice(0, 7) < todayYmd().slice(0, 7),
+      onUpdate: () => { haptic('medium'); setBalanceSheet('manual'); }
+    }),
+    summary ? h(WalletActivity, { data, summary }) : null,
+    advancesBlock
+  );
 
-  const advancesBlock = h(AdvancesSection, {
-    data,
-    onOpen: setAdvanceEdit,
-    onAdd: hasWallet ? null : logAdvance
-  });
-
-  const monthLabel = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-
-  const pool = spent + Math.max(0, leftForLife);
+  const pool = spent + Math.max(0, leftToSpend);
   const spentPct = pool > 0 ? Math.min(100, (spent / pool) * 100) : 0;
   const monthPct = (daysElapsed / daysThisMonth) * 100;
   const pace = (isCurrentMonth && hasIncome && pool > 0)
     ? (spentPct <= monthPct
-        ? 'You’re pacing under your money for the month.'
-        : 'You’re spending faster than the month is passing.')
+        ? 'On track — you’re spending slower than the month is going by.'
+        : 'Heads up — you’re spending faster than the month is going by.')
     : null;
 
-  const hero = h('section', { className: `spend-hero${leftForLife < 0 ? ' short' : ''}` },
+  const hero = h('section', { className: `spend-hero${leftToSpend < 0 ? ' short' : ''}` },
     h('p', { className: 'spend-hero-label' },
-      hasIncome ? (isCurrentMonth ? 'Left for daily life' : 'Was left for daily life') : 'Spent this month'),
-    h('p', { className: 'spend-hero-value' },
-      fmtCurrency(hasIncome ? leftForLife : spent, currency)),
-    h('p', { className: 'spend-hero-sub' },
-      hasIncome
-        ? `${fmtCurrency(income, currency)} in · ${fmtCurrency(recurringTotal, currency)} of bills · ${fmtCurrency(spent, currency)} spent`
-        : `${purchases.length} ${purchases.length === 1 ? 'purchase' : 'purchases'} logged · add an income source to see what’s left`),
+      hasIncome ? (isCurrentMonth ? 'Left to spend this month' : `Left to spend in ${monthName}`) : `Spent in ${monthName}`),
+    h('p', { className: 'spend-hero-value' }, fmtCurrency(hasIncome ? leftToSpend : spent, currency)),
     hasIncome ? h('div', { className: 'spend-bar' },
       h('span', { className: 'spend-bar-fill', style: { width: `${spentPct}%` } }),
       isCurrentMonth ? h('span', { className: 'spend-bar-pace', style: { left: `${monthPct}%` } }) : null
     ) : null,
     (hasIncome && isCurrentMonth) ? h('p', { className: 'spend-hero-rate' },
-      leftForLife > 0
-        ? `${fmtCurrency(leftForLife / Math.max(1, daysLeft), currency)} a day for the ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'} left`
-        : 'This month is already spent — anything more comes out of savings'
+      leftToSpend > 0
+        ? `That’s about ${fmtCurrency(leftToSpend / Math.max(1, daysLeft), currency)} a day for the ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'} left.`
+        : 'This month’s money is used up — anything more comes out of savings.'
     ) : null,
-    pace ? h('p', { className: 'spend-hero-pace' }, pace) : null
+    pace ? h('p', { className: 'spend-hero-pace' }, pace) : null,
+    hasIncome ? null : h('p', { className: 'spend-hero-sub' }, 'Add an income source in Settings to see what’s left to spend.')
+  );
+
+  const heroMath = hasIncome ? h('section', { className: 'spend-section' },
+    h(SectionHead, { title: 'How this month adds up', caption: `Everything scheduled for ${monthName}` }),
+    h('div', { className: 'calc-list' },
+      h('div', { className: 'calc-row' },
+        h('span', null, advanceIn > 0 ? `Money coming in, including ${fmtCurrency(advanceIn, currency)} of advances` : 'Money coming in'),
+        h('span', { className: 'calc-amt good' }, signedMoney(income, currency))),
+      h('div', { className: 'calc-row' },
+        h('span', null, 'Bills and subscriptions'),
+        h('span', { className: 'calc-amt' }, signedMoney(-recurringTotal, currency))),
+      h('div', { className: 'calc-row' },
+        h('span', null, 'Already spent on purchases'),
+        h('span', { className: 'calc-amt' }, signedMoney(-spent, currency))),
+      h('div', { className: 'calc-row total' },
+        h('span', null, 'Left to spend'),
+        h('span', { className: 'calc-amt' }, fmtCurrency(leftToSpend, currency)))
+    )
+  ) : null;
+
+  const resetsOn = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+  const budgetSection = h('section', { className: 'spend-section' },
+    h(SectionHead, {
+      title: 'Budgets',
+      caption: budgeted.length > 0
+        ? `Monthly limits · reset ${formatDate(resetsOn, data.settings)}`
+        : 'A monthly limit per category',
+      right: budgeted.length > 0
+        ? h('span', { className: 'section-total' }, `${fmtCurrency(budgetSpent, currency)} of ${fmtCurrency(budgetTotal, currency)}`)
+        : null
+    }),
+    budgeted.length === 0
+      ? h('div', { className: 'info-banner' },
+          'Set a limit for the things you buy often — groceries, gas, eating out. Every purchase you log fills the bar, so you can see what’s left without doing the math.')
+      : h('div', { className: 'budget-list' },
+          budgeted.map((row) => h(BudgetRow, {
+            key: row.category, row, currency, daysLeft,
+            onOpen: (r) => setBudgetModal({ category: r.category, amount: r.budget })
+          }))
+        ),
+    unusedCategories.length > 0
+      ? h('button', { className: 'add-row', onClick: () => setBudgetModal({}) },
+          budgeted.length === 0 ? '+ Set your first budget' : '+ Add a budget')
+      : null
+  );
+
+  const budgetPage = h(React.Fragment, null,
+    monthHeader,
+    hero,
+    heroMath,
+    budgetSection,
+    hasWallet ? null : advancesBlock
   );
 
   const dueAgain = suggestions.filter((s) => s.gap > 0 && s.daysSince >= s.gap)[0];
-
-  const quickLog = h('div', { className: 'spend-quick' },
+  const buyAgain = suggestions.length === 0 ? null : h('section', { className: 'spend-section' },
+    h(SectionHead, { title: 'Buy again', caption: 'Things you buy often — tap one to log it' }),
     h('div', { className: 'chip-row' },
-      h('button', { className: 'setup-chip custom', onClick: () => { haptic('medium'); onAddEntry({ date: todayYmd() }); } },
-        h('span', { className: 'setup-chip-plus' }, '+'), 'Log a purchase'),
       suggestions.map((s) =>
         h('button', {
           key: s.name,
@@ -311,48 +346,7 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
       )
     ),
     dueAgain ? h('p', { className: 'spend-note' },
-      `You buy ${dueAgain.name} about every ${dueAgain.gap} ${dueAgain.gap === 1 ? 'day' : 'days'} — it has been ${dueAgain.daysSince}.`) : null
-  );
-
-  const resetsOn = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
-  const budgetSection = h('section', { className: 'spend-section' },
-    h(SectionHead, {
-      title: 'Monthly budgets',
-      caption: budgeted.length > 0
-        ? `${monthLabel} · starts over ${formatDate(resetsOn, data.settings)}`
-        : 'One amount per category, for a whole month',
-      right: budgeted.length > 0
-        ? h('span', { className: 'section-total' }, `${fmtCurrency(budgetSpent, currency)} of ${fmtCurrency(budgetTotal, currency)}`)
-        : null
-    }),
-    budgeted.length === 0
-      ? h('div', { className: 'info-banner' },
-          'Set a budget for the things you buy often — groceries, gas, eating out. Every purchase you log fills the bar, so you can see what is left without doing the math.')
-      : h('div', { className: 'budget-list' },
-          budgeted.map((row) => h(BudgetRow, {
-            key: row.category, row, currency, daysLeft,
-            onOpen: (r) => setBudgetModal({ category: r.category, amount: r.budget })
-          }))
-        ),
-    unbudgeted.length > 0
-      ? h('div', { className: 'spend-unbudgeted' },
-          h('p', { className: 'spend-unbudgeted-head' }, 'No budget yet'),
-          h('div', { className: 'entry-list' },
-            unbudgeted.map((row) => h(EntryRow, {
-              key: row.category,
-              name: row.category,
-              sub: 'Tap to give it a monthly limit',
-              amount: fmtCurrency(row.spent, currency),
-              color: categoryColor(row.category),
-              onClick: () => setBudgetModal({ category: row.category, amount: 0 })
-            }))
-          )
-        )
-      : null,
-    unusedCategories.length > 0
-      ? h('button', { className: 'add-row', onClick: () => setBudgetModal({}) },
-          budgeted.length === 0 ? '+ Set your first budget' : '+ Add another budget')
-      : null
+      `You buy ${dueAgain.name} about every ${dueAgain.gap} ${dueAgain.gap === 1 ? 'day' : 'days'} — it’s been ${dueAgain.daysSince}.`) : null
   );
 
   function deltaNote(row) {
@@ -369,10 +363,8 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
     h(SectionHead, {
       title: 'Where it went',
       caption: catFilter
-        ? `Showing ${catFilter} below · tap it again to clear`
-        : hasPrev
-          ? `${breakdown.length} ${breakdown.length === 1 ? 'category' : 'categories'} · compared with ${prevMonthName}`
-          : `${breakdown.length} ${breakdown.length === 1 ? 'category' : 'categories'} this month`,
+        ? `Showing only ${catFilter} below · tap it again to show everything`
+        : 'Tap a category to see just those purchases',
       right: h('span', { className: 'section-total' }, fmtCurrency(spent, currency))
     }),
     h('div', { className: 'cat-list' },
@@ -402,7 +394,7 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
             })
           ),
           h('span', { className: 'cat-meta' },
-            `${row.pct}% of spending`,
+            `${row.pct}% of your spending`,
             note ? h('span', { className: `cat-delta ${note.dir}` }, note.text) : null
           )
         );
@@ -416,13 +408,13 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
   const purchaseSection = h('section', { className: 'spend-section' },
     h(SectionHead, {
       title: 'Purchases',
-      caption: catFilter ? `${catFilter} only` : null,
-      right: h('span', { className: 'section-total' }, fmtCurrency(filteredTotal, currency))
+      caption: catFilter ? `${catFilter} only` : `Everything you logged in ${monthName}`,
+      right: purchases.length > 0 ? h('span', { className: 'section-total' }, fmtCurrency(filteredTotal, currency)) : null
     }),
     purchases.length === 0
       ? h('p', { className: 'empty-state' },
           isCurrentMonth
-            ? 'Nothing logged yet this month. Log a coffee, a tank of gas, a grocery run — anything you spend outside your bills.'
+            ? 'Nothing logged yet this month. Tap + to log a coffee, a tank of gas, a grocery run — anything you spend outside your bills.'
             : 'Nothing was logged this month.')
       : h('div', { className: 'entry-list' },
           visiblePurchases.map((o) => h(EntryRow, {
@@ -442,45 +434,71 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
       : null
   );
 
+  const spendingPage = h(React.Fragment, null,
+    monthHeader,
+    isCurrentMonth ? buyAgain : null,
+    breakdownSection,
+    purchaseSection
+  );
+
   const historyMax = Math.max(...history.map((b) => b.total), 1);
   const hasHistory = history.some((b) => b.total > 0);
-  const trendSection = !hasHistory ? null : h('section', { className: 'spend-section' },
-    h(SectionHead, {
-      title: 'Day-to-day spending by month',
-      caption: `Totals for the last ${SPEND_HISTORY_MONTHS} months`
-    }),
-    h('div', { className: 'spend-bars' },
-      history.map((b, i) => h('div', { key: b.key, className: `spend-bar-col${i === history.length - 1 ? ' current' : ''}` },
-        h('span', { className: 'spend-bar-value' }, b.total > 0 ? fmtCompact(b.total, currency) : ''),
-        h('span', { className: 'spend-bar-track' },
-          h('span', { className: 'spend-bar-col-fill', style: { height: `${(b.total / historyMax) * 100}%` } })
-        ),
-        h('span', { className: 'spend-bar-label' }, b.label)
-      ))
+  const trendsPage = h(React.Fragment, null,
+    monthHeader,
+    h('section', { className: 'spend-section' },
+      h(SectionHead, {
+        title: 'Spending by month',
+        caption: `Purchases you logged, over the ${SPEND_HISTORY_MONTHS} months up to ${monthName}`
+      }),
+      hasHistory
+        ? h('div', { className: 'spend-bars' },
+            history.map((b, i) => h('div', { key: b.key, className: `spend-bar-col${i === history.length - 1 ? ' current' : ''}` },
+              h('span', { className: 'spend-bar-value' }, b.total > 0 ? fmtCompact(b.total, currency) : ''),
+              h('span', { className: 'spend-bar-track' },
+                h('span', { className: 'spend-bar-col-fill', style: { height: `${(b.total / historyMax) * 100}%` } })
+              ),
+              h('span', { className: 'spend-bar-label' }, b.label)
+            ))
+          )
+        : h('p', { className: 'empty-state' }, 'Once you’ve logged a few purchases, this shows how each month compares.')
     ),
-    h('div', { className: 'spend-stats' },
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'Per day'),
-        h('span', { className: 'spend-stat-value' }, fmtCurrency(spent / Math.max(1, daysElapsed), currency))
-      ),
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'vs last month'),
-        h('span', { className: `spend-stat-value ${spendDelta > 0 ? 'bad' : 'good'}` },
-          `${spendDelta >= 0 ? '+' : '−'}${fmtCurrency(Math.abs(spendDelta), currency)}`)
-      ),
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'Avg purchase'),
-        h('span', { className: 'spend-stat-value' },
-          fmtCurrency(spent / Math.max(1, purchases.length), currency))
-      ),
-      h('div', { className: 'spend-stat' },
-        h('span', { className: 'spend-stat-label' }, 'Purchases'),
-        h('span', { className: 'spend-stat-value' }, purchases.length)
+    h('section', { className: 'spend-section' },
+      h(SectionHead, { title: `${monthName} in numbers` }),
+      h('div', { className: 'spend-stats' },
+        h('div', { className: 'spend-stat' },
+          h('span', { className: 'spend-stat-label' }, 'Per day'),
+          h('span', { className: 'spend-stat-value' }, fmtCurrency(spent / Math.max(1, daysElapsed), currency)),
+          h('span', { className: 'spend-stat-sub' }, 'on purchases')
+        ),
+        h('div', { className: 'spend-stat' },
+          h('span', { className: 'spend-stat-label' }, `vs ${prevMonthName}`),
+          h('span', { className: `spend-stat-value ${spendDelta > 0 ? 'bad' : 'good'}` },
+            `${spendDelta >= 0 ? '+' : '−'}${fmtCurrency(Math.abs(spendDelta), currency)}`),
+          h('span', { className: 'spend-stat-sub' }, spendDelta > 0 ? 'more spent' : 'less spent')
+        ),
+        h('div', { className: 'spend-stat' },
+          h('span', { className: 'spend-stat-label' }, 'Typical purchase'),
+          h('span', { className: 'spend-stat-value' }, fmtCurrency(spent / Math.max(1, purchases.length), currency)),
+          h('span', { className: 'spend-stat-sub' }, 'average')
+        ),
+        h('div', { className: 'spend-stat' },
+          h('span', { className: 'spend-stat-label' }, 'Purchases'),
+          h('span', { className: 'spend-stat-value' }, purchases.length),
+          h('span', { className: 'spend-stat-sub' }, 'logged')
+        )
       )
     )
   );
 
-  const modals = h(React.Fragment, null,
+  const pages = [
+    hasWallet ? { id: 'balance', label: 'Balance', body: balancePage } : null,
+    { id: 'budget', label: 'Budget', body: budgetPage },
+    { id: 'spending', label: 'Spending', body: spendingPage },
+    { id: 'trends', label: 'Trends', body: trendsPage }
+  ].filter(Boolean);
+
+  return h('div', { className: 'spend-page' },
+    h(Pager, { pages, index: Math.min(pageIndex, pages.length - 1), onIndex: setPageIndex }),
     budgetModal ? h(BudgetModal, {
       categories: budgetModal.category ? [budgetModal.category] : unusedCategories,
       budget: budgetModal,
@@ -493,45 +511,12 @@ function SpendingPage({ data, setData, isMobile, onAddEntry }) {
       data, setData, occ: priceModal, currency,
       onClose: () => setPriceModal(null)
     }) : null,
-    walletCheck ? h(WalletCheckSheet, { data, setData, onClose: () => setWalletCheck(false) }) : null,
-    (walletDetails && summary) ? h(WalletSheet, {
+    balanceSheet ? h(BalanceSheet, {
       data,
-      summary,
-      onClose: () => setWalletDetails(false),
-      onCheck: () => { setWalletDetails(false); setWalletCheck(true); }
+      setData,
+      prompted: balanceSheet === 'prompt',
+      onClose: () => setBalanceSheet(null)
     }) : null,
     advanceEdit ? h(AdvanceSheet, { data, setData, advance: advanceEdit, onClose: () => setAdvanceEdit(null) }) : null
-  );
-
-  const monthHeader = h(MonthHeader, { cursor, onChange: changeMonth });
-
-  if (isMobile) {
-    return h('div', { className: 'spend-page' },
-      walletBlock,
-      advancesBlock,
-      monthHeader,
-      hero,
-      isCurrentMonth ? quickLog : null,
-      budgetSection,
-      breakdownSection,
-      purchaseSection,
-      trendSection,
-      modals
-    );
-  }
-
-  return h('div', { className: 'spend-page' },
-    monthHeader,
-    h('div', { className: 'spend-desktop' },
-      h('div', null,
-        walletBlock,
-        advancesBlock,
-        hero,
-        isCurrentMonth ? quickLog : null,
-        budgetSection
-      ),
-      h('div', null, breakdownSection, purchaseSection, trendSection)
-    ),
-    modals
   );
 }

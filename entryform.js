@@ -186,10 +186,10 @@ function EntryFormModal({ data, title, entry, categories, dateLabel, showFreq, i
       }),
       canEstimate ? h(SettingSwitch, {
         id: 'ef-avg',
-        title: 'Estimate checks from past ones',
+        title: 'Estimate paychecks from past ones',
         sub: avg.ready
-          ? `Your last ${avg.count} recorded checks average ${fmtCurrency(avg.amount, currency)} — upcoming dates use that`
-          : `Needs two checks with a recorded amount — you have ${avg.count}. Until then the middle of the range is used.`,
+          ? `Your last ${avg.count} paychecks averaged ${fmtCurrency(avg.amount, currency)} — upcoming paychecks use that`
+          : `Needs 2 paychecks with a real amount entered — you have ${avg.count}. Until then it uses the middle of your range.`,
         checked: !!form.useAvgEstimate,
         onChange: (v) => update('useAvgEstimate', v)
       }) : null,

@@ -1,5 +1,5 @@
 
-const WALLET_CHECK_HISTORY = 24;
+const BALANCE_HISTORY = 24;
 
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
@@ -108,7 +108,7 @@ function advanceStatus(data, a) {
   };
 }
 
-function lastWalletCheck(data) {
+function lastBalance(data) {
   const checks = (data.wallet && data.wallet.checks) || [];
   return checks[0] || null;
 }
@@ -185,7 +185,7 @@ function walletMoves(data, check) {
 }
 
 function walletSummary(data) {
-  const check = lastWalletCheck(data);
+  const check = lastBalance(data);
   if (!check) return null;
   const moves = walletMoves(data, check);
   const moneyIn = moves.filter((m) => m.amount > 0).reduce((sum, m) => sum + m.amount, 0);
@@ -197,15 +197,15 @@ function walletOn(data) {
   return data.settings.walletEnabled !== false;
 }
 
-function walletCheckDue(data) {
+function balanceUpdateDue(data) {
   if (!walletOn(data) || data.settings.walletMonthlyCheck === false) return false;
   const todayStr = todayYmd();
   if (data.wallet && data.wallet.snoozed === todayStr) return false;
-  const last = lastWalletCheck(data);
+  const last = lastBalance(data);
   return !last || last.date.slice(0, 7) < todayStr.slice(0, 7);
 }
 
-function recordWalletCheck(data, amount) {
+function recordBalance(data, amount) {
   const summary = walletSummary(data);
   const check = {
     id: uid(),
@@ -214,15 +214,38 @@ function recordWalletCheck(data, amount) {
     amount: round2(amount),
     expected: summary ? summary.balance : null
   };
-  const checks = [check, ...((data.wallet && data.wallet.checks) || [])].slice(0, WALLET_CHECK_HISTORY);
+  const checks = [check, ...((data.wallet && data.wallet.checks) || [])].slice(0, BALANCE_HISTORY);
   return logActivity(
     { ...data, wallet: { ...(data.wallet || {}), checks, snoozed: null } },
-    `Wallet check: ${fmtCurrency(check.amount, data.settings.currency)}`
+    `Updated balance to ${fmtCurrency(check.amount, data.settings.currency)}`
   );
 }
 
-function snoozeWalletCheck(data) {
+function snoozeBalancePrompt(data) {
   return { ...data, wallet: { ...(data.wallet || { checks: [] }), snoozed: todayYmd() } };
+}
+
+function resetSpendingHistory(data) {
+  const gone = new Set(purchaseEntries(data).map((e) => `${e.id}|${e.date}`));
+  const keep = (map) => {
+    const out = {};
+    Object.keys(map || {}).forEach((k) => { if (!gone.has(k)) out[k] = map[k]; });
+    return out;
+  };
+  return logActivity({
+    ...data,
+    oneTimeEntries: data.oneTimeEntries.filter((e) => e.oneTimeKind !== 'payment'),
+    paidHistory: keep(data.paidHistory),
+    paidAt: keep(data.paidAt),
+    overrides: keep(data.overrides),
+    forcedLate: keep(data.forcedLate),
+    dismissedLate: keep(data.dismissedLate),
+    deferred: keep(data.deferred),
+    covered: keep(data.covered),
+    coverLog: keep(data.coverLog),
+    removedOccurrences: keep(data.removedOccurrences),
+    wallet: { checks: [], snoozed: null }
+  }, 'Reset spending history');
 }
 
 function signedMoney(n, currency) {
@@ -230,37 +253,37 @@ function signedMoney(n, currency) {
   return `${n > 0 ? '+' : '−'}${fmtCurrency(Math.abs(n), currency)}`;
 }
 
-function checkDiffText(diff, currency) {
-  if (Math.abs(diff) < 0.005) return { text: 'Right on what the app expected', tone: 'good' };
+function balanceDiffText(diff, currency) {
+  if (Math.abs(diff) < 0.005) return { text: 'Exactly what the app thought', tone: 'good' };
   return diff > 0
-    ? { text: `${fmtCurrency(diff, currency)} more than the app tracked`, tone: 'good' }
-    : { text: `${fmtCurrency(-diff, currency)} less than the app tracked — something may not be logged`, tone: 'bad' };
+    ? { text: `${fmtCurrency(diff, currency)} more than the app thought`, tone: 'good' }
+    : { text: `${fmtCurrency(-diff, currency)} less than the app thought — something may not be logged yet`, tone: 'bad' };
 }
 
-function WalletCheckSheet({ data, setData, prompted, onClose }) {
+function BalanceSheet({ data, setData, prompted, onClose }) {
   const currency = data.settings.currency;
   const summary = useMemo(() => walletSummary(data), [data]);
   const [amount, setAmount] = useState('');
   const value = parseFloat(amount);
   const canSave = amount !== '' && !isNaN(value);
   const diff = (summary && canSave) ? round2(value - summary.balance) : null;
-  const note = diff === null ? null : checkDiffText(diff, currency);
+  const note = diff === null ? null : balanceDiffText(diff, currency);
 
   function save() {
     if (!canSave) return;
     haptic('success');
-    setData(recordWalletCheck(data, value));
+    setData(recordBalance(data, value));
     onClose();
   }
 
   function later() {
     haptic('light');
-    setData(snoozeWalletCheck(data));
+    setData(snoozeBalancePrompt(data));
     onClose();
   }
 
   return h(Sheet, {
-    title: prompted ? 'Monthly wallet check' : 'Wallet check',
+    title: !summary ? 'What’s your balance?' : prompted ? 'New month — update your balance' : 'Update your balance',
     sub: formatDate(new Date(), data.settings, { weekday: true }),
     onClose: prompted ? later : onClose,
     foot: h('div', { className: 'sheet-actions' },
@@ -270,140 +293,132 @@ function WalletCheckSheet({ data, setData, prompted, onClose }) {
     )
   },
     h('p', { className: 'sheet-lead' },
-      'How much money do you have right now? Add up your checking account and any cash — whatever you could spend today.'),
+      'How much money do you have right now? Add up your bank account and any cash. Include any paycheck that has already landed.'),
     h(AmountField, { value: amount, onChange: setAmount, currency, autoFocus: true }),
     summary ? h('div', { className: 'calc-list' },
       h('div', { className: 'calc-row' },
-        h('span', null, 'The app expects'),
+        h('span', null, 'The app thinks you have'),
         h('span', { className: 'calc-amt' }, fmtCurrency(summary.balance, currency))
       ),
       note ? h('div', { className: `calc-row note ${note.tone}` }, h('span', null, note.text)) : null
     ) : null,
-    prompted
-      ? h('p', { className: 'setup-hint' },
-          summary
-            ? 'It’s a new month, so the app is checking its math against your real balance. Monthly checks can be turned off in Settings.'
-            : 'The app keeps a running balance from here — paychecks add to it, bills and purchases take from it. Monthly checks can be turned off in Settings.')
-      : null
+    h('p', { className: 'setup-hint' },
+      summary
+        ? (prompted
+            ? 'A new month started, so the app is checking its math against your real balance. You can turn this off in Settings.'
+            : 'Whatever you enter becomes your new starting point.')
+        : 'After this, paychecks add to your balance and bills and purchases come out of it. You can turn this off in Settings.')
   );
 }
 
-function WalletMoveRow({ m, data, onOpen }) {
+function WalletCard({ data, summary, nextCheck, due, onUpdate }) {
   const currency = data.settings.currency;
-  return h(EntryRow, {
-    name: m.name,
-    sub: `${m.kind} · ${formatDate(parseYmd(m.date), data.settings)}`,
-    amount: signedMoney(m.amount, currency),
-    positive: m.amount > 0,
-    color: m.amount > 0 ? 'var(--text-success)' : 'var(--border-secondary)',
-    onClick: onOpen ? () => onOpen(m) : undefined
-  });
+  if (!summary) {
+    return h('section', { className: 'wallet-card' },
+      h('p', { className: 'wallet-label' }, 'Wallet'),
+      h('p', { className: 'wallet-empty-title' }, 'How much money do you have?'),
+      h('p', { className: 'wallet-sub' },
+        'Enter your balance once. After that, paychecks add to it and bills and purchases come out of it.'),
+      h('div', { className: 'wallet-actions' },
+        h('button', { className: 'wallet-btn solid', onClick: onUpdate }, 'Enter my balance'))
+    );
+  }
+
+  const balance = summary.balance;
+  const billsDue = nextCheck ? nextCheck.due : 0;
+  const afterBills = balance - billsDue;
+  const payday = nextCheck && nextCheck.check
+    ? `your ${formatDate(parseYmd(nextCheck.check.occDate), data.settings)} paycheck`
+    : 'your next paycheck';
+
+  return h('section', { className: `wallet-card${balance < 0 ? ' short' : ''}` },
+    h('div', { className: 'wallet-top' },
+      h('p', { className: 'wallet-label' }, 'Available now'),
+      due ? h('span', { className: 'wallet-pill' }, 'Update due') : null
+    ),
+    h('p', { className: 'wallet-balance' }, fmtCurrency(balance, currency)),
+    h('p', { className: 'wallet-sub' }, 'The money in your account right now, as far as the app knows'),
+    billsDue > 0 ? h('p', { className: `wallet-safe${afterBills < 0 ? ' short' : ''}` },
+      afterBills >= 0
+        ? `After the ${fmtCurrency(billsDue, currency)} of bills due before ${payday}, you’ll have ${fmtCurrency(afterBills, currency)} left.`
+        : `You’re ${fmtCurrency(-afterBills, currency)} short of the ${fmtCurrency(billsDue, currency)} of bills due before ${payday}.`) : null,
+    h('div', { className: 'wallet-actions' },
+      h('button', { className: `wallet-btn${due ? ' solid' : ''}`, onClick: onUpdate }, 'Update balance')
+    )
+  );
 }
 
-function WalletSheet({ data, summary, onClose, onCheck }) {
+const ACTIVITY_PREVIEW = 8;
+
+function WalletActivity({ data, summary }) {
   const currency = data.settings.currency;
-  const checks = ((data.wallet && data.wallet.checks) || []);
+  const [showAll, setShowAll] = useState(false);
   const { check, moves, moneyIn, moneyOut, balance } = summary;
   const checkDate = formatDate(parseYmd(check.date), data.settings);
+  const checks = (data.wallet && data.wallet.checks) || [];
+  const visible = showAll ? moves : moves.slice(0, ACTIVITY_PREVIEW);
 
-  return h(Sheet, {
-    title: 'Wallet',
-    sub: `Since your wallet check on ${checkDate}`,
-    tall: true,
-    onClose,
-    foot: h('div', { className: 'sheet-actions' },
-      h('button', { className: 'primary', onClick: onCheck }, 'Do a wallet check'))
-  },
-    h('div', { className: 'calc-list' },
-      h('div', { className: 'calc-row' },
-        h('span', null, `Wallet check · ${checkDate}`),
-        h('span', { className: 'calc-amt' }, fmtCurrency(check.amount, currency))),
-      h('div', { className: 'calc-row' },
-        h('span', null, 'Money in'),
-        h('span', { className: 'calc-amt good' }, signedMoney(moneyIn, currency))),
-      h('div', { className: 'calc-row' },
-        h('span', null, 'Money out'),
-        h('span', { className: 'calc-amt' }, signedMoney(-moneyOut, currency))),
-      h('div', { className: 'calc-row total' },
-        h('span', null, 'Available now'),
-        h('span', { className: 'calc-amt' }, fmtCurrency(balance, currency)))
+  return h(React.Fragment, null,
+    h('section', { className: 'spend-section' },
+      h(SectionHead, { title: 'How your balance adds up' }),
+      h('div', { className: 'calc-list' },
+        h('div', { className: 'calc-row' },
+          h('span', null, `Your balance on ${checkDate}`),
+          h('span', { className: 'calc-amt' }, fmtCurrency(check.amount, currency))),
+        h('div', { className: 'calc-row' },
+          h('span', null, 'Money in since then'),
+          h('span', { className: 'calc-amt good' }, signedMoney(moneyIn, currency))),
+        h('div', { className: 'calc-row' },
+          h('span', null, 'Money out since then'),
+          h('span', { className: 'calc-amt' }, signedMoney(-moneyOut, currency))),
+        h('div', { className: 'calc-row total' },
+          h('span', null, 'Available now'),
+          h('span', { className: 'calc-amt' }, fmtCurrency(balance, currency)))
+      )
     ),
-    h('div', { className: 'sheet-section' },
+    h('section', { className: 'spend-section' },
       h(SectionHead, {
         title: 'What changed',
-        caption: moves.length === 0 ? 'Nothing has moved since then' : `${moves.length} ${moves.length === 1 ? 'change' : 'changes'}, newest first`
+        caption: moves.length === 0 ? `Nothing has moved since ${checkDate}` : `Since ${checkDate}, newest first`
       }),
       moves.length === 0
         ? h('p', { className: 'empty-state' }, 'Paychecks, bills you mark paid and purchases you log will show up here.')
         : h('div', { className: 'entry-list' },
-            moves.map((m) => h(WalletMoveRow, { key: m.key, m, data })))
+            visible.map((m) => h(EntryRow, {
+              key: m.key,
+              name: m.name,
+              sub: `${m.kind} · ${formatDate(parseYmd(m.date), data.settings)}`,
+              amount: signedMoney(m.amount, currency),
+              positive: m.amount > 0,
+              color: m.amount > 0 ? 'var(--text-success)' : 'var(--border-secondary)'
+            }))
+          ),
+      moves.length > ACTIVITY_PREVIEW
+        ? h('button', { className: 'att-more', onClick: () => setShowAll(!showAll) },
+            showAll ? 'Show less' : `Show all ${moves.length}`)
+        : null
     ),
-    checks.length > 1 ? h('div', { className: 'sheet-section' },
-      h(SectionHead, { title: 'Past wallet checks', caption: 'What you had, and how close the app was' }),
+    checks.length > 1 ? h('section', { className: 'spend-section' },
+      h(SectionHead, { title: 'Past balance updates', caption: 'What you had, and how close the app was' }),
       h('div', { className: 'entry-list' },
         checks.map((c) => {
           const diff = c.expected === null || c.expected === undefined ? null : round2(c.amount - c.expected);
-          return h('div', { key: c.id, className: 'entry-row static' },
-            h('span', { className: 'entry-row-text' },
-              h('span', { className: 'entry-row-name' }, formatDate(parseYmd(c.date), data.settings, { year: true })),
-              h('span', { className: 'entry-row-sub' },
-                diff === null ? 'First check' : Math.abs(diff) < 0.005 ? 'Matched exactly' : `${signedMoney(diff, currency)} vs what the app tracked`)
-            ),
-            h('span', { className: 'entry-row-amt' }, fmtCurrency(c.amount, currency))
-          );
+          return h(EntryRow, {
+            key: c.id,
+            name: formatDate(parseYmd(c.date), data.settings, { year: true }),
+            sub: diff === null
+              ? 'Your first balance'
+              : Math.abs(diff) < 0.005 ? 'Matched the app exactly' : `${fmtCurrency(Math.abs(diff), currency)} ${diff > 0 ? 'more' : 'less'} than expected`,
+            amount: fmtCurrency(c.amount, currency),
+            color: diff === null || Math.abs(diff) < 1 ? 'var(--text-success)' : diff > 0 ? 'var(--accent)' : 'var(--text-warning)'
+          });
         })
       )
     ) : null
   );
 }
 
-function WalletCard({ data, summary, nextCheck, due, onCheck, onAdvance, onOpen }) {
-  const currency = data.settings.currency;
-  if (!summary) {
-    return h('section', { className: 'wallet-card empty' },
-      h('p', { className: 'wallet-label' }, 'Wallet'),
-      h('p', { className: 'wallet-empty-title' }, 'How much do you have right now?'),
-      h('p', { className: 'wallet-sub' },
-        'Do a wallet check and the app keeps a running balance — paychecks add to it, bills and purchases take from it.'),
-      h('div', { className: 'wallet-actions one' },
-        h('button', { className: 'wallet-btn solid', onClick: onCheck }, 'Do your first wallet check'))
-    );
-  }
-
-  const { check, moves, moneyIn, moneyOut, balance } = summary;
-  const checkDate = formatDate(parseYmd(check.date), data.settings);
-  const billsDue = nextCheck ? nextCheck.due : 0;
-  const afterBills = balance - billsDue;
-  const checkLabel = nextCheck && nextCheck.check
-    ? `your ${formatDate(parseYmd(nextCheck.check.occDate), data.settings)} check`
-    : 'your next check';
-
-  return h('section', { className: `wallet-card${balance < 0 ? ' short' : ''}` },
-    h('div', { className: 'wallet-top' },
-      h('p', { className: 'wallet-label' }, 'Available now'),
-      due ? h('span', { className: 'wallet-pill' }, 'New month · check in') : null
-    ),
-    h('p', { className: 'wallet-balance' }, fmtCurrency(balance, currency)),
-    h('p', { className: 'wallet-sub' },
-      moves.length === 0
-        ? `Wallet check on ${checkDate} · nothing has moved since`
-        : `${signedMoney(moneyIn, currency)} in · ${signedMoney(-moneyOut, currency)} out since ${checkDate}`),
-    billsDue > 0 ? h('p', { className: `wallet-safe${afterBills < 0 ? ' short' : ''}` },
-      afterBills >= 0
-        ? `${fmtCurrency(afterBills, currency)} left after the ${fmtCurrency(billsDue, currency)} due before ${checkLabel}`
-        : `${fmtCurrency(-afterBills, currency)} short of the ${fmtCurrency(billsDue, currency)} due before ${checkLabel}`) : null,
-    h('div', { className: 'wallet-actions' },
-      h('button', { className: `wallet-btn${due ? ' solid' : ''}`, onClick: onCheck }, 'Wallet check'),
-      h('button', { className: 'wallet-btn', onClick: onAdvance }, 'Log an advance')
-    ),
-    h('button', { className: 'wallet-foot', onClick: onOpen },
-      h('span', null, moves.length === 0 ? 'Wallet details' : `${moves.length} ${moves.length === 1 ? 'change' : 'changes'} since ${checkDate}`),
-      h('span', { className: 'wallet-foot-chevron' }, '›')
-    )
-  );
-}
-
-function AdvancesSection({ data, onOpen, onAdd }) {
+function AdvancesSection({ data, onOpen, onAdd, showEmpty }) {
   const currency = data.settings.currency;
   const [showPaid, setShowPaid] = useState(false);
   const rows = useMemo(() => (data.advances || [])
@@ -411,7 +426,7 @@ function AdvancesSection({ data, onOpen, onAdd }) {
     .sort((x, y) => (x.s.repayDate || '').localeCompare(y.s.repayDate || '')), [data]);
   const open = rows.filter((r) => !r.s.paidBack);
   const paid = rows.filter((r) => r.s.paidBack).reverse();
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && !showEmpty) return null;
   const owed = open.reduce((sum, r) => sum + r.s.total, 0);
 
   const row = ({ a, s }) => h(EntryRow, {
@@ -422,7 +437,7 @@ function AdvancesSection({ data, onOpen, onAdd }) {
       : s.late
         ? `Was due ${formatDate(parseYmd(s.repayDate), data.settings)} · not marked paid back`
         : a.repayFromCheck
-          ? `Comes out of your ${formatDate(parseYmd(s.repayDate), data.settings)} check`
+          ? `Comes out of your ${formatDate(parseYmd(s.repayDate), data.settings)} paycheck`
           : `Pay back by ${formatDate(parseYmd(s.repayDate), data.settings)}`,
     note: s.cost > 0 && !s.paidBack ? `${fmtCurrency(a.amount, currency)} + ${fmtCurrency(s.cost, currency)} fee` : null,
     amount: fmtCurrency(s.total, currency),
@@ -433,9 +448,11 @@ function AdvancesSection({ data, onOpen, onAdd }) {
   return h('section', { className: 'spend-section' },
     h(SectionHead, {
       title: 'Advances',
-      caption: open.length > 0
-        ? `${fmtCurrency(owed, currency)} still to pay back`
-        : 'All paid back'
+      caption: rows.length === 0
+        ? 'Money borrowed against a paycheck — EarnIn, Dave, work, family'
+        : open.length > 0
+          ? `${fmtCurrency(owed, currency)} still to pay back`
+          : 'All paid back'
     }),
     open.length > 0 ? h('div', { className: 'entry-list' }, open.map(row)) : null,
     paid.length > 0
@@ -443,7 +460,7 @@ function AdvancesSection({ data, onOpen, onAdd }) {
           showPaid ? 'Hide paid back' : `Paid back (${paid.length})`)
       : null,
     showPaid ? h('div', { className: 'entry-list' }, paid.map(row)) : null,
-    onAdd ? h('button', { className: 'add-row', onClick: onAdd }, '+ Log an advance') : null
+    h('button', { className: 'add-row', onClick: onAdd }, '+ Log an advance')
   );
 }
 
@@ -535,7 +552,7 @@ function AdvanceFields({ data, adv, autoFocus }) {
         id: 'adv-from-check',
         title: 'Take it out of my next paycheck',
         sub: nextCheckDate
-          ? `Paid back automatically from your ${formatDate(parseYmd(nextCheckDate), data.settings, { weekday: true })} check`
+          ? `Paid back automatically from your ${formatDate(parseYmd(nextCheckDate), data.settings, { weekday: true })} paycheck`
           : 'Add an income source in Settings to use this',
         checked: repayFromCheck,
         onChange: (v) => set('repayFromCheck', v)

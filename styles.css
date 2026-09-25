@@ -307,31 +307,6 @@ input[type="checkbox"]:not(.switch):focus {
   font-weight: 600;
 }
 
-.sidebar-caret {
-  margin-left: auto;
-  font-size: 16px;
-  line-height: 1;
-  transition: transform 0.12s ease;
-  flex-shrink: 0;
-  padding: 2px 4px;
-}
-.sidebar-caret.open {
-  transform: rotate(90deg);
-}
-
-.sidebar-sublist {
-  display: flex;
-  flex-direction: column;
-  margin-left: 16px;
-  border-left: 1px solid var(--border-tertiary);
-  padding-left: 8px;
-  gap: 2px;
-}
-.sidebar-sublink {
-  font-size: 13px;
-  padding: 8px 12px;
-}
-
 .sidebar-foot {
   margin-top: auto;
   padding-top: 8px;
@@ -1064,7 +1039,8 @@ input[type="checkbox"].switch:focus {
   border-radius: 0;
   padding: 0;
 }
-.card .switch-list + .action-list {
+.card .switch-list + .action-list,
+.card .action-list + .action-list {
   margin-top: -10px;
 }
 .card .action-row {
@@ -1464,13 +1440,10 @@ input[type="checkbox"].switch:focus {
   line-height: 1.05;
   font-variant-numeric: tabular-nums;
 }
-.home-hero-proj {
+.home-hero-sub {
   margin-top: 8px;
   font-size: 15px;
   color: var(--text-secondary);
-}
-.home-hero-proj b {
-  font-weight: 600;
 }
 
 .nextcheck {
@@ -2039,62 +2012,6 @@ input[type="checkbox"].switch:focus {
   display: flex;
   justify-content: center;
 }
-.stats-summary {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 18px;
-  background: var(--surface);
-  border: 0.5px solid var(--border-tertiary);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-card);
-}
-.stats-summary-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-.stats-summary-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.stats-summary-value {
-  font-size: 26px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
-}
-.stats-summary-value.good {
-  color: var(--text-success);
-}
-.stats-summary-bar {
-  height: 8px;
-  border-radius: 999px;
-  background: var(--surface-2);
-  overflow: hidden;
-}
-.stats-summary-fill {
-  display: block;
-  height: 100%;
-  border-radius: 999px;
-  background: var(--accent);
-}
-.stats-summary-fill.over {
-  background: var(--late-red);
-}
-.stats-summary-net {
-  font-size: 14px;
-  color: var(--text-secondary);
-  line-height: 1.4;
-}
-.stats-summary-net.short {
-  color: var(--late-red);
-}
-.stats-summary-range {
-  font-size: 13px;
-  color: var(--text-tertiary);
-}
 .stats-desktop {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2230,18 +2147,52 @@ input[type="checkbox"].switch:focus {
   background: var(--late-red);
 }
 
-.spend-page {
+.app-shell > .main-content:has(.spend-page) {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  overflow: hidden;
+  padding: 0;
 }
-.spend-desktop {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 28px;
-  align-items: start;
+.spend-page,
+.pager-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
-.spend-desktop > div {
+.pager-tabs {
+  flex-shrink: 0;
+  width: 100%;
+  max-width: 792px;
+  margin: 0 auto;
+  padding: 20px 36px 8px;
+}
+.pager {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.pager::-webkit-scrollbar {
+  display: none;
+}
+.pager-page {
+  flex: 0 0 100%;
+  min-width: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  padding: 16px 36px 40px;
+}
+.pager-page-inner {
+  max-width: 720px;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -2256,7 +2207,7 @@ input[type="checkbox"].switch:focus {
   position: relative;
   overflow: hidden;
   isolation: isolate;
-  padding: 20px 18px 0;
+  padding: 20px 18px 18px;
   border-radius: 24px;
   color: #f5f5f7;
   background: linear-gradient(160deg, #2c2c31 0%, #17171a 55%, #0d0d0f 100%);
@@ -2276,9 +2227,6 @@ input[type="checkbox"].switch:focus {
   opacity: 0.5;
   filter: blur(56px);
   pointer-events: none;
-}
-.wallet-card.empty {
-  padding-bottom: 18px;
 }
 .wallet-top {
   display: flex;
@@ -2341,13 +2289,11 @@ input[type="checkbox"].switch:focus {
   color: #ff8a82;
 }
 .wallet-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  display: flex;
   margin-top: 16px;
 }
-.wallet-actions.one {
-  grid-template-columns: 1fr;
+.wallet-actions .wallet-btn {
+  flex: 1;
 }
 .wallet-btn {
   min-height: 46px;
@@ -2363,28 +2309,6 @@ input[type="checkbox"].switch:focus {
   background: #fff;
   border-color: #fff;
   color: #111;
-}
-.wallet-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  width: calc(100% + 36px);
-  margin: 16px -18px 0;
-  padding: 15px 18px;
-  border: none;
-  border-top: 0.5px solid rgba(255, 255, 255, 0.12);
-  border-radius: 0;
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(245, 245, 247, 0.88);
-  font-size: 14px;
-  font-weight: 500;
-  text-align: left;
-}
-.wallet-foot-chevron {
-  font-size: 20px;
-  line-height: 1;
-  color: rgba(245, 245, 247, 0.5);
 }
 
 .spend-hero {
@@ -2456,11 +2380,6 @@ input[type="checkbox"].switch:focus {
   opacity: 0.55;
 }
 
-.spend-quick {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
 .spend-note {
   font-size: 13px;
   color: var(--text-tertiary);
@@ -2602,20 +2521,6 @@ input[type="checkbox"].switch:focus {
 }
 .cat-delta.down {
   color: var(--text-success);
-}
-
-.spend-unbudgeted {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.spend-unbudgeted-head {
-  padding: 0 2px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
 }
 
 .spend-bars {
@@ -2884,7 +2789,7 @@ input[type="checkbox"].switch:focus {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 0 2px 8px;
+  padding: 0 2px;
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -2895,10 +2800,10 @@ input[type="checkbox"].switch:focus {
   font-weight: 500;
   color: var(--text-tertiary);
 }
-.category-group-link {
-  margin-left: auto;
-  text-transform: none;
-  letter-spacing: 0;
+.bill-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .setup-link {
@@ -3769,7 +3674,7 @@ input[type="checkbox"].switch:focus {
   .bill-check-row, .ov-switch-btn, .nextcheck-nav-btn, .att-row, .att-more,
   .budget-row, .cat-row, .entry-row, .bill-filter-chip, .attention-header, .setup-link, .add-row,
   .overdue-fold, .chip-toggle-btn, .cc-main, .cc-link, .pick-chip, .type-btn, .type-row,
-  .action-row, .month-nav, .today-btn, .modal-x, .wallet-btn, .wallet-foot, .swatch,
+  .action-row, .month-nav, .today-btn, .modal-x, .wallet-btn, .swatch,
   .setup-chip, .setup-entry-x, .setup-add-row, .drop-head, .cover-go, .wizard-import-link {
     min-height: 0;
   }
@@ -3822,6 +3727,12 @@ input[type="checkbox"].switch:focus {
   }
   .main-content.mobile:has(.calendar-page) {
     overflow-y: hidden;
+  }
+  .pager-tabs {
+    padding: 10px 16px 4px;
+  }
+  .pager-page {
+    padding: 12px 16px 32px;
   }
   .calm-swipe {
     flex: 1 1 auto;

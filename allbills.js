@@ -5,13 +5,13 @@ function attentionSummary(items, currency) {
   const lateTotal = late.reduce((sum, o) => sum + o.amount, 0);
 
   if (late.length && priced.length) {
-    return `${fmtCurrency(lateTotal, currency)} past due across ${late.length} ${late.length === 1 ? 'bill' : 'bills'}, and ${priced.length} more ${priced.length === 1 ? 'needs' : 'need'} a real price.`;
+    return `${fmtCurrency(lateTotal, currency)} past due across ${late.length} ${late.length === 1 ? 'bill' : 'bills'}, and ${priced.length} more ${priced.length === 1 ? 'needs' : 'need'} the real amount.`;
   }
   if (late.length) {
-    return `${fmtCurrency(lateTotal, currency)} past due across ${late.length} ${late.length === 1 ? 'bill' : 'bills'} — tap one to pay it off or dismiss it.`;
+    return `${fmtCurrency(lateTotal, currency)} past due across ${late.length} ${late.length === 1 ? 'bill' : 'bills'} — tap one to mark it paid or clear the late flag.`;
   }
   if (priced.length) {
-    return `${priced.length} ${priced.length === 1 ? 'entry still uses' : 'entries still use'} a price range — add the real amount to keep your totals honest.`;
+    return `${priced.length} ${priced.length === 1 ? 'item only has' : 'items only have'} a price range — enter the real amount so your totals are right.`;
   }
   return 'All clear — everything is paid and every amount is filled in.';
 }
@@ -25,7 +25,7 @@ function AttentionRow({ o, data, currency, onOpen }) {
       h('span', { className: 'att-name' }, o.name),
       h('span', { className: 'att-sub' },
         `${o.late ? 'Was due' : 'Due'} ${dateLabel}${o.category ? ' · ' + o.category : ''}`),
-      o.needsPrice ? h('span', { className: 'att-need' }, 'Needs a real price') : null
+      o.needsPrice ? h('span', { className: 'att-need' }, 'Needs the real amount') : null
     ),
     h('span', { className: 'att-side' },
       o.late ? h('span', { className: 'age-pill' }, ageText) : null,
@@ -37,6 +37,8 @@ function AttentionRow({ o, data, currency, onOpen }) {
 }
 
 const ATTENTION_PREVIEW = 5;
+const BILL_GROUPS = ['majorBills', 'subscriptions', 'creditCards'];
+const BILL_ADD_LABELS = { majorBills: '+ Add a bill', subscriptions: '+ Add a subscription' };
 
 function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
   const currency = data.settings.currency;
@@ -63,10 +65,17 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
     setEditing({ sourceList: e.sourceList, form: { ...entryToFormShape(e), _isNew: false } });
   }
 
+  function openAdd(sourceList) {
+    const category = sourceList === 'subscriptions' ? 'Streaming' : 'Other';
+    setEditing({ sourceList, form: { ...blankEntry({ freq: 'monthly', category }), _isNew: true } });
+  }
+
   function handleEditSubmit(cleaned) {
-    let next = applyEditedEntry(data, editing.sourceList, cleaned);
-    next = logActivity(next, `Edited "${cleaned.name}"`);
-    setData(next);
+    const { _isNew, ...entry } = cleaned;
+    const next = _isNew
+      ? { ...data, [editing.sourceList]: [...data[editing.sourceList], entry] }
+      : applyEditedEntry(data, editing.sourceList, cleaned);
+    setData(logActivity(next, `${_isNew ? 'Added' : 'Edited'} "${entry.name}"`));
     setEditing(null);
   }
 
@@ -81,19 +90,10 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
     return rows.map((e) => ({ ...e, _next: nextOf(e) })).sort((a, b) => a._next.localeCompare(b._next));
   }, [data]);
 
-  const SOURCE_GROUP_ORDER = ['majorBills', 'subscriptions', 'creditCards'];
-
-  const SUBPAGE_FOR_GROUP = {
-    majorBills: 'essentials',
-    subscriptions: 'subscriptions',
-    creditCards: 'creditcards'
-  };
   const grouped = useMemo(() => {
-    const map = {};
-    unified.forEach((e) => {
-      (map[e.sourceList] = map[e.sourceList] || []).push(e);
-    });
-    return SOURCE_GROUP_ORDER.filter((key) => map[key] && map[key].length > 0).map((key) => [key, map[key]]);
+    const map = { majorBills: [], subscriptions: [], creditCards: [] };
+    unified.forEach((e) => map[e.sourceList].push(e));
+    return BILL_GROUPS.map((key) => [key, map[key]]);
   }, [unified]);
 
   const visibleGroups = categoryFilter === 'all' ? grouped : grouped.filter(([key]) => key === categoryFilter);
@@ -139,7 +139,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
     );
 
   const filterBlock = h('div', { className: 'bill-filter-row' },
-      h('p', { className: 'bill-filter-caption' }, 'About a month of recurring commitments'),
+      h('p', { className: 'bill-filter-caption' }, 'What your regular bills cost in a month'),
       h('button', {
         className: `bill-filter-chip${categoryFilter === 'all' ? ' active' : ''}`,
         onClick: () => setCategoryFilter('all')
@@ -148,7 +148,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
         h('span', { className: 'bill-filter-total' }, fmtCurrency(
           Object.values(groupMonthlyTotals).reduce((a, b) => a + b, 0), currency))
       ),
-      SOURCE_GROUP_ORDER.filter((key) => grouped.some(([k]) => k === key)).map((key) =>
+      grouped.filter(([, rows]) => rows.length > 0).map(([key]) =>
         h('button', {
           key,
           className: `bill-filter-chip${categoryFilter === key ? ' active' : ''}`,
@@ -166,32 +166,30 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
     attentionBlock,
     filterBlock,
 
-    unified.length === 0
-      ? h('p', { className: 'empty-state' }, 'Nothing added yet.')
-      : h('div', { className: 'bill-groups' },
-          visibleGroups.map(([key, rows]) =>
-            h('div', { key },
-              h('div', { className: 'category-group-header' },
-                h('span', null, SOURCE_GROUP_LABELS[key]),
-                h('span', { className: 'category-group-count' }, rows.length),
-                (isMobile && setPage) ? h('button', {
-                  className: 'setup-link category-group-link',
-                  onClick: () => setPage(SUBPAGE_FOR_GROUP[key])
-                }, key === 'creditCards' ? 'Cards \u203a' : 'Add \u203a') : null
-              ),
-              h('div', { className: 'entry-list' },
-                rows.map((e) => h(EntryRow, {
-                  key: `${e.sourceList}-${e.id}`,
-                  name: e.name,
-                  sub: scheduleLabel(e, data),
-                  amount: entryAmountLabel(e, currency),
-                  color: getEntryColor(e, data),
-                  onClick: () => openEdit(e)
-                }))
-              )
-            )
-          )
-        ),
+    h('div', { className: 'bill-groups' },
+      visibleGroups.map(([key, rows]) =>
+        h('div', { key, className: 'bill-group' },
+          h('div', { className: 'category-group-header' },
+            h('span', null, SOURCE_GROUP_LABELS[key]),
+            rows.length ? h('span', { className: 'category-group-count' }, rows.length) : null
+          ),
+          rows.length ? h('div', { className: 'entry-list' },
+            rows.map((e) => h(EntryRow, {
+              key: `${e.sourceList}-${e.id}`,
+              name: e.name,
+              sub: scheduleLabel(e, data),
+              amount: entryAmountLabel(e, currency),
+              color: getEntryColor(e, data),
+              onClick: () => openEdit(e)
+            }))
+          ) : null,
+          key === 'creditCards'
+            ? h('button', { className: 'add-row', onClick: () => setPage('creditcards') },
+                rows.length ? 'Manage credit cards' : '+ Add a credit card')
+            : h('button', { className: 'add-row', onClick: () => openAdd(key) }, BILL_ADD_LABELS[key])
+        )
+      )
+    ),
 
     priceModal ? h(PriceOverrideModal, {
       data, setData, occ: priceModal, currency,
@@ -201,10 +199,12 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
     editing ? h(EntryFormModal, Object.assign(
       { data, entry: editing.form, onSubmit: handleEditSubmit, onClose: () => setEditing(null), submitLabel: 'Save' },
       getEditModalConfig(editing.sourceList),
-      {
-        deleteLabel: `Delete ${editing.form.name || 'this entry'}`,
-        onDelete: () => { deleteEntry({ ...editing.form, sourceList: editing.sourceList }); setEditing(null); }
-      }
+      editing.form._isNew
+        ? { title: editing.sourceList === 'subscriptions' ? 'Add a subscription' : 'Add a bill', submitLabel: 'Add' }
+        : {
+            deleteLabel: `Delete ${editing.form.name || 'this entry'}`,
+            onDelete: () => { deleteEntry({ ...editing.form, sourceList: editing.sourceList }); setEditing(null); }
+          }
     )) : null
   );
 }

@@ -52,31 +52,6 @@ function useMonthFinancials(data, cursor) {
   const totalProjectedIncome = incomeOccurrences.reduce((sum, o) => sum + o.amount, 0)
     + oneTimeIncome.reduce((sum, o) => sum + entryAmount(o), 0);
 
-  const projectedIncomeRange = useMemo(() => {
-    let min = 0;
-    let max = 0;
-    incomeOccurrences.forEach((o) => {
-      if (o.useAmountRange) {
-        min += Number(o.amountMin) || 0;
-        max += Number(o.amountMax) || 0;
-      } else {
-        min += o.amount;
-        max += o.amount;
-      }
-    });
-    oneTimeIncome.forEach((o) => {
-      if (o.useAmountRange) {
-        min += Number(o.amountMin) || 0;
-        max += Number(o.amountMax) || 0;
-      } else {
-        const amt = entryAmount(o);
-        min += amt;
-        max += amt;
-      }
-    });
-    return { min, max };
-  }, [incomeOccurrences, oneTimeIncome]);
-
   const incomeReceived = incomeOccurrences
     .filter((o) => parseYmd(o.occDate) <= today)
     .reduce((sum, o) => sum + o.amount, 0)
@@ -167,27 +142,6 @@ function useMonthFinancials(data, cursor) {
     return { biggestBill, avgBill, billCount: billRows.length };
   }, [billOccurrences, oneTimePayments]);
 
-  const next7Days = useMemo(() => {
-    const start = new Date(today);
-    const end = new Date(today);
-    end.setDate(end.getDate() + 7);
-    const within = (dateStr) => {
-      const d = parseYmd(dateStr);
-      return d >= start && d <= end;
-    };
-
-    const bills7 = expandAll(allBills, 'bill', start, end, data).map((o) => ({ ...o, sourceList: sourceListById[o.id] }));
-    const income7 = [
-      ...expandAll(data.incomeSources, 'income', start, end, data).map((o) => ({ ...o, sourceList: 'incomeSources' })),
-      ...advanceInflows(data, start, end)
-    ];
-    const oneTime7 = data.oneTimeEntries
-      .filter((e) => e.date && within(e.date))
-      .map((e) => ({ ...oneTimeOccurrence(data, e), sourceList: 'oneTimeEntries' }));
-
-    return [...bills7, ...income7, ...oneTime7].sort((a, b) => a.occDate.localeCompare(b.occDate));
-  }, [data, cursor]);
-
   return {
     today,
     monthStart,
@@ -198,15 +152,12 @@ function useMonthFinancials(data, cursor) {
     oneTimeIncome,
     totalBills,
     totalProjectedIncome,
-    projectedIncomeRange,
-    hasIncomeRange: projectedIncomeRange.min !== projectedIncomeRange.max,
     incomeReceived,
     billsPaid,
     allTiles,
     cashFlowSeries,
     lastMonthTotals,
-    monthSummary,
-    next7Days
+    monthSummary
   };
 }
 
@@ -360,7 +311,6 @@ function useNextCheck(data, period) {
   }, [data, period]);
 }
 
-const UPCOMING_PREVIEW = 6;
 
 function Chevron({ dir }) {
   return h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.4, strokeLinecap: 'round', strokeLinejoin: 'round' },
@@ -397,7 +347,7 @@ function OverviewSwitch({ view, setView }) {
 function OverviewPage({ data, setData, isMobile, onAddEntry, view, setView }) {
   const body = view === 'calendar'
     ? h(CalendarPage, { data, setData, isMobile, onAddEntry })
-    : h(StatisticsPage, { data, setData, isMobile });
+    : h(StatisticsPage, { data, isMobile });
 
   if (isMobile) return body;
 
@@ -407,7 +357,7 @@ function OverviewPage({ data, setData, isMobile, onAddEntry, view, setView }) {
   );
 }
 
-function StatisticsPage({ data, setData, isMobile }) {
+function StatisticsPage({ data, isMobile }) {
   const currency = data.settings.currency;
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
@@ -415,8 +365,6 @@ function StatisticsPage({ data, setData, isMobile }) {
   });
   const [groupBy, setGroupBy] = useState('source');
   const [filter, setFilter] = useState('bills');
-  const [priceModal, setPriceModal] = useState(null);
-  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
 
   const fin = useMonthFinancials(data, cursor);
 
@@ -462,7 +410,6 @@ function StatisticsPage({ data, setData, isMobile }) {
   }, [fin, groupBy, filter, data]);
 
   function changeMonth(delta) {
-    setShowAllUpcoming(false);
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
   }
 
@@ -470,66 +417,6 @@ function StatisticsPage({ data, setData, isMobile }) {
   const isCurrentMonth = cursor.getFullYear() === now.getFullYear() && cursor.getMonth() === now.getMonth();
   const sc = data.settings.sectionColors || {};
   const colors = { income: sc.incomeSources || '#4FAE6B', bills: sc.majorBills || '#D85A5A' };
-
-  const moneyIn = fin.totalProjectedIncome;
-  const moneyOut = fin.totalBills;
-  const net = moneyIn - moneyOut;
-  const outPct = moneyIn > 0 ? Math.min(100, (moneyOut / moneyIn) * 100) : 100;
-
-  const summary = h('section', { className: 'stats-summary' },
-    h('div', { className: 'stats-summary-row' },
-      h('div', { className: 'stats-summary-cell' },
-        h('span', { className: 'spend-stat-label' }, 'Coming in'),
-        h('span', { className: 'stats-summary-value good' }, fmtCurrency(moneyIn, currency))
-      ),
-      h('div', { className: 'stats-summary-cell' },
-        h('span', { className: 'spend-stat-label' }, 'Going out'),
-        h('span', { className: 'stats-summary-value' }, fmtCurrency(moneyOut, currency))
-      )
-    ),
-    h('div', { className: 'stats-summary-bar' },
-      h('span', { className: `stats-summary-fill${net < 0 ? ' over' : ''}`, style: { width: `${outPct}%` } })
-    ),
-    h('p', { className: `stats-summary-net${net < 0 ? ' short' : ''}` },
-      moneyIn <= 0
-        ? 'Add an income source in Settings to compare in against out.'
-        : net >= 0
-          ? `${fmtCurrency(net, currency)} left after everything \u2014 ${Math.round(100 - outPct)}% of what comes in`
-          : `${fmtCurrency(-net, currency)} more going out than coming in`),
-    fin.hasIncomeRange ? h('p', { className: 'stats-summary-range' },
-      `Income could land anywhere from ${fmtRange(fin.projectedIncomeRange.min, fin.projectedIncomeRange.max, currency)}`) : null
-  );
-
-  const upcoming = fin.next7Days.filter((o) => o.kind === 'income' || !isPaid(data, o.id, o.occDate));
-  const visibleUpcoming = showAllUpcoming ? upcoming : upcoming.slice(0, UPCOMING_PREVIEW);
-  const todayStr = todayYmd();
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = ymd(tomorrow);
-  const dayWord = (dateStr) => dateStr === todayStr ? 'Today'
-    : dateStr === tomorrowStr ? 'Tomorrow'
-    : parseYmd(dateStr).toLocaleDateString('en-US', { weekday: 'long' });
-
-  const next7 = h('section', { className: 'stats-section' },
-    h(SectionHead, { title: 'Coming up', caption: 'The next 7 days, still to pay or receive' }),
-    upcoming.length === 0
-      ? h('p', { className: 'empty-state' }, 'Nothing due in the next 7 days.')
-      : h('div', { className: 'entry-list' },
-          visibleUpcoming.map((o, i) => h(EntryRow, {
-            key: `${o.id}-${o.occDate}-${i}`,
-            name: o.name,
-            sub: `${dayWord(o.occDate)} \u00b7 ${formatDate(parseYmd(o.occDate), data.settings)}`,
-            amount: `${o.kind === 'income' ? '+' : ''}${occAmountLabel(o, currency)}`,
-            positive: o.kind === 'income',
-            color: getEntryColor(o, data),
-            onClick: () => setPriceModal(o)
-          }))
-        ),
-    upcoming.length > UPCOMING_PREVIEW
-      ? h('button', { className: 'att-more', onClick: () => setShowAllUpcoming(!showAllUpcoming) },
-          showAllUpcoming ? 'Show less' : `Show all ${upcoming.length}`)
-      : null
-  );
 
   const monthHeader = h(MonthHeader, { cursor, onChange: changeMonth });
   const chart = h(CashFlowChart, {
@@ -539,23 +426,15 @@ function StatisticsPage({ data, setData, isMobile }) {
   const donut = h(CategoryDonut, { data: breakdown, currency, groupBy, setGroupBy, filter, setFilter });
   const glance = h(GlanceGrid, { fin, currency });
 
-  const priceModalEl = priceModal ? h(PriceOverrideModal, {
-    data, setData, occ: priceModal, currency,
-    onClose: () => setPriceModal(null)
-  }) : null;
-
   if (isMobile) {
-    return h('div', { className: 'stats-page' },
-      monthHeader, summary, isCurrentMonth ? next7 : null, chart, donut, glance, priceModalEl
-    );
+    return h('div', { className: 'stats-page' }, monthHeader, chart, donut, glance);
   }
 
   return h('div', { className: 'stats-page' },
     monthHeader,
     h('div', { className: 'stats-desktop' },
-      h('div', { className: 'stats-col' }, summary, chart, glance),
-      h('div', { className: 'stats-col' }, isCurrentMonth ? next7 : null, donut)
-    ),
-    priceModalEl
+      h('div', { className: 'stats-col' }, chart, glance),
+      h('div', { className: 'stats-col' }, donut)
+    )
   );
 }

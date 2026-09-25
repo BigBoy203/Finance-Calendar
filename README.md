@@ -32,26 +32,31 @@ restored before anything is entered by hand.
 
 ## Getting around
 
-- **Home** - a gradient hero with net-so-far, the "Before your next check"
-  card (what's due before the next paycheck, with pay-period arrows), and a
-  collapsible "Bills this month" list.
+- **Home** - a gradient hero with how the month is going so far, the "Before
+  your next paycheck" card (what's due before the next paycheck, with
+  pay-period arrows), and a collapsible "Bills this month" list.
 - **Overview** - two views behind one switch: **Calendar** (month grid or
-  agenda) and **Statistics** (next 7 days, cash flow, category donut, at a
-  glance, vs. last month).
+  agenda) and **Statistics** (cash flow, category donut, at a glance).
 - **+** - the add window: Purchase, Bill, Subscription (including payment
   plans, which end after a set number of payments), Income, or Advance.
-- **Wallet** - how much money you actually have. A wallet check sets the
-  balance; paychecks add to it and the bills you mark paid and purchases you log
-  take from it. The app asks for a fresh wallet check the first time you open it
-  each month, and shows how close its math was. Advances (EarnIn, Dave, work,
-  family...) are logged here with an optional flat fee, rate, or APR, and can be
-  paid back automatically from your next paycheck. Below the wallet is the same
-  day-to-day money view as before: what's left for daily life this month, two-tap
-  re-logging, budgets, "Where it went", purchases, and a six-month trend. Turn
-  wallet tracking off in Settings and the tab goes back to being **Spending**.
+- **Wallet** - swipe (or tap the names at the top) between four pages:
+  - **Balance** - how much money you actually have. You tell it your balance;
+    paychecks add to it and the bills you mark paid and purchases you log take
+    from it. The first time you open the Wallet tab each month it asks for your
+    balance again and shows how close its math was. Advances (EarnIn, Dave,
+    work, family...) live here too, with an optional flat fee, rate, or APR,
+    and can be paid back automatically from your next paycheck.
+  - **Budget** - what's left to spend this month, how that adds up, and your
+    budgets.
+  - **Spending** - "Buy again" shortcuts, "Where it went", and this month's
+    purchases.
+  - **Trends** - a six-month chart and a few numbers for the month.
+  Turn wallet tracking off in Settings and the tab becomes **Spending** without
+  the Balance page. Settings → Advanced can reset your spending history
+  (purchases and balance updates) without touching bills or income.
 - **Bills** - "Needs attention" at the top (anything past due or still using a
-  price range), then recurring commitments grouped into Essentials,
-  Subscriptions, and Credit cards.
+  price range), then your Essentials, Subscriptions, and Credit cards, each
+  with its own "Add" row.
 - **Settings** - the gear in the header (a sidebar item on desktop).
 
 The layout switches at 768px via a media query rather than user-agent
@@ -97,7 +102,7 @@ they're concatenated in a fixed order. After editing any of them, rebuild:
 
 ```
 cat app_core.js mobile.js ui.js entryform.js wizard.js quickadd.js home.js \
-    calendar.js overview.js spending.js wallet.js bills.js subscriptions.js \
+    calendar.js overview.js spending.js wallet.js \
     creditcards.js allbills.js settings.js > app.js
 echo "" >> app.js
 echo "ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));" >> app.js
