@@ -197,6 +197,12 @@ function walletOn(data) {
   return data.settings.walletEnabled !== false;
 }
 
+function walletFloor(data) {
+  if (!data.settings.walletNegative) return 0;
+  const limit = Number(data.settings.walletOverdraftLimit) || 0;
+  return limit > 0 ? -limit : -Infinity;
+}
+
 function balanceUpdateDue(data) {
   if (!walletOn(data) || data.settings.walletMonthlyCheck === false) return false;
   const todayStr = todayYmd();
@@ -263,9 +269,14 @@ function balanceDiffText(diff, currency) {
 function BalanceSheet({ data, setData, prompted, onClose }) {
   const currency = data.settings.currency;
   const summary = useMemo(() => walletSummary(data), [data]);
+  const floor = walletFloor(data);
   const [amount, setAmount] = useState('');
-  const value = parseFloat(amount);
-  const canSave = amount !== '' && !isNaN(value);
+  const [below, setBelow] = useState(() => floor < 0 && !!summary && summary.balance < 0);
+  const typed = parseFloat(amount);
+  const entered = amount !== '' && !isNaN(typed);
+  const value = below ? -Math.abs(typed) : typed;
+  const tooLow = entered && value < floor;
+  const canSave = entered && !tooLow;
   const diff = (summary && canSave) ? round2(value - summary.balance) : null;
   const note = diff === null ? null : balanceDiffText(diff, currency);
 
@@ -289,12 +300,24 @@ function BalanceSheet({ data, setData, prompted, onClose }) {
     foot: h('div', { className: 'sheet-actions' },
       prompted ? h('button', { onClick: later }, 'Not now') : null,
       h('button', { className: 'primary', onClick: save, disabled: !canSave },
-        canSave ? `Save ${fmtCurrency(value, currency)}` : 'Save')
+        canSave ? `Save ${fmtCurrency(value, currency)}`
+          : tooLow ? (floor === 0 ? 'Can’t go below zero' : 'Past your overdraft limit')
+          : 'Enter your balance')
     )
   },
     h('p', { className: 'sheet-lead' },
       'How much money do you have right now? Add up your bank account and any cash. Include any paycheck that has already landed.'),
-    h(AmountField, { value: amount, onChange: setAmount, currency, autoFocus: true }),
+    h(AmountField, { value: amount, onChange: setAmount, currency, autoFocus: true, negative: below }),
+    floor < 0 ? h(ChipToggle, {
+      wide: true,
+      value: below,
+      onChange: setBelow,
+      options: [{ id: false, label: 'Above zero' }, { id: true, label: 'Below zero' }]
+    }) : null,
+    tooLow ? h('p', { className: 'setup-hint warn' },
+      floor === 0
+        ? 'Your balance is set to never go below zero. If you’re overdrawn, turn on “My balance can go below zero” in Settings.'
+        : `Your overdraft limit is ${fmtCurrency(-floor, currency)}. If your bank changed it, update it in Settings.`) : null,
     summary ? h('div', { className: 'calc-list' },
       h('div', { className: 'calc-row' },
         h('span', null, 'The app thinks you have'),
@@ -327,9 +350,21 @@ function WalletCard({ data, summary, nextCheck, due, onUpdate }) {
   const balance = summary.balance;
   const billsDue = nextCheck ? nextCheck.due : 0;
   const afterBills = balance - billsDue;
+  const floor = walletFloor(data);
+  const limit = floor < 0 && Number.isFinite(floor) ? -floor : 0;
   const payday = nextCheck && nextCheck.check
     ? `your ${formatDate(parseYmd(nextCheck.check.occDate), data.settings)} paycheck`
     : 'your next paycheck';
+  const sub = balance >= 0
+    ? 'The money in your account right now, as far as the app knows'
+    : floor === 0
+      ? 'Your account can’t go below zero, so something may be missing — tap Update balance'
+      : !limit
+        ? 'Overdrawn — your account is below zero'
+        : balance >= floor
+          ? `Overdrawn — you can go ${fmtCurrency(balance - floor, currency)} lower before your ${fmtCurrency(limit, currency)} limit`
+          : `That’s ${fmtCurrency(floor - balance, currency)} past your ${fmtCurrency(limit, currency)} overdraft limit`;
+  const safeTone = afterBills >= 0 ? '' : afterBills >= floor ? ' warn' : ' short';
 
   return h('section', { className: `wallet-card${balance < 0 ? ' short' : ''}` },
     h('div', { className: 'wallet-top' },
@@ -337,11 +372,15 @@ function WalletCard({ data, summary, nextCheck, due, onUpdate }) {
       due ? h('span', { className: 'wallet-pill' }, 'Update due') : null
     ),
     h('p', { className: 'wallet-balance' }, fmtCurrency(balance, currency)),
-    h('p', { className: 'wallet-sub' }, 'The money in your account right now, as far as the app knows'),
-    billsDue > 0 ? h('p', { className: `wallet-safe${afterBills < 0 ? ' short' : ''}` },
+    h('p', { className: 'wallet-sub' }, sub),
+    billsDue > 0 ? h('p', { className: `wallet-safe${safeTone}` },
       afterBills >= 0
         ? `After the ${fmtCurrency(billsDue, currency)} of bills due before ${payday}, you’ll have ${fmtCurrency(afterBills, currency)} left.`
-        : `You’re ${fmtCurrency(-afterBills, currency)} short of the ${fmtCurrency(billsDue, currency)} of bills due before ${payday}.`) : null,
+        : afterBills >= floor
+          ? `After the ${fmtCurrency(billsDue, currency)} of bills due before ${payday}, you’d be ${fmtCurrency(-afterBills, currency)} below zero${limit ? ` — inside your ${fmtCurrency(limit, currency)} overdraft` : ''}.`
+          : balance < floor
+            ? `The ${fmtCurrency(billsDue, currency)} of bills due before ${payday} would take you to ${fmtCurrency(afterBills, currency)}.`
+            : `You’re ${fmtCurrency(floor - afterBills, currency)} short of the ${fmtCurrency(billsDue, currency)} of bills due before ${payday}${limit ? `, even with your ${fmtCurrency(limit, currency)} overdraft` : ''}.`) : null,
     h('div', { className: 'wallet-actions' },
       h('button', { className: `wallet-btn${due ? ' solid' : ''}`, onClick: onUpdate }, 'Update balance')
     )

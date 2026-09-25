@@ -51,8 +51,11 @@ restored before anything is entered by hand.
   - **Spending** - "Buy again" shortcuts, "Where it went", and this month's
     purchases.
   - **Trends** - a six-month chart and a few numbers for the month.
-  Turn wallet tracking off in Settings and the tab becomes **Spending** without
-  the Balance page. Settings → Advanced can reset your spending history
+  If your bank allows overdraft, turn on "My balance can go below zero" in
+  Settings and set your limit; the balance window then lets you enter a
+  negative balance and the Wallet tells you how much room is left. Turn wallet
+  tracking off in Settings and the tab becomes **Spending** without the Balance
+  page. Settings → Advanced can reset your spending history
   (purchases and balance updates) without touching bills or income.
 - **Bills** - "Needs attention" at the top (anything past due or still using a
   price range), then your Essentials, Subscriptions, and Credit cards, each

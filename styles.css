@@ -2288,6 +2288,9 @@ input[type="checkbox"].switch:focus {
 .wallet-safe.short {
   color: #ff8a82;
 }
+.wallet-safe.warn {
+  color: #ffd27a;
+}
 .wallet-actions {
   display: flex;
   margin-top: 16px;

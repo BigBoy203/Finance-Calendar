@@ -167,7 +167,7 @@ function WalletSettingsCard({ data, updateSetting }) {
     h('p', { className: 'settings-card-title' }, 'Wallet'),
     h('p', { className: 'settings-card-sub' },
       summary
-        ? `${fmtCurrency(summary.balance, currency)} available \u00b7 balance last updated ${formatDate(parseYmd(summary.check.date), data.settings)}`
+        ? `Balance ${fmtCurrency(summary.balance, currency)} \u00b7 last updated ${formatDate(parseYmd(summary.check.date), data.settings)}`
         : 'Keeps a running total of the money you actually have. You tell it your balance on the Wallet tab and it keeps count from there.'),
     h('div', { className: 'switch-list' },
       h(SettingSwitch, {
@@ -183,8 +183,27 @@ function WalletSettingsCard({ data, updateSetting }) {
         sub: 'The Wallet tab asks the first time you open it in a new month',
         checked: data.settings.walletMonthlyCheck !== false,
         onChange: (v) => updateSetting('walletMonthlyCheck', v)
+      }) : null,
+      on ? h(SettingSwitch, {
+        id: 'wallet-negative',
+        title: 'My balance can go below zero',
+        sub: 'Turn on if your bank allows overdraft, or you use something like SpotMe',
+        checked: !!data.settings.walletNegative,
+        onChange: (v) => updateSetting('walletNegative', v)
       }) : null
-    )
+    ),
+    on && data.settings.walletNegative ? h('div', { className: 'setup-entry-grid single' },
+      h(Field, {
+        label: 'Overdraft limit',
+        hint: 'How far below zero your bank lets you go. Leave it blank if there’s no set limit.'
+      },
+        h('input', {
+          type: 'number', inputMode: 'decimal', min: 0, placeholder: 'No limit',
+          value: data.settings.walletOverdraftLimit || '',
+          onChange: (e) => updateSetting('walletOverdraftLimit', Math.max(0, parseFloat(e.target.value) || 0))
+        })
+      )
+    ) : null
   );
 }
 

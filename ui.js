@@ -41,11 +41,11 @@ function currencySymbol(currency) {
   return fmtCurrency(0, currency).replace(/[\d.,\s]/g, '') || '$';
 }
 
-function AmountField({ value, onChange, currency, autoFocus, placeholder, label }) {
+function AmountField({ value, onChange, currency, autoFocus, placeholder, label, negative }) {
   return h('div', { className: 'amt-block' },
     label ? h('p', { className: 'qa-label' }, label) : null,
     h('label', { className: 'amt-field' },
-      h('span', { className: 'amt-sym' }, currencySymbol(currency)),
+      h('span', { className: 'amt-sym' }, `${negative ? '−' : ''}${currencySymbol(currency)}`),
       h('input', {
         className: 'amt-input',
         type: 'number',

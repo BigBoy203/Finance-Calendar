@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '5.1';
+const WEB_VERSION = '5.2';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -1127,6 +1127,8 @@ function getBlankData() {
       },
       walletEnabled: true,
       walletMonthlyCheck: true,
+      walletNegative: false,
+      walletOverdraftLimit: 0,
       backupReminderEnabled: true,
       hapticsEnabled: true,
       lastBackupReminderShown: null

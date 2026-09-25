@@ -52,6 +52,8 @@
         },
         walletEnabled: true,
         walletMonthlyCheck: true,
+        walletNegative: false,
+        walletOverdraftLimit: 0,
         backupReminderEnabled: true,
         hapticsEnabled: true,
         lastBackupReminderShown: null

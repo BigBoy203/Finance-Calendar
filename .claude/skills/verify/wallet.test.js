@@ -32,7 +32,7 @@ function load() {
   const names = ['walletMoves', 'walletSummary', 'balanceUpdateDue', 'recordBalance', 'snoozeBalancePrompt', 'lastBalance',
     'advanceCost', 'advanceTotal', 'advanceRepayDate', 'nextPaycheckAfter', 'getAdvanceEntries', 'advanceInflows', 'advanceStatus',
     'isPaid', 'togglePaidStatus', 'setCovered', 'getLateBills', 'getAttentionItems', 'useNextCheck', 'useMonthFinancials',
-    'planProgress', 'paymentCount', 'untilForCount', 'scheduleLabel', 'saveAdvance', 'removeAdvance', 'toggleForcedLate', 'getBlankData', 'resetSpendingHistory'];
+    'planProgress', 'paymentCount', 'untilForCount', 'scheduleLabel', 'saveAdvance', 'removeAdvance', 'toggleForcedLate', 'getBlankData', 'resetSpendingHistory', 'walletFloor'];
   vm.runInContext(src + '\n;globalThis.__t = {' + names.join(',') + '};', ctx);
   return ctx.__t;
 }
@@ -305,6 +305,27 @@ test('resetting spending history drops purchases and balance updates only', () =
   assert.strictEqual(r.wallet.checks.length, 0);
   assert.strictEqual(t.walletSummary(r), null);
   assert.strictEqual(t.balanceUpdateDue(r), true);
+});
+
+test('overdraft floor: off is zero, on without a limit is open, on with a limit is minus the limit', () => {
+  const d = base();
+  assert.strictEqual(t.walletFloor(d), 0);
+  d.settings.walletNegative = true;
+  assert.strictEqual(t.walletFloor(d), -Infinity);
+  d.settings.walletOverdraftLimit = 200;
+  assert.strictEqual(t.walletFloor(d), -200);
+  d.settings.walletNegative = false;
+  assert.strictEqual(t.walletFloor(d), 0);
+});
+
+test('a negative balance update carries through the wallet math', () => {
+  let d = base({ incomeSources: [e('pay', 'Paycheck', 1000, '2026-09-17', 'biweekly', 'Income')] });
+  d.settings.walletNegative = true;
+  d.settings.walletOverdraftLimit = 200;
+  d = t.recordBalance(d, -150);
+  const s = t.walletSummary(d);
+  near(s.balance, -150);
+  near(s.check.amount, -150);
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', some FAILED' : ''}`);
