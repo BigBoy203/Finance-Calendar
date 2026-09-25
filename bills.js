@@ -29,7 +29,7 @@ function BillsPage({ data, setData }) {
 
   const total = list.reduce((sum, e) => sum + monthlyAmount(e), 0);
 
-  return h('div', null,
+  return h('div', { className: 'page-stack' },
     h('div', { className: 'sub-head' },
       h('h2', { className: 'sub-title' }, 'Essentials'),
       h('p', { className: 'sub-caption' },
@@ -43,7 +43,7 @@ function BillsPage({ data, setData }) {
           list.map((e) => h(EntryRow, {
             key: e.id,
             name: e.name,
-            sub: scheduleLabel(e, data.settings),
+            sub: scheduleLabel(e, data),
             amount: entryAmountLabel(e, currency),
             color: getEntryColor({ ...e, sourceList: 'majorBills' }, data),
             onClick: () => openEdit(e)

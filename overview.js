@@ -4,7 +4,8 @@ const SOURCE_GROUP_LABELS = {
   subscriptions: 'Subscriptions',
   creditCards: 'Credit cards',
   oneTimeEntries: 'One-time',
-  incomeSources: 'Income'
+  incomeSources: 'Income',
+  advances: 'Advances'
 };
 
 function useMonthFinancials(data, cursor) {
@@ -21,7 +22,10 @@ function useMonthFinancials(data, cursor) {
     [data, cursor]
   );
   const incomeOccurrences = useMemo(
-    () => expandAll(data.incomeSources, 'income', monthStart, monthEnd, data).map((o) => ({ ...o, sourceList: 'incomeSources' })),
+    () => [
+      ...expandAll(data.incomeSources, 'income', monthStart, monthEnd, data).map((o) => ({ ...o, sourceList: 'incomeSources' })),
+      ...advanceInflows(data, monthStart, monthEnd)
+    ],
     [data, cursor]
   );
 
@@ -173,7 +177,10 @@ function useMonthFinancials(data, cursor) {
     };
 
     const bills7 = expandAll(allBills, 'bill', start, end, data).map((o) => ({ ...o, sourceList: sourceListById[o.id] }));
-    const income7 = expandAll(data.incomeSources, 'income', start, end, data).map((o) => ({ ...o, sourceList: 'incomeSources' }));
+    const income7 = [
+      ...expandAll(data.incomeSources, 'income', start, end, data).map((o) => ({ ...o, sourceList: 'incomeSources' })),
+      ...advanceInflows(data, start, end)
+    ];
     const oneTime7 = data.oneTimeEntries
       .filter((e) => e.date && within(e.date))
       .map((e) => ({ ...oneTimeOccurrence(data, e), sourceList: 'oneTimeEntries' }));
@@ -263,7 +270,7 @@ function useNextCheck(data, period) {
     const landsHere = (target) => target >= startStr && target <= endStr;
 
     const upcoming = [
-      ...expandAll(getAllBillLikeEntries(data), 'bill', windowStart, windowEnd, data),
+      ...expandAll(getAllBillLikeEntries(data).filter((e) => !e.autoRepay), 'bill', windowStart, windowEnd, data),
       ...data.oneTimeEntries
         .filter((e) => e.oneTimeKind === 'payment' && e.date && parseYmd(e.date) >= windowStart && parseYmd(e.date) <= windowEnd)
         .map((e) => oneTimeOccurrence(data, e))
@@ -323,6 +330,11 @@ function useNextCheck(data, period) {
       .filter((e) => e.date >= spendStartStr && e.date <= endStr && isPaid(data, e.id, e.date))
       .reduce((sum, e) => sum + oneTimeOccurrence(data, e).amount, 0);
 
+    const takes = check
+      ? getAdvanceEntries(data).filter((e) => e.autoRepay && e.date === check.occDate)
+      : [];
+    const taken = takes.reduce((sum, e) => sum + e.amount, 0);
+
     return {
       check,
       windowStart,
@@ -332,7 +344,8 @@ function useNextCheck(data, period) {
       hasPrev: idx > 0,
       hasNext: idx + 1 < checks.length,
       due: bills.reduce((sum, o) => sum + o.amount, 0),
-      checkAmount: check ? check.amount : 0,
+      checkAmount: check ? check.amount - taken : 0,
+      takes,
       estimate,
       overdueCount: bills.filter((o) => parseYmd(o.occDate) < today).length,
       spent,
@@ -349,12 +362,23 @@ function useNextCheck(data, period) {
 
 const UPCOMING_PREVIEW = 6;
 
+function Chevron({ dir }) {
+  return h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.4, strokeLinecap: 'round', strokeLinejoin: 'round' },
+    h('path', { d: dir === 'left' ? 'M15 5l-7 7 7 7' : 'M9 5l7 7-7 7' })
+  );
+}
+
 function MonthHeader({ cursor, onChange }) {
   const label = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  return h('div', { className: 'home-month-header' },
-    h('button', { onClick: () => { haptic('light'); onChange(-1); }, 'aria-label': 'Previous month' }, '\u2039'),
-    h('h1', { className: 'home-month-title' }, label),
-    h('button', { onClick: () => { haptic('light'); onChange(1); }, 'aria-label': 'Next month' }, '\u203a')
+  const now = new Date();
+  const offset = (now.getFullYear() - cursor.getFullYear()) * 12 + (now.getMonth() - cursor.getMonth());
+  return h('div', { className: 'month-head' },
+    h('button', { className: 'month-nav', onClick: () => { haptic('light'); onChange(-1); }, 'aria-label': 'Previous month' }, h(Chevron, { dir: 'left' })),
+    h('div', { className: 'month-title-wrap' },
+      h('h1', { className: 'month-title' }, label),
+      offset !== 0 ? h('button', { className: 'today-btn', onClick: () => { haptic('light'); onChange(offset); } }, 'Today') : null
+    ),
+    h('button', { className: 'month-nav', onClick: () => { haptic('light'); onChange(1); }, 'aria-label': 'Next month' }, h(Chevron, { dir: 'right' }))
   );
 }
 
@@ -487,12 +511,7 @@ function StatisticsPage({ data, setData, isMobile }) {
     : parseYmd(dateStr).toLocaleDateString('en-US', { weekday: 'long' });
 
   const next7 = h('section', { className: 'stats-section' },
-    h('div', { className: 'stats-head' },
-      h('div', null,
-        h('p', { className: 'stats-title' }, 'Coming up'),
-        h('p', { className: 'stats-caption' }, 'The next 7 days, still to pay or receive')
-      )
-    ),
+    h(SectionHead, { title: 'Coming up', caption: 'The next 7 days, still to pay or receive' }),
     upcoming.length === 0
       ? h('p', { className: 'empty-state' }, 'Nothing due in the next 7 days.')
       : h('div', { className: 'entry-list' },

@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '4.3';
+const WEB_VERSION = '5.0';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -94,20 +94,21 @@ function yesterdayYmd() {
 function formatDate(date, settings, opts) {
   const fmt = (settings && settings.dateFormat) || 'short';
   const includeWeekday = opts && opts.weekday;
+  const weekdayStyle = includeWeekday === 'short' ? 'short' : 'long';
   const forceYear = opts && opts.year;
   if (fmt === 'iso') {
     const base = ymd(date);
-    return includeWeekday ? `${date.toLocaleDateString('en-US', { weekday: 'long' })}, ${base}` : base;
+    return includeWeekday ? `${date.toLocaleDateString('en-US', { weekday: weekdayStyle })}, ${base}` : base;
   }
   if (fmt === 'long') {
     return date.toLocaleDateString('en-US', {
-      weekday: includeWeekday ? 'long' : undefined,
+      weekday: includeWeekday ? weekdayStyle : undefined,
       month: 'long', day: 'numeric', year: 'numeric'
     });
   }
 
   return date.toLocaleDateString('en-US', {
-    weekday: includeWeekday ? 'long' : undefined,
+    weekday: includeWeekday ? weekdayStyle : undefined,
     month: 'short', day: 'numeric',
     year: forceYear ? 'numeric' : undefined
   });
@@ -216,12 +217,17 @@ function nextDueDate(entry) {
   return next ? parseYmd(next.occDate) : null;
 }
 
-function scheduleLabel(entry, settings) {
+function scheduleLabel(entry, data) {
+  const settings = data.settings;
   const next = nextDueDate(entry);
+  const plan = entry.category === PAYMENT_PLAN ? planProgress(data, entry) : null;
   const when = next
     ? (entry.freq && entry.freq !== 'none' ? `Next ${formatDate(next, settings)}` : formatDate(next, settings))
-    : 'Ended';
-  return [when, repeatLabel(entry, settings), entry.category !== entry.name ? entry.category : ''].filter(Boolean).join(' \u00b7 ');
+    : (plan ? 'Paid off' : 'Ended');
+  const repeat = plan
+    ? (plan.left > 0 ? `${plan.left} of ${plan.total} payments left` : null)
+    : repeatLabel(entry, settings);
+  return [when, repeat, !plan && entry.category !== entry.name ? entry.category : ''].filter(Boolean).join(' \u00b7 ');
 }
 
 function expandEntry(entry, rangeStart, rangeEnd) {
@@ -345,7 +351,8 @@ function occAmountLabel(occ, currency) {
 }
 
 function isPaid(data, entryId, occDate) {
-  return !!data.paidHistory[`${entryId}|${occDate}`];
+  if (data.paidHistory[`${entryId}|${occDate}`]) return true;
+  return String(entryId).startsWith('adv-') && occDate <= todayYmd() && isAutoAdvance(data, entryId);
 }
 
 function isDismissedLate(data, entryId, occDate) {
@@ -361,14 +368,16 @@ function toggleForcedLate(data, entryId, occDate) {
   const nextForced = { ...(data.forcedLate || {}) };
   const nextDismissed = { ...data.dismissedLate };
   const nextPaid = { ...data.paidHistory };
+  const nextPaidAt = { ...(data.paidAt || {}) };
   if (nextForced[key]) {
     delete nextForced[key];
   } else {
     nextForced[key] = true;
     delete nextDismissed[key];
     delete nextPaid[key];
+    delete nextPaidAt[key];
   }
-  return { ...data, forcedLate: nextForced, dismissedLate: nextDismissed, paidHistory: nextPaid };
+  return { ...data, forcedLate: nextForced, dismissedLate: nextDismissed, paidHistory: nextPaid, paidAt: nextPaidAt };
 }
 
 function deferredTo(data, entryId, occDate) {
@@ -391,21 +400,31 @@ function coveredAmount(data, entryId, occDate) {
 function setCovered(data, entryId, occDate, amount) {
   const key = `${entryId}|${occDate}`;
   const next = { ...(data.covered || {}) };
-  if (amount > 0) next[key] = amount; else delete next[key];
-  return { ...data, covered: next };
+  const log = { ...(data.coverLog || {}) };
+  if (amount > 0) {
+    next[key] = amount;
+    log[key] = { amount, at: Date.now() };
+  } else {
+    delete next[key];
+    delete log[key];
+  }
+  return { ...data, covered: next, coverLog: log };
 }
 
 function togglePaidStatus(data, entryId, occDate) {
   const key = `${entryId}|${occDate}`;
   const nextPaid = { ...data.paidHistory };
+  const nextPaidAt = { ...(data.paidAt || {}) };
   const nextForced = { ...(data.forcedLate || {}) };
   const nextDeferred = { ...(data.deferred || {}) };
   const nextCovered = { ...(data.covered || {}) };
   const wasPaid = !!nextPaid[key];
   if (wasPaid) {
     delete nextPaid[key];
+    delete nextPaidAt[key];
   } else {
     nextPaid[key] = true;
+    nextPaidAt[key] = Date.now();
     delete nextForced[key];
     delete nextDeferred[key];
     delete nextCovered[key];
@@ -425,7 +444,7 @@ function togglePaidStatus(data, entryId, occDate) {
     }
   }
 
-  return { ...data, paidHistory: nextPaid, forcedLate: nextForced, deferred: nextDeferred, covered: nextCovered, creditCards: nextCreditCards };
+  return { ...data, paidHistory: nextPaid, paidAt: nextPaidAt, forcedLate: nextForced, deferred: nextDeferred, covered: nextCovered, creditCards: nextCreditCards };
 }
 
 function daysBetween(a, b) {
@@ -458,6 +477,7 @@ function getEntryColor(o, data) {
   if (o.sourceList === 'subscriptions') return sc.subscriptions;
   if (o.sourceList === 'creditCards') return sc.creditCards;
   if (o.sourceList === 'incomeSources') return sc.incomeSources;
+  if (o.sourceList === 'advances') return sc.advances;
   if (o.sourceList === 'oneTimeEntries') {
     return o.kind === 'income' ? sc.oneTimeIncome : sc.oneTimePayments;
   }
@@ -519,6 +539,7 @@ function buildSourceListLookup(data) {
   data.majorBills.forEach((e) => { map[e.id] = 'majorBills'; });
   data.subscriptions.forEach((e) => { map[e.id] = 'subscriptions'; });
   getCreditCardPaymentEntries(data).forEach((e) => { map[e.id] = 'creditCards'; });
+  getAdvanceEntries(data).forEach((e) => { map[e.id] = 'advances'; });
   data.incomeSources.forEach((e) => { map[e.id] = 'incomeSources'; });
   return map;
 }
@@ -528,7 +549,7 @@ function purchaseEntries(data) {
 }
 
 function getAllBillLikeEntries(data) {
-  return [...data.majorBills, ...data.subscriptions, ...getCreditCardPaymentEntries(data)];
+  return [...data.majorBills, ...data.subscriptions, ...getCreditCardPaymentEntries(data), ...getAdvanceEntries(data)];
 }
 
 function getCreditCardPaymentEntries(data) {
@@ -651,6 +672,7 @@ function buildEntryLookup(data) {
   data.majorBills.forEach((e) => { map[e.id] = e; });
   data.subscriptions.forEach((e) => { map[e.id] = e; });
   getCreditCardPaymentEntries(data).forEach((e) => { map[e.id] = e; });
+  getAdvanceEntries(data).forEach((e) => { map[e.id] = e; });
   data.oneTimeEntries.forEach((e) => { map[e.id] = e; });
   return map;
 }
@@ -784,6 +806,7 @@ function App() {
   }, [data && data.settings && data.settings.hapticsEnabled]);
 
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
+  const [walletPrompt, setWalletPrompt] = useState(false);
   const [syncModal, setSyncModal] = useState(false);
   const [syncBanner, setSyncBanner] = useState(null);
   const isMobile = useIsMobile();
@@ -816,6 +839,10 @@ function App() {
         setLoading(false);
       });
   }, []);
+
+  useEffect(() => {
+    if (data && data.onboardingComplete && walletCheckDue(data)) setWalletPrompt(true);
+  }, [data && data.onboardingComplete]);
 
   useEffect(() => {
     if (!data || !data.onboardingComplete) return;
@@ -913,10 +940,13 @@ function App() {
     });
   }
 
+  const hasWallet = walletOn(data);
+  const spendingLabel = hasWallet ? 'Wallet' : 'Spending';
+
   const NAV_ITEMS = [
     { id: 'home', label: 'Home', icon: 'home' },
     { id: 'overview', label: 'Overview', icon: 'calendar' },
-    { id: 'spending', label: 'Spending', icon: 'bag' },
+    { id: 'spending', label: spendingLabel, icon: hasWallet ? 'wallet' : 'bag' },
     {
       id: 'allbills', label: 'Bills', icon: 'allbills',
       children: [
@@ -955,10 +985,26 @@ function App() {
     pageContent = h(SettingsPage, { data, setData: persist, onRestart: () => persist({ ...getBlankData(), onboardingComplete: false }) });
   }
 
+  const quickAddEl = quickAdd ? h(QuickAddModal, {
+    data,
+    setData: persist,
+    initialDate: quickAdd.date,
+    initialType: quickAdd.type,
+    preset: quickAdd.preset,
+    onClose: () => setQuickAdd(null)
+  }) : null;
+
+  const promptEl = walletPrompt
+    ? h(WalletCheckSheet, { data, setData: persist, prompted: true, onClose: () => setWalletPrompt(false) })
+    : showBackupPrompt ? h(BackupReminderModal, {
+        onDownloadBackup: downloadBackupNow,
+        onDismiss: dismissBackupPrompt
+      }) : null;
+
   const syncBannerEl = syncBanner ? h('div', { className: 'sync-banner' },
-    h('span', { style: { fontSize: '13px' } }, 'A newer version of your data is in your synced file.'),
-    h('div', { style: { display: 'flex', gap: '8px', flexShrink: 0 } },
-      h('button', { className: 'sync-banner-dismiss', onClick: () => setSyncBanner(null) }, 'Ignore'),
+    h('span', { className: 'sync-banner-text' }, 'A newer version of your data is in your synced file.'),
+    h('div', { className: 'sync-banner-actions' },
+      h('button', { onClick: () => setSyncBanner(null) }, 'Ignore'),
       h('button', { className: 'primary', onClick: () => {
         persist({ ...syncBanner.incoming }, { lastModified: syncBanner.incoming.lastModified || Date.now() });
         setSyncBanner(null);
@@ -968,7 +1014,7 @@ function App() {
 
   if (isMobile) {
     const pageTitle = ({
-      home: 'Home', overview: 'Overview', spending: 'Spending',
+      home: 'Home', overview: 'Overview', spending: spendingLabel,
       allbills: 'Bills', essentials: 'Essentials', creditcards: 'Credit cards',
       subscriptions: 'Subscriptions', settings: 'Settings'
     })[page] || 'Finance Calendar';
@@ -992,19 +1038,11 @@ function App() {
         page,
         setPage,
         onAdd: () => setQuickAdd({ date: todayYmd() }),
-        attentionCount: attention.length
+        attentionCount: attention.length,
+        walletOn: hasWallet
       }),
-      quickAdd ? h(QuickAddModal, {
-        data,
-        setData: persist,
-        initialDate: quickAdd.date,
-        preset: quickAdd.preset,
-        onClose: () => setQuickAdd(null)
-      }) : null,
-      showBackupPrompt ? h(BackupReminderModal, {
-        onDownloadBackup: downloadBackupNow,
-        onDismiss: dismissBackupPrompt
-      }) : null
+      quickAddEl,
+      promptEl
     );
   }
 
@@ -1063,36 +1101,23 @@ function App() {
     ),
     h('div', { className: 'main-content' }, syncBannerEl, pageContent),
     syncModal ? h(SyncModal, { data, setData: persist, onClose: () => setSyncModal(false) }) : null,
-    quickAdd ? h(QuickAddModal, {
-      data,
-      setData: persist,
-      initialDate: quickAdd.date,
-      preset: quickAdd.preset,
-      onClose: () => setQuickAdd(null)
-    }) : null,
-    showBackupPrompt ? h(BackupReminderModal, {
-      onDownloadBackup: downloadBackupNow,
-      onDismiss: dismissBackupPrompt
-    }) : null
+    quickAddEl,
+    promptEl
   );
 }
 
 function BackupReminderModal({ onDownloadBackup, onDismiss }) {
-  const overlay = useOverlayDismiss(onDismiss);
-  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
-    h('div', { className: 'modal-content as-window' },
-      h('p', { style: { margin: 0, fontWeight: 500, fontSize: '16px' } }, 'Weekly backup reminder'),
-      h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
-        'Your data lives in this browser only. It\u2019s a good habit to download a backup ',
-        'every so often, in case this browser\u2019s data ever gets cleared.'),
-      h('button', { className: 'primary', onClick: onDownloadBackup }, 'Download backup (.json)'),
-      h('div', { className: 'row-between', style: { marginTop: '4px' } },
-        h('button', { onClick: onDismiss }, 'Remind me later'),
-        h('span', null)
-      ),
-      h('p', { style: { margin: 0, fontSize: '12px', color: 'var(--text-tertiary)' } },
-        'You can turn this reminder off anytime in Settings \u2192 Advanced.')
+  return h(Sheet, {
+    title: 'Weekly backup reminder',
+    onClose: onDismiss,
+    foot: h('div', { className: 'sheet-actions' },
+      h('button', { onClick: onDismiss }, 'Later'),
+      h('button', { className: 'primary', onClick: onDownloadBackup }, 'Download backup')
     )
+  },
+    h('p', { className: 'sheet-lead' },
+      'Your data lives in this browser only. It\u2019s a good habit to download a backup every so often, in case this browser\u2019s data ever gets cleared.'),
+    h('p', { className: 'setup-hint' }, 'You can turn this reminder off in Settings \u2192 Advanced.')
   );
 }
 
@@ -1105,8 +1130,12 @@ function getBlankData() {
     subscriptions: [],
     oneTimeEntries: [],
     creditCards: [],
+    advances: [],
     budgets: {},
+    wallet: { checks: [], snoozed: null },
     paidHistory: {},
+    paidAt: {},
+    coverLog: {},
     dismissedLate: {},
     forcedLate: {},
     deferred: {},
@@ -1134,8 +1163,11 @@ function getBlankData() {
         creditCards: '#8B6FD6',
         incomeSources: '#4FAE6B',
         oneTimePayments: '#D8845A',
-        oneTimeIncome: '#4FAE6B'
+        oneTimeIncome: '#4FAE6B',
+        advances: '#5AA8D8'
       },
+      walletEnabled: true,
+      walletMonthlyCheck: true,
       backupReminderEnabled: true,
       hapticsEnabled: true,
       lastBackupReminderShown: null
@@ -1154,6 +1186,7 @@ function Icon({ name }) {
     card: 'M2 7h20v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7zM2 10h20M6 15h4',
     allbills: 'M9 2h6l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2zM14 2v6h6M9 13h6M9 17h6',
     bag: 'M6 8h12l-1 12H7L6 8zM9 8V6a3 3 0 016 0v2',
+    wallet: 'M4 6.5A2.5 2.5 0 016.5 4H17v3.5M4 6.5V18a2 2 0 002 2h14V7.5H6.5A2.5 2.5 0 014 6.5zM16.5 14h.01',
     refresh: 'M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6'
   };
   return h('svg', {

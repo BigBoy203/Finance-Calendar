@@ -22,13 +22,15 @@ function BillChecklist({ rows, data, currency, onToggle, onOpen }) {
         className: `bill-check-row${paid ? ' paid' : ''}`,
         onClick: () => onOpen(o)
       },
-        h('input', {
-          type: 'checkbox',
-          checked: paid,
-          onClick: (e) => e.stopPropagation(),
-          onChange: () => onToggle(o),
-          'aria-label': `Mark ${o.name} paid`
-        }),
+        o.autoRepay
+          ? h('span', { className: 'auto-mark', title: 'Taken from your paycheck automatically' }, 'Auto')
+          : h('input', {
+              type: 'checkbox',
+              checked: paid,
+              onClick: (e) => e.stopPropagation(),
+              onChange: () => onToggle(o),
+              'aria-label': `Mark ${o.name} paid`
+            }),
         h('span', { className: 'bill-check-accent', style: { background: accentColor } }),
         h('div', { className: 'bill-check-text' },
           h('p', { className: 'bill-check-name' },
@@ -66,13 +68,15 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
             o.pushedTo ? h(PushedMark, { title: `Pushed to ${formatDate(parseYmd(o.pushedTo), data.settings)}` }) : null,
             o.name
           ),
-          h('input', {
-            type: 'checkbox',
-            checked: paid,
-            onClick: (e) => e.stopPropagation(),
-            onChange: () => onToggle(o),
-            'aria-label': `Mark ${o.name} paid`
-          })
+          o.autoRepay
+            ? h('span', { className: 'auto-mark' }, 'Auto')
+            : h('input', {
+                type: 'checkbox',
+                checked: paid,
+                onClick: (e) => e.stopPropagation(),
+                onChange: () => onToggle(o),
+                'aria-label': `Mark ${o.name} paid`
+              })
         ),
         h('p', { className: 'bill-tile-amount' },
           occAmountLabel(o, currency),
@@ -88,7 +92,7 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
 
 function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }) {
   const [overdueOpen, setOverdueOpen] = useState(false);
-  const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext, pushedOut, spent, spendStart } = nextCheck;
+  const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext, pushedOut, spent, spendStart, takes } = nextCheck;
   const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
 
   const headingText = period === 0
@@ -158,7 +162,11 @@ function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }
     ) : null,
 
     estimate ? h('p', { className: 'nextcheck-est' },
-      `Check estimated at ${fmtCurrency(estimate.amount, currency)} — average of your last ${estimate.count} recorded paychecks`
+      `Check estimated at ${fmtCurrency(estimate.amount, currency)} \u2014 average of your last ${estimate.count} recorded paychecks`
+    ) : null,
+
+    takes.length > 0 ? h('p', { className: 'nextcheck-est' },
+      `${takes.map((t) => t.name.replace(/ payback$/, '')).join(' and ')} ${takes.length === 1 ? 'takes' : 'take'} ${fmtCurrency(takes.reduce((sum, t) => sum + t.amount, 0), currency)} back from this check \u2014 the figures above already count it`
     ) : null,
 
     bills.length === 0
@@ -295,7 +303,7 @@ function GlanceGrid({ fin, currency }) {
   const tiles = [
     s.biggestBill ? { label: 'Biggest bill', value: fmtCurrency(s.biggestBill.amount, currency), sub: s.biggestBill.name } : null,
     { label: 'Average payment', value: fmtCurrency(s.avgBill, currency), sub: `across ${s.billCount} ${s.billCount === 1 ? 'payment' : 'payments'}` },
-    { label: 'Income so far', value: fmtCurrency(fin.incomeReceived, currency), sub: `of ${fmtCurrency(fin.totalProjectedIncome, currency)} expected`, tone: 'good' },
+    { label: 'Money in so far', value: fmtCurrency(fin.incomeReceived, currency), sub: `of ${fmtCurrency(fin.totalProjectedIncome, currency)} expected`, tone: 'good' },
     hasLast ? {
       label: 'vs last month',
       value: `${billsDelta > 0 ? '+' : billsDelta < 0 ? '−' : ''}${fmtCurrency(Math.abs(billsDelta), currency)}`,
@@ -305,7 +313,7 @@ function GlanceGrid({ fin, currency }) {
   ].filter(Boolean);
 
   return h('section', { className: 'stats-section' },
-    h('p', { className: 'stats-title' }, 'At a glance'),
+    h(SectionHead, { title: 'At a glance' }),
     h('div', { className: 'spend-stats' },
       tiles.map((t) => h('div', { key: t.label, className: 'spend-stat' },
         h('span', { className: 'spend-stat-label' }, t.label),
@@ -316,8 +324,8 @@ function GlanceGrid({ fin, currency }) {
   );
 }
 
-function ChipToggle({ options, value, onChange }) {
-  return h('div', { className: 'chip-toggle', role: 'tablist' },
+function ChipToggle({ options, value, onChange, wide }) {
+  return h('div', { className: `chip-toggle${wide ? ' wide' : ''}`, role: 'tablist' },
     options.map((o) => h('button', {
       key: o.id,
       role: 'tab',
@@ -373,18 +381,15 @@ function CashFlowChart({ points, currency, todayDay, colors }) {
   ];
 
   return h('section', { className: 'stats-section' },
-    h('div', { className: 'stats-head' },
-      h('div', null,
-        h('p', { className: 'stats-title' }, 'Cash flow'),
-        h('p', { className: 'stats-caption' },
-          hovered ? `Day ${hovered.day}` : (view === 'cumulative' ? 'Running totals through the month' : 'What moves each day'))
-      ),
-      h(ChipToggle, {
+    h(SectionHead, {
+      title: 'Cash flow',
+      caption: hovered ? `Day ${hovered.day}` : (view === 'cumulative' ? 'Running totals through the month' : 'What moves each day'),
+      right: h(ChipToggle, {
         value: view,
         onChange: (v) => { setView(v); setHoverIdx(null); },
         options: [{ id: 'cumulative', label: 'Running' }, { id: 'daily', label: 'Daily' }]
       })
-    ),
+    }),
     h('div', { className: 'cf-legend' },
       series.map((s) => h('span', { key: s.label, className: 'cf-legend-item' },
         h('span', { className: 'cf-legend-dot', style: { background: s.color } }),
@@ -455,17 +460,15 @@ function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setF
   });
 
   return h('section', { className: 'stats-section' },
-    h('div', { className: 'stats-head' },
-      h('div', null,
-        h('p', { className: 'stats-title' }, filter === 'income' ? 'Where it comes from' : 'Where it goes'),
-        h('p', { className: 'stats-caption' }, groupBy === 'source' ? 'Grouped by kind' : 'Grouped by category')
-      ),
-      h(ChipToggle, {
+    h(SectionHead, {
+      title: filter === 'income' ? 'Where it comes from' : 'Where it goes',
+      caption: groupBy === 'source' ? 'Grouped by kind' : 'Grouped by category',
+      right: h(ChipToggle, {
         value: filter,
         onChange: setFilter,
         options: [{ id: 'bills', label: 'Out' }, { id: 'income', label: 'In' }]
       })
-    ),
+    }),
     rows.length === 0
       ? h('p', { className: 'empty-state' }, 'Nothing to show this month.')
       : h('div', { className: 'donut-wrap' },
@@ -505,6 +508,10 @@ function CategoryDonut({ data: rows, currency, groupBy, setGroupBy, filter, setF
 
 function PriceOverrideModal(props) {
   const { data, occ } = props;
+  if (occ.advanceId) {
+    const advance = (data.advances || []).find((a) => a.id === occ.advanceId);
+    if (advance) return h(AdvanceSheet, { data, setData: props.setData, advance, onClose: props.onClose });
+  }
   const oneTime = occ.isOneTime || occ.sourceList === 'oneTimeEntries'
     ? data.oneTimeEntries.find((e) => e.id === occ.id)
     : null;
@@ -515,10 +522,9 @@ function PriceOverrideModal(props) {
 }
 
 function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onClose }) {
-  const overlay = useOverlayDismiss(onClose);
   const existing = getOverride(data, occ.id, occ.occDate);
-  const [price, setPrice] = useState(existing && existing.amount !== undefined ? String(existing.amount) : '');
-  const [confirmRemove, setConfirmRemove] = useState(false);
+  const initialPrice = existing && existing.amount !== undefined ? String(existing.amount) : '';
+  const [price, setPrice] = useState(initialPrice);
   const [cover, setCover] = useState(() => {
     const already = coveredAmount(data, occ.id, occ.occDate);
     return already > 0 ? String(already) : '';
@@ -527,6 +533,7 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
   const [editing, setEditing] = useState(null);
 
   function save() {
+    if (price === initialPrice) { onClose(); return; }
     haptic('success');
     const val = price === '' ? null : parseFloat(price);
     const key = `${occ.id}|${occ.occDate}`;
@@ -548,8 +555,7 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
     const key = `${occ.id}|${occ.occDate}`;
     const next = { ...data.overrides };
     delete next[key];
-    let nextData = logActivity({ ...data, overrides: next }, `Cleared price override for "${occ.name}"`);
-    setData(nextData);
+    setData(logActivity({ ...data, overrides: next }, `Cleared price override for "${occ.name}"`));
     onClose();
   }
 
@@ -559,6 +565,7 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
   const fullAmount = hasAmountOverride(existing) ? Number(existing.amount) || 0 : entryAmount(occ);
   const coverVal = Math.min(parseFloat(cover) || 0, fullAmount);
   const remaining = Math.max(0, fullAmount - coverVal);
+  const isIncome = occ.kind === 'income';
 
   function applyCover() {
     haptic('success');
@@ -606,16 +613,7 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
   }
 
   function removeThisOccurrence() {
-    haptic('heavy');
-    let next;
-    if (occ.sourceList === 'oneTimeEntries') {
-      next = { ...data, oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== occ.id) };
-      next = logActivity(next, `Removed "${occ.name}"`);
-    } else {
-      next = removeOccurrence(data, occ.id, occ.occDate);
-      next = logActivity(next, `Removed "${occ.name}" from calendar for ${occ.occDate}`);
-    }
-    setData(next);
+    setData(logActivity(removeOccurrence(data, occ.id, occ.occDate), `Removed "${occ.name}" from calendar for ${occ.occDate}`));
     onClose();
   }
 
@@ -635,162 +633,116 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
   if (editing) {
     return h(EntryFormModal, Object.assign(
       { data, entry: editing, onSubmit: saveEdit, onClose: () => setEditing(null), submitLabel: 'Save' },
-      getEditModalConfig(occ.sourceList, editing)
+      getEditModalConfig(occ.sourceList)
     ));
   }
 
-  const d = parseYmd(occ.occDate);
-  const dateLabel = formatDate(d, data.settings, { weekday: true, year: true });
+  const dateLabel = formatDate(parseYmd(occ.occDate), data.settings, { weekday: true, year: true });
   const templateLabel = occ.isRange
     ? fmtRange(occ.amountMin, occ.amountMax, currency)
     : fmtCurrency(entryAmount(occ), currency);
+  const showCheckActions = inCheckCard && !isIncome && !paid;
 
-  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
-    h('div', { className: 'modal-content as-window price-modal' },
-      h('div', { className: 'modal-window-head' },
-        h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, occ.name),
-        h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
-          h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
-            h('path', { d: 'M6 6l12 12M18 6L6 18' })
-          )
-        )
-      ),
+  return h(Sheet, {
+    title: occ.name,
+    sub: `${dateLabel} \u00b7 usually ${templateLabel}`,
+    onClose,
+    foot: h('div', { className: 'sheet-actions' },
+      existing ? h('button', { onClick: clearOverride }, 'Clear price') : null,
+      h('button', { className: 'primary', onClick: save }, price === initialPrice ? 'Done' : 'Save price')
+    )
+  },
+    h(AmountField, {
+      label: isIncome ? 'What actually came in' : 'What it actually cost this time',
+      value: price,
+      onChange: setPrice,
+      currency,
+      placeholder: String(Math.round(entryAmount(occ) * 100) / 100)
+    }),
+    h('p', { className: 'setup-hint tight' }, 'Only changes this date \u2014 every other date keeps the usual amount.'),
 
-      h('div', { className: 'price-meta' },
-        h('span', null, dateLabel),
-        h('span', { className: 'price-meta-amt' }, templateLabel)
-      ),
-
-      h('div', { className: 'price-field' },
-        h('label', null, occ.kind === 'income' ? 'What actually came in' : 'What it actually cost this time'),
+    showCheckActions ? h('div', { className: 'action-list' },
+      pushTo ? h(ActionRow, {
+        active: !!pushedTo,
+        title: pushedTo ? `Pushed to ${formatDate(parseYmd(pushedTo), data.settings)}` : 'Push to next check',
+        sub: pushedTo
+          ? 'Tap to pull it back to this pay period'
+          : `Moves it to ${formatDate(parseYmd(pushTo), data.settings)} on Home \u2014 the calendar and totals stay put`,
+        mark: pushedTo ? '\u2713' : '\u203a',
+        onClick: togglePush
+      }) : null,
+      h(ActionRow, {
+        active: covered > 0,
+        title: covered > 0 ? `Covering ${fmtCurrency(covered, currency)}` : 'Cover part of it',
+        sub: covered > 0
+          ? `${fmtCurrency(Math.max(0, fullAmount - covered), currency)} still owed`
+          : 'Put down what you can, carry the rest',
+        mark: h('span', { className: `drop-chevron${coverOpen ? ' open' : ''}` }, '\u203a'),
+        onClick: () => { haptic('light'); setCoverOpen((v) => !v); }
+      }),
+      coverOpen ? h('div', { className: 'cover-panel' },
         h('input', {
           type: 'number',
           inputMode: 'decimal',
-          placeholder: 'e.g. 94.32',
-          value: price,
-          onChange: (e) => setPrice(e.target.value)
+          placeholder: `Up to ${fmtCurrency(fullAmount, currency)}`,
+          value: cover,
+          onChange: (e) => setCover(e.target.value)
         }),
-        h('p', { className: 'price-hint' },
-          'Only changes this date \u2014 every other date keeps the usual amount.')
-      ),
-
-      h('div', { className: 'price-actions' },
-        (inCheckCard && pushTo && occ.kind !== 'income' && !paid)
-          ? h('button', { className: `price-action-row${pushedTo ? ' active' : ''}`, onClick: togglePush },
-              h('div', null,
-                h('span', { className: 'price-action-title' },
-                  pushedTo ? `Pushed to ${formatDate(parseYmd(pushedTo), data.settings)}` : 'Push to next check'),
-                h('span', { className: 'price-action-sub' },
-                  pushedTo
-                    ? 'Tap to pull it back to this pay period'
-                    : `Moves it to ${formatDate(parseYmd(pushTo), data.settings)} on Home \u2014 the calendar and totals stay put`)
-              ),
-              h('span', { className: 'price-action-chevron' }, pushedTo ? '\u2713' : '\u203a')
-            )
-          : null,
-
-        (inCheckCard && occ.kind !== 'income' && !paid)
-          ? h('div', { className: 'price-cover-block' },
-              h('button', {
-                className: `price-action-row${covered > 0 ? ' active' : ''}`,
-                onClick: () => { haptic('light'); setCoverOpen((v) => !v); },
-                'aria-expanded': coverOpen
-              },
-                h('div', null,
-                  h('span', { className: 'price-action-title' },
-                    covered > 0 ? `Covering ${fmtCurrency(covered, currency)}` : 'Cover part of it'),
-                  h('span', { className: 'price-action-sub' },
-                    covered > 0
-                      ? `${fmtCurrency(Math.max(0, fullAmount - covered), currency)} still owed`
-                      : 'Put down what you can, carry the rest')
-                ),
-                h('span', { className: `price-action-chevron${coverOpen ? ' open' : ''}` }, '\u203a')
-              ),
-              coverOpen ? h('div', { className: 'price-cover' },
-                h('input', {
-                  type: 'number',
-                  inputMode: 'decimal',
-                  placeholder: `up to ${fmtCurrency(fullAmount, currency)}`,
-                  value: cover,
-                  onChange: (e) => setCover(e.target.value)
-                }),
-                h('div', { className: 'setup-chips' },
-                  h('button', {
-                    className: 'setup-chip',
-                    onClick: () => { haptic('light'); setCover(String(Math.round((fullAmount / 2) * 100) / 100)); }
-                  }, `Half \u00b7 ${fmtCurrency(fullAmount / 2, currency)}`),
-                  cover !== '' ? h('button', {
-                    className: 'setup-chip',
-                    onClick: () => { haptic('light'); setCover(''); }
-                  }, 'Clear') : null
-                ),
-                h('p', { className: 'price-cover-note' },
-                  coverVal > 0
-                    ? `${fmtCurrency(remaining, currency)} would still be owed`
-                    : 'Enter what you can put toward it now'),
-                h('button', {
-                  className: 'primary price-cover-go',
-                  onClick: applyCover,
-                  disabled: coverVal <= 0 && covered <= 0
-                },
-                  coverVal <= 0
-                    ? 'Clear the covered amount'
-                    : (pushTo && !pushedTo)
-                      ? `Cover ${fmtCurrency(coverVal, currency)} \u00b7 push the rest`
-                      : `Cover ${fmtCurrency(coverVal, currency)}`)
-              ) : null
-            )
-          : null,
-
-        occ.kind === 'income' ? null : occ.isOneTime
-          ? h('button', { className: `price-action-row${paid ? ' active' : ''}`, onClick: togglePaid },
-              h('div', null,
-                h('span', { className: 'price-action-title' }, paid ? 'Paid' : 'Mark as paid'),
-                h('span', { className: 'price-action-sub' }, paid ? 'Tap to undo' : 'Check it off for this date')
-              ),
-              h('span', { className: 'price-action-chevron' }, paid ? '\u2713' : '\u203a')
-            )
-          : h('div', { className: 'price-action-pair' },
-          h('button', { className: `price-action-row half${paid ? ' active' : ''}`, onClick: togglePaid },
-            h('span', { className: 'price-action-title' }, paid ? 'Paid' : 'Mark paid'),
-            h('span', { className: 'price-action-sub' }, paid ? 'Tap to undo' : 'Check it off')
-          ),
-          (forced
-            ? h('button', { className: 'price-action-row half active', onClick: toggleLate },
-                h('span', { className: 'price-action-title' }, 'Marked late'),
-                h('span', { className: 'price-action-sub' }, 'Tap to clear')
-              )
-            : late
-              ? h('button', { className: 'price-action-row half', onClick: dismissLate },
-                  h('span', { className: 'price-action-title' }, 'Late'),
-                  h('span', { className: 'price-action-sub' }, 'Tap to dismiss')
-                )
-              : h('button', { className: 'price-action-row half', onClick: toggleLate },
-                  h('span', { className: 'price-action-title' }, 'Mark late'),
-                  h('span', { className: 'price-action-sub' }, 'Flag this date')
-                ))
+        h('div', { className: 'chip-row' },
+          h('button', {
+            className: 'pick-chip',
+            onClick: () => { haptic('light'); setCover(String(Math.round((fullAmount / 2) * 100) / 100)); }
+          }, `Half \u00b7 ${fmtCurrency(fullAmount / 2, currency)}`),
+          cover !== '' ? h('button', {
+            className: 'pick-chip',
+            onClick: () => { haptic('light'); setCover(''); }
+          }, 'Clear') : null
         ),
-        editable ? h('button', { className: 'price-action-row', onClick: openEdit },
-          h('div', null,
-            h('span', { className: 'price-action-title' }, `Edit ${occ.name}`),
-            h('span', { className: 'price-action-sub' }, 'Change the amount, date or how often it repeats')
-          ),
-          h('span', { className: 'price-action-chevron' }, '\u203a')
-        ) : null,
-        h('button', { className: 'price-action-row danger', onClick: () => confirmRemove ? removeThisOccurrence() : setConfirmRemove(true) },
-          h('div', null,
-            h('span', { className: 'price-action-title' }, confirmRemove ? 'Tap again to confirm' : 'Remove this occurrence'),
-            h('span', { className: 'price-action-sub' },
-              occ.sourceList === 'oneTimeEntries' ? 'Deletes this entry' : 'Only this date; rule stays')
-          ),
-          h('span', { className: 'price-action-chevron' }, '\u203a')
-        )
-      ),
+        h('p', { className: 'setup-hint tight' },
+          coverVal > 0
+            ? `${fmtCurrency(remaining, currency)} would still be owed`
+            : 'Enter what you can put toward it now'),
+        h('button', {
+          className: 'cover-go',
+          onClick: applyCover,
+          disabled: coverVal <= 0 && covered <= 0
+        },
+          coverVal <= 0
+            ? 'Clear the covered amount'
+            : (pushTo && !pushedTo)
+              ? `Cover ${fmtCurrency(coverVal, currency)} \u00b7 push the rest`
+              : `Cover ${fmtCurrency(coverVal, currency)}`)
+      ) : null
+    ) : null,
 
-      h('div', { className: 'price-footer' },
-        existing ? h('button', { className: 'link-btn', onClick: clearOverride }, 'Clear override') : h('span'),
-        h('button', { className: 'primary', onClick: save }, 'Save')
-      )
-    )
+    isIncome ? null : h('div', { className: 'action-list' },
+      h(ActionRow, {
+        active: paid,
+        title: paid ? 'Paid' : 'Mark as paid',
+        sub: paid ? 'Tap to undo' : 'Check it off for this date',
+        mark: paid ? '\u2713' : '\u203a',
+        onClick: togglePaid
+      }),
+      forced
+        ? h(ActionRow, { active: true, tone: 'late', title: 'Marked late', sub: 'Tap to clear', mark: '\u2713', onClick: toggleLate })
+        : late
+          ? h(ActionRow, { tone: 'late', title: 'Late', sub: 'Tap to dismiss the late flag', onClick: dismissLate })
+          : paid ? null : h(ActionRow, { title: 'Mark as late', sub: 'Flag this date', onClick: toggleLate })
+    ),
+
+    editable ? h('div', { className: 'action-list' },
+      h(ActionRow, {
+        title: `Edit ${occ.name}`,
+        sub: 'Change the amount, date or how often it repeats',
+        onClick: openEdit
+      })
+    ) : null,
+
+    h(DeleteRow, {
+      label: 'Remove this date',
+      sub: 'Only this date \u2014 the rest of the schedule stays',
+      armedLabel: 'Tap again to remove',
+      onConfirm: removeThisOccurrence
+    })
   );
 }

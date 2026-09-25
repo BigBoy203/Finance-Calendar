@@ -38,12 +38,17 @@ restored before anything is entered by hand.
 - **Overview** - two views behind one switch: **Calendar** (month grid or
   agenda) and **Statistics** (next 7 days, cash flow, category donut, at a
   glance, vs. last month).
-- **+** - the add window: Purchase, Bill, Subscription, or Income.
-- **Spending** - day-to-day money: what's left for daily life this month after
-  bills and what you've already spent, two-tap re-logging of things you buy
-  often, monthly budgets by category, "Where it went" (each category's share of
-  the month against last month's, tap one to filter the list), this month's
-  purchases, and a six-month trend.
+- **+** - the add window: Purchase, Bill, Subscription (including payment
+  plans, which end after a set number of payments), Income, or Advance.
+- **Wallet** - how much money you actually have. A wallet check sets the
+  balance; paychecks add to it and the bills you mark paid and purchases you log
+  take from it. The app asks for a fresh wallet check the first time you open it
+  each month, and shows how close its math was. Advances (EarnIn, Dave, work,
+  family...) are logged here with an optional flat fee, rate, or APR, and can be
+  paid back automatically from your next paycheck. Below the wallet is the same
+  day-to-day money view as before: what's left for daily life this month, two-tap
+  re-logging, budgets, "Where it went", purchases, and a six-month trend. Turn
+  wallet tracking off in Settings and the tab goes back to being **Spending**.
 - **Bills** - "Needs attention" at the top (anything past due or still using a
   price range), then recurring commitments grouped into Essentials,
   Subscriptions, and Credit cards.
@@ -91,8 +96,8 @@ Pages, Netlify, plain Apache/Nginx), including `assets/` and `vendor/`.
 they're concatenated in a fixed order. After editing any of them, rebuild:
 
 ```
-cat app_core.js mobile.js entryform.js wizard.js quickadd.js home.js \
-    calendar.js overview.js spending.js bills.js subscriptions.js \
+cat app_core.js mobile.js ui.js entryform.js wizard.js quickadd.js home.js \
+    calendar.js overview.js spending.js wallet.js bills.js subscriptions.js \
     creditcards.js allbills.js settings.js > app.js
 echo "" >> app.js
 echo "ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));" >> app.js
@@ -100,4 +105,7 @@ echo "ReactDOM.createRoot(document.getElementById('root')).render(React.createEl
 
 `storage.js` and `sync.js` load as their own script tags and must never be
 concatenated into `app.js`. `mobile.js` sits second, right after
-`app_core.js`.
+`app_core.js`, followed by `ui.js` (the shared sheet and form pieces).
+
+The wallet and advance math has a dependency-free test suite:
+`node .claude/skills/verify/wallet.test.js` (run it after rebuilding).

@@ -26,13 +26,15 @@ function useIsMobile() {
   return isMobile;
 }
 
-const MOBILE_TABS = [
-  { id: 'home', label: 'Home', icon: 'home' },
-  { id: 'overview', label: 'Overview', icon: 'calendar' },
-  { id: 'add', label: 'Add', icon: 'plus', isAdd: true },
-  { id: 'spending', label: 'Spending', icon: 'bag' },
-  { id: 'allbills', label: 'Bills', icon: 'allbills' }
-];
+function mobileTabs(walletOn) {
+  return [
+    { id: 'home', label: 'Home', icon: 'home' },
+    { id: 'overview', label: 'Overview', icon: 'calendar' },
+    { id: 'add', label: 'Add', isAdd: true },
+    walletOn ? { id: 'spending', label: 'Wallet', icon: 'wallet' } : { id: 'spending', label: 'Spending', icon: 'bag' },
+    { id: 'allbills', label: 'Bills', icon: 'allbills' }
+  ];
+}
 
 const TAB_FOR_PAGE = {
   home: 'home',
@@ -44,20 +46,22 @@ const TAB_FOR_PAGE = {
   subscriptions: 'allbills'
 };
 
-function MobileTabBar({ page, setPage, onAdd, attentionCount }) {
+function MobileTabBar({ page, setPage, onAdd, attentionCount, walletOn }) {
   const activeTab = TAB_FOR_PAGE[page] || page;
   return h('nav', { className: 'mobile-tabbar' },
-    MOBILE_TABS.map((tab) => {
+    mobileTabs(walletOn).map((tab) => {
 
       if (tab.isAdd) {
         return h('button', {
           key: tab.id,
           className: 'mobile-tab-add',
           onClick: () => { haptic('medium'); onAdd(); },
-          'aria-label': 'Add expense'
+          'aria-label': 'Add'
         },
-          h('svg', { width: 26, height: 26, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.6, strokeLinecap: 'round' },
-            h('path', { d: 'M12 5v14M5 12h14' })
+          h('span', { className: 'mobile-tab-add-disc' },
+            h('svg', { width: 24, height: 24, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.6, strokeLinecap: 'round' },
+              h('path', { d: 'M12 5v14M5 12h14' })
+            )
           )
         );
       }
@@ -142,5 +146,5 @@ function useSheetDismiss(onClose) {
     startY.current = null;
     dragY.current = 0;
   }
-  return { onTouchStart, onTouchMove, onTouchEnd, onClick: onClose };
+  return { onTouchStart, onTouchMove, onTouchEnd };
 }

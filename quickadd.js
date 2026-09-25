@@ -1,16 +1,13 @@
 
 const ENTRY_TYPES = [
   { id: 'oneTimePayment', label: 'Purchase', icon: '\u{1F4B3}', desc: 'Something you bought' },
-  { id: 'bill', label: 'Bill', icon: '\u{1F4C5}', desc: 'Recurring' },
-  { id: 'subscription', label: 'Subscription', icon: '\u{1F504}', desc: 'Auto-renewing' },
-  { id: 'oneTimeIncome', label: 'Income', icon: '\u{1F4B0}', desc: 'Money in' }
+  { id: 'bill', label: 'Bill', icon: '\u{1F4C5}', desc: 'Rent, utilities — anything that repeats' },
+  { id: 'subscription', label: 'Subscription', icon: '\u{1F504}', desc: 'Renews on its own, or a payment plan' },
+  { id: 'oneTimeIncome', label: 'Income', icon: '\u{1F4B0}', desc: 'Money coming in once' },
+  { id: 'advance', label: 'Advance', icon: '⚡', desc: 'Borrowed now, paid back from a paycheck' }
 ];
 
 const RECURRING_FREQS = ['weekly', 'biweekly', 'monthly', 'yearly'];
-
-function currencySymbol(currency) {
-  return fmtCurrency(0, currency).replace(/[\d.,\s]/g, '') || '$';
-}
 
 function categoriesForType(type) {
   if (type === 'subscription') return MINOR_CATEGORIES;
@@ -37,29 +34,40 @@ function defaultCategoryForType(type) {
   return 'Groceries';
 }
 
-function PickChips({ options, value, onPick }) {
-  return h('div', { className: 'chip-row' },
-    options.map((o) => h('button', {
-      key: o,
-      className: `pick-chip${value === o ? ' on' : ''}`,
-      onClick: () => { haptic('light'); onPick(o); }
-    }, o))
+function TypeList({ type, onPick }) {
+  return h('div', { className: 'type-list' },
+    ENTRY_TYPES.map((t) => h('button', {
+      key: t.id,
+      className: `type-row${type === t.id ? ' on' : ''}`,
+      onClick: () => onPick(t.id)
+    },
+      h('span', { className: 'type-row-icon' }, t.icon),
+      h('span', { className: 'type-row-text' },
+        h('span', { className: 'type-row-name' }, t.label),
+        h('span', { className: 'type-row-desc' }, t.desc)
+      ),
+      h('span', { className: 'type-row-mark' }, type === t.id ? '✓' : '')
+    ))
   );
 }
 
-function QuickAddModal({ data, setData, initialDate, preset, entry: editing, onClose }) {
-  const overlay = useOverlayDismiss(onClose);
+function QuickAddModal({ data, setData, initialDate, initialType, preset, entry: editing, onClose }) {
   const currency = data.settings.currency;
   const isEdit = !!editing;
 
-  const [type, setType] = useState(() => (isEdit && editing.oneTimeKind === 'income') ? 'oneTimeIncome' : 'oneTimePayment');
+  const [type, setType] = useState(() => {
+    if (isEdit) return editing.oneTimeKind === 'income' ? 'oneTimeIncome' : 'oneTimePayment';
+    return initialType || 'oneTimePayment';
+  });
   const [pickerOpen, setPickerOpen] = useState(false);
   const [useRange, setUseRange] = useState(() => isEdit && !!editing.useAmountRange);
   const [useSpan, setUseSpan] = useState(false);
   const [useRepeatEnd, setUseRepeatEnd] = useState(false);
-  const [alreadyPaid, setAlreadyPaid] = useState(() => (isEdit ? isPaid(data, editing.id, editing.date) : true));
+  const [plan, setPlan] = useState(null);
+  const wasPaid = isEdit && isPaid(data, editing.id, editing.date);
+  const [alreadyPaid, setAlreadyPaid] = useState(() => (isEdit ? wasPaid : true));
   const [paidTouched, setPaidTouched] = useState(isEdit);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const adv = useAdvanceForm(data, null);
 
   const [form, setForm] = useState(() => {
     if (isEdit) {
@@ -68,12 +76,14 @@ function QuickAddModal({ data, setData, initialDate, preset, entry: editing, onC
       if (hasAmountOverride(override) && !editing.useAmountRange) shaped.amount = String(override.amount);
       return { ...blankEntry({}), ...shaped, freq: 'none' };
     }
+    const startType = initialType || 'oneTimePayment';
+    const recurring = startType === 'bill' || startType === 'subscription';
     return blankEntry({
       date: initialDate || todayYmd(),
-      freq: 'none',
+      freq: recurring ? 'monthly' : 'none',
       name: (preset && preset.name) || '',
       amount: (preset && preset.amount) ? String(preset.amount) : '',
-      category: (preset && preset.category) || defaultCategoryForType('oneTimePayment')
+      category: (preset && preset.category) || defaultCategoryForType(startType)
     });
   });
 
@@ -85,6 +95,7 @@ function QuickAddModal({ data, setData, initialDate, preset, entry: editing, onC
     haptic('light');
     setType(next);
     setPickerOpen(false);
+    if (next === 'advance') return;
     setForm((f) => {
       const list = categoriesForType(next);
       return {
@@ -93,26 +104,55 @@ function QuickAddModal({ data, setData, initialDate, preset, entry: editing, onC
         category: list.includes(f.category) ? f.category : defaultCategoryForType(next)
       };
     });
-    if (next !== 'oneTimePayment') {
+    if (next !== 'bill' && next !== 'subscription') {
       setUseSpan(false);
       setUseRepeatEnd(false);
+      setPlan(null);
+    }
+  }
+
+  function pickCategory(category) {
+    update('category', category);
+    if (category === PAYMENT_PLAN && !useRepeatEnd) {
+      setUseRepeatEnd(true);
+      setPlan({ auto: true });
+      update('repeatUntil', planEnd(form.date, form.freq, { auto: true }));
     }
   }
 
   function setDate(value) {
-    update('date', value);
+    setForm((f) => ({ ...f, date: value, repeatUntil: planEnd(value, f.freq, plan) || f.repeatUntil }));
     if (!paidTouched) setAlreadyPaid(value <= todayYmd());
+  }
+
+  function setFreq(freq) {
+    setForm((f) => ({ ...f, freq, repeatUntil: planEnd(f.date, freq, plan) || f.repeatUntil }));
+  }
+
+  function pickCount(count) {
+    setPlan({ count });
+    update('repeatUntil', untilForCount(form.date, form.freq, count));
+  }
+
+  function toggleRepeatEnd(on) {
+    setUseRepeatEnd(on);
+    if (!on) setPlan(null);
+    if (on && !form.repeatUntil) {
+      setPlan({ auto: true });
+      update('repeatUntil', planEnd(form.date, form.freq, { auto: true }));
+    }
   }
 
   const isPurchase = type === 'oneTimePayment';
   const isRecurring = type === 'bill' || type === 'subscription';
+  const isAdvance = type === 'advance';
   const categories = useMemo(() => categoriesByUse(data, type), [data.oneTimeEntries, type]);
   const typeInfo = ENTRY_TYPES.find((t) => t.id === type);
 
   const amountValue = useRange
     ? (parseFloat(form.amountMin) || 0) + (parseFloat(form.amountMax) || 0)
     : parseFloat(form.amount) || 0;
-  const canSave = amountValue > 0;
+  const canSave = isAdvance ? adv.canSave : amountValue > 0;
 
   const dateLabel = type === 'oneTimeIncome' ? 'Date received'
     : isPurchase ? 'Date paid'
@@ -123,15 +163,23 @@ function QuickAddModal({ data, setData, initialDate, preset, entry: editing, onC
     const oldKey = `${editing.id}|${editing.date}`;
     const newKey = `${entry.id}|${entry.date}`;
     const paidHistory = { ...data.paidHistory };
+    const paidAt = { ...(data.paidAt || {}) };
     const overrides = { ...(data.overrides || {}) };
+    const oldStamp = paidAt[oldKey];
     delete paidHistory[oldKey];
+    delete paidAt[oldKey];
     delete overrides[oldKey];
-    if (isPurchase && alreadyPaid) paidHistory[newKey] = true;
+    if (isPurchase && alreadyPaid) {
+      paidHistory[newKey] = true;
+      if (!wasPaid) paidAt[newKey] = Date.now();
+      else if (oldStamp) paidAt[newKey] = oldStamp;
+    }
     const kind = isPurchase ? 'payment' : 'income';
     const { _isNew, ...clean } = entry;
     setData(logActivity({
       ...data,
       paidHistory,
+      paidAt,
       overrides,
       oneTimeEntries: data.oneTimeEntries.map((e) => (e.id === editing.id ? { ...e, ...clean, oneTimeKind: kind } : e))
     }, `Edited "${entry.name}"`));
@@ -139,16 +187,17 @@ function QuickAddModal({ data, setData, initialDate, preset, entry: editing, onC
   }
 
   function deleteEntry() {
-    if (!confirmDelete) { haptic('warn'); setConfirmDelete(true); return; }
-    haptic('heavy');
     const key = `${editing.id}|${editing.date}`;
     const paidHistory = { ...data.paidHistory };
+    const paidAt = { ...(data.paidAt || {}) };
     const overrides = { ...(data.overrides || {}) };
     delete paidHistory[key];
+    delete paidAt[key];
     delete overrides[key];
     setData(logActivity({
       ...data,
       paidHistory,
+      paidAt,
       overrides,
       oneTimeEntries: data.oneTimeEntries.filter((e) => e.id !== editing.id)
     }, `Deleted "${editing.name}"`));
@@ -158,6 +207,11 @@ function QuickAddModal({ data, setData, initialDate, preset, entry: editing, onC
   function submit() {
     if (!canSave) return;
     haptic('success');
+    if (isAdvance) {
+      setData(saveAdvance(data, adv.build(), null));
+      onClose();
+      return;
+    }
     const name = form.name.trim() || form.category;
     const entry = {
       ...form,
@@ -184,193 +238,176 @@ function QuickAddModal({ data, setData, initialDate, preset, entry: editing, onC
     } else if (isPurchase) {
       const next = { ...data, oneTimeEntries: [...data.oneTimeEntries, { ...entry, oneTimeKind: 'payment' }] };
       if (alreadyPaid) {
-        next.paidHistory = { ...data.paidHistory, [`${entry.id}|${entry.date}`]: true };
+        const key = `${entry.id}|${entry.date}`;
+        next.paidHistory = { ...data.paidHistory, [key]: true };
+        next.paidAt = { ...(data.paidAt || {}), [key]: Date.now() };
       }
       setData(logActivity(next, `Logged "${name}"`));
     } else {
-      setData(logActivity({ ...data, oneTimeEntries: [...data.oneTimeEntries, { ...entry, oneTimeKind: 'income' }] }, `Added income "${name}"`));
+      setData(logActivity({
+        ...data,
+        oneTimeEntries: [...data.oneTimeEntries, { ...entry, oneTimeKind: 'income', loggedAt: Date.now() }]
+      }, `Added income "${name}"`));
     }
     onClose();
   }
 
-  const header = isEdit ? h('div', { className: 'qa-head' },
-    h('div', { className: 'qa-type' },
-      h('span', { className: 'qa-emoji' }, typeInfo.icon),
-      h('span', { className: 'qa-type-name' }, isPurchase ? 'Edit purchase' : 'Edit income'),
-      h('span', { className: 'qa-type-desc' }, `Logged for ${formatDate(parseYmd(editing.date), data.settings, { weekday: true })}`)
-    )
-  ) : h('div', { className: 'qa-head' },
-    h('button', {
-      className: 'qa-type',
-      onClick: () => { haptic('light'); setPickerOpen(!pickerOpen); },
-      'aria-expanded': pickerOpen
-    },
-      h('span', { className: 'qa-emoji' }, typeInfo.icon),
-      h('span', { className: 'qa-type-name' },
-        typeInfo.label,
-        h('span', { className: `qa-type-caret${pickerOpen ? ' open' : ''}` }, '›')
-      ),
-      h('span', { className: 'qa-type-desc' }, pickerOpen ? 'Pick what you are adding' : typeInfo.desc)
-    ),
-    pickerOpen ? h('div', { className: 'type-tiles' },
-      ENTRY_TYPES.map((t) =>
-        h('button', {
-          key: t.id,
-          className: `type-tile${type === t.id ? ' selected' : ''}`,
-          onClick: () => pickType(t.id)
-        },
-          h('span', { className: 'type-tile-icon' }, t.icon),
-          h('span', { className: 'type-tile-name' }, t.label)
-        )
+  const head = isEdit
+    ? h('div', { className: 'sheet-heading' },
+        h('p', { className: 'sheet-title' }, isPurchase ? 'Edit purchase' : 'Edit income'),
+        h('p', { className: 'sheet-sub' }, `Logged for ${formatDate(parseYmd(editing.date), data.settings, { weekday: true })}`)
       )
-    ) : null
-  );
+    : h('button', {
+        className: `type-btn${pickerOpen ? ' open' : ''}`,
+        onClick: () => { haptic('light'); setPickerOpen(!pickerOpen); },
+        'aria-expanded': pickerOpen
+      },
+        h('span', { className: 'type-btn-icon' }, typeInfo.icon),
+        h('span', { className: 'type-btn-text' },
+          h('span', { className: 'type-btn-name' }, pickerOpen ? 'What are you adding?' : typeInfo.label),
+          h('span', { className: 'type-btn-desc' }, pickerOpen ? 'Pick one below' : 'Tap to change')
+        ),
+        h('span', { className: 'type-btn-caret' }, '›')
+      );
 
   const amountBlock = useRange
     ? h('div', { className: 'setup-entry-grid' },
-        h('div', { className: 'setup-field' },
-          h('label', null, 'Least it can be'),
-          h('input', {
-            type: 'number', inputMode: 'decimal', placeholder: '0',
-            value: form.amountMin, onChange: (e) => update('amountMin', e.target.value)
-          })
+        h(Field, { label: 'Least it can be' },
+          h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: form.amountMin, onChange: (e) => update('amountMin', e.target.value) })
         ),
-        h('div', { className: 'setup-field' },
-          h('label', null, 'Most it can be'),
-          h('input', {
-            type: 'number', inputMode: 'decimal', placeholder: '0',
-            value: form.amountMax, onChange: (e) => update('amountMax', e.target.value)
-          })
+        h(Field, { label: 'Most it can be' },
+          h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: form.amountMax, onChange: (e) => update('amountMax', e.target.value) })
         )
       )
-    : h('div', { className: 'qa-amount' },
-        h('span', { className: 'qa-amount-sym' }, currencySymbol(currency)),
-        h('input', {
-          className: 'qa-amount-input',
-          type: 'number',
-          inputMode: 'decimal',
-          placeholder: '0',
-          autoFocus: !isEdit,
-          value: form.amount,
-          onChange: (e) => update('amount', e.target.value)
-        })
-      );
+    : h(AmountField, { value: form.amount, onChange: (v) => update('amount', v), currency, autoFocus: !isEdit });
 
   const categoryBlock = h('div', { className: 'qa-block' },
     h('p', { className: 'qa-label' }, 'Category'),
-    h(PickChips, { options: categories, value: form.category, onPick: (c) => update('category', c) })
+    h(ChipScroller, {
+      key: type,
+      options: categories,
+      value: form.category,
+      onPick: pickCategory,
+      dotFor: isPurchase ? categoryColor : null,
+      reveal: isEdit || !!(preset && preset.category)
+    })
   );
 
-  const nameBlock = h('div', { className: 'setup-field' },
-    h('label', null, 'Name (optional)'),
+  const nameBlock = h(Field, { label: 'Name' },
     h('input', {
       type: 'text',
-      placeholder: `Defaults to "${form.category}"`,
+      placeholder: `Optional — defaults to “${form.category}”`,
       value: form.name,
       onChange: (e) => update('name', e.target.value)
     })
   );
 
-  const dateBlock = h('div', { className: 'qa-block' },
-    h('p', { className: 'qa-label' }, dateLabel),
-    h('div', { className: 'qa-date-row' },
-      !isRecurring ? h('div', { className: 'chip-row' },
-        h('button', {
-          className: `pick-chip${form.date === todayYmd() ? ' on' : ''}`,
-          onClick: () => { haptic('light'); setDate(todayYmd()); }
-        }, 'Today'),
-        h('button', {
-          className: `pick-chip${form.date === yesterdayYmd() ? ' on' : ''}`,
-          onClick: () => { haptic('light'); setDate(yesterdayYmd()); }
-        }, 'Yesterday')
-      ) : null,
-      h('input', {
-        className: 'qa-date-input',
-        type: 'date',
-        value: form.date,
-        onChange: (e) => setDate(e.target.value)
-      })
-    )
-  );
+  const dateBlock = isRecurring
+    ? h('div', { className: 'setup-entry-grid single' },
+        h(Field, { label: type === 'subscription' ? 'First billing date' : 'First due date' },
+          h(DateField, { value: form.date, onChange: setDate, settings: data.settings })
+        )
+      )
+    : h('div', { className: 'qa-block' },
+        h('p', { className: 'qa-label' }, dateLabel),
+        h(DateChips, { value: form.date, onChange: setDate, settings: data.settings })
+      );
 
   const repeatBlock = isRecurring ? h('div', { className: 'qa-block' },
     h('p', { className: 'qa-label' }, 'Repeats'),
-    h(PickChips, {
-      options: RECURRING_FREQS,
-      value: form.freq,
-      onPick: (f) => update('freq', f)
-    })
+    h(FreqChips, { value: form.freq, onPick: setFreq })
   ) : null;
 
-  function optionRow(id, checked, onChange, label, revealed) {
-    return h('div', { className: 'qa-option' },
-      h('div', { className: 'checkbox-row' },
-        h('input', { type: 'checkbox', id, checked, onChange: (e) => { haptic('light'); onChange(e.target.checked); } }),
-        h('label', { htmlFor: id, style: { margin: 0 } }, label)
-      ),
-      checked && revealed ? h('div', { className: 'qa-reveal' }, revealed) : null
-    );
-  }
-
-  const options = h('div', { className: 'qa-options' },
+  const options = h('div', { className: 'switch-list' },
     isPurchase
-      ? optionRow('qa-paid', alreadyPaid, (v) => { setPaidTouched(true); setAlreadyPaid(v); },
-          'Already paid for', null)
+      ? h(SettingSwitch, {
+          id: 'qa-paid',
+          title: 'Already paid for',
+          sub: alreadyPaid ? 'Counts as spent right away' : 'Stays on the calendar until you check it off',
+          checked: alreadyPaid,
+          onChange: (v) => { setPaidTouched(true); setAlreadyPaid(v); }
+        })
       : null,
-    optionRow('qa-range', useRange, setUseRange, 'The amount varies', null),
+    h(SettingSwitch, {
+      id: 'qa-range',
+      title: 'The amount varies',
+      sub: useRange ? 'Enter the lowest and highest it could be' : null,
+      checked: useRange,
+      onChange: setUseRange
+    }),
     isRecurring
-      ? optionRow('qa-span', useSpan, setUseSpan, 'It spans several days',
-          h('div', { className: 'setup-field' },
-            h('label', null, 'Last day'),
-            h('input', { type: 'date', value: form.dateEnd, onChange: (e) => update('dateEnd', e.target.value) })
-          ))
+      ? h(SettingSwitch, {
+          id: 'qa-end',
+          title: form.category === PAYMENT_PLAN ? 'It ends after the last payment' : 'It stops on a date',
+          sub: useRepeatEnd && form.repeatUntil
+            ? `Last one ${formatDate(parseYmd(form.repeatUntil), data.settings)}`
+            : null,
+          checked: useRepeatEnd,
+          onChange: toggleRepeatEnd
+        })
       : null,
     isRecurring
-      ? optionRow('qa-end', useRepeatEnd, (v) => {
-          setUseRepeatEnd(v);
-          if (v && !form.repeatUntil) update('repeatUntil', defaultRepeatUntil(form.date));
-        }, 'It stops on a date',
-          h('div', { className: 'setup-field' },
-            h('label', null, 'Last payment'),
-            h('input', { type: 'date', value: form.repeatUntil, onChange: (e) => update('repeatUntil', e.target.value) })
-          ))
+      ? h(SettingSwitch, {
+          id: 'qa-span',
+          title: 'It spans several days',
+          sub: useSpan ? 'Shows as a bar across those days on the calendar' : null,
+          checked: useSpan,
+          onChange: setUseSpan
+        })
       : null
   );
 
-  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
-    h('div', { className: 'modal-content as-window qa-modal' },
-      h('button', { className: 'modal-x qa-x', onClick: onClose, 'aria-label': 'Close' },
-        h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
-          h('path', { d: 'M6 6l12 12M18 6L6 18' })
-        )
-      ),
+  const repeatEndBlock = (isRecurring && useRepeatEnd) ? h(RepeatEndBlock, {
+    form,
+    amount: useRange ? amountValue / 2 : amountValue,
+    currency,
+    settings: data.settings,
+    onUntil: (d) => { setPlan(null); update('repeatUntil', d); },
+    onCount: pickCount
+  }) : null;
 
-      header,
+  const spanBlock = (isRecurring && useSpan) ? h(Field, { label: 'Last day it covers' },
+    h(DateField, { value: form.dateEnd, onChange: (d) => update('dateEnd', d), settings: data.settings, placeholder: 'Pick the last day' })
+  ) : null;
+
+  const saveLabel = !canSave
+    ? (isAdvance ? 'Enter the amount and payback' : 'Enter an amount')
+    : isEdit
+      ? 'Save changes'
+      : isAdvance
+        ? `Log ${fmtCurrency(parseFloat(adv.form.amount) || 0, currency)} advance`
+        : `Add ${typeInfo.label.toLowerCase()}${useRange ? '' : ` · ${fmtCurrency(amountValue, currency)}`}`;
+
+  let body;
+  if (pickerOpen) {
+    body = h(TypeList, { type, onPick: pickType });
+  } else if (isAdvance) {
+    body = h(AdvanceFields, { data, adv, autoFocus: true });
+  } else {
+    body = h(React.Fragment, null,
       amountBlock,
       categoryBlock,
       nameBlock,
       dateBlock,
       repeatBlock,
       options,
+      repeatEndBlock,
+      spanBlock,
+      isEdit ? h(DeleteRow, {
+        label: `Delete this ${isPurchase ? 'purchase' : 'income'}`,
+        sub: 'Takes it off the calendar and out of your totals',
+        onConfirm: deleteEntry
+      }) : null
+    );
+  }
 
-      isEdit ? h('button', { className: 'price-action-row danger', onClick: deleteEntry },
-        h('div', null,
-          h('span', { className: 'price-action-title' },
-            confirmDelete ? 'Tap again to delete' : `Delete this ${isPurchase ? 'purchase' : 'income'}`),
-          h('span', { className: 'price-action-sub' },
-            confirmDelete ? 'This cannot be undone' : 'Takes it off the calendar and out of your totals')
-        ),
-        h('span', { className: 'price-action-chevron' }, '\u203a')
-      ) : null,
-
-      h('div', { className: 'qa-actions' },
-        canSave ? null : h('p', { className: 'qa-hint' }, 'Enter an amount to save this.'),
-        h('div', { className: 'qa-foot' },
-          h('button', { onClick: onClose }, 'Cancel'),
-          h('button', { className: 'primary', onClick: submit, disabled: !canSave },
-            isEdit ? 'Save changes' : `Add ${typeInfo.label.toLowerCase()}`)
-        )
-      )
+  return h(Sheet, {
+    head,
+    tall: true,
+    className: 'qa-sheet',
+    onClose,
+    foot: pickerOpen ? null : h('div', { className: 'sheet-actions' },
+      h('button', { className: 'primary', onClick: submit, disabled: !canSave }, saveLabel)
     )
-  );
+  }, body);
 }

@@ -97,7 +97,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
         return d >= gridStart && d <= gridEnd;
       })
       .map((e) => ({ ...oneTimeOccurrence(data, e), sourceList: 'oneTimeEntries' }));
-    return [...recurring, ...oneTime];
+    return [...recurring, ...oneTime, ...advanceInflows(data, gridStart, gridEnd)];
   }, [data, cursor]);
 
   const occByDate = useMemo(() => {
@@ -168,13 +168,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     flushGap(daysInMonth);
     return rows;
   }, [occByDate, cursor, todayStr]);
-  function goToday() {
-    const n = new Date();
-    setCursor(new Date(n.getFullYear(), n.getMonth(), 1));
-    setSelectedDay(null);
-  }
-  const _now = new Date();
-  const isCurrentMonth = cursor.getFullYear() === _now.getFullYear() && cursor.getMonth() === _now.getMonth();
 
   const cells = [];
   let d = new Date(gridStart);
@@ -244,8 +237,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
   }
 
   if (isMobile) {
-    const monthLabel = `${MONTH_NAMES[cursor.getMonth()]} ${cursor.getFullYear()}`;
-
     const gridView = h('div', { className: 'calm-grid-wrap' },
       h('div', { className: 'calm-dow' },
         dowLabels.map((dn) => h('div', { key: dn, className: 'calm-dow-cell' }, dn.slice(0, 1)))
@@ -370,18 +361,14 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
         ));
 
     return h('div', { className: 'calendar-page calm' },
-      h('div', { className: 'calm-header' },
-        h('button', { className: 'calm-nav', onClick: () => changeMonth(-1), 'aria-label': 'Previous month' }, '\u2039'),
-        h('div', { className: 'calm-title-wrap' },
-          h('h2', { className: 'calm-title' }, monthLabel),
-          !isCurrentMonth ? h('button', { className: 'today-btn', onClick: goToday }, 'Today') : null
-        ),
-        h('button', { className: 'calm-nav', onClick: () => changeMonth(1), 'aria-label': 'Next month' }, '\u203a')
-      ),
+      h(MonthHeader, { cursor, onChange: changeMonth }),
 
       h('div', { className: 'calm-toggle' },
-        h('button', { className: `calm-toggle-btn${view === 'grid' ? ' on' : ''}`, onClick: () => setView('grid') }, 'Month'),
-        h('button', { className: `calm-toggle-btn${view === 'agenda' ? ' on' : ''}`, onClick: () => setView('agenda') }, 'Agenda')
+        h(ChipToggle, {
+          value: view,
+          onChange: setView,
+          options: [{ id: 'grid', label: 'Month' }, { id: 'agenda', label: 'Agenda' }]
+        })
       ),
 
       h('div', {
@@ -400,7 +387,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
         dateStr: selectedDay,
         occs: selectedOccs,
         onClose: () => setSelectedDay(null),
-        onAddEntry
+        onAddEntry: () => onAddEntry(selectedDay)
       }) : null
     );
   }
@@ -507,8 +494,6 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
 }
 
 function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAddEntry }) {
-  const sheet = useSheetDismiss(onClose);
-  const overlay = useOverlayDismiss(onClose);
   const [priceModal, setPriceModal] = useState(null);
 
   function togglePaid(o) {
@@ -520,7 +505,6 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
   }
 
   const date = parseYmd(dateStr);
-  const dateLabel = formatDate(date, data.settings, { weekday: true });
   const out = occs.filter((o) => o.kind !== 'income').reduce((sum, o) => sum + o.amount, 0);
   const inflow = occs.filter((o) => o.kind === 'income').reduce((sum, o) => sum + o.amount, 0);
   const summary = [
@@ -528,32 +512,28 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
     inflow > 0 ? `${fmtCurrency(inflow, currency)} in` : null
   ].filter(Boolean).join(' \u00b7 ');
 
-  return h('div', Object.assign({ className: 'modal-overlay' }, overlay),
-    h('div', { className: 'modal-content day-modal' },
-      h('div', { className: 'sheet-grabber', ...sheet, 'aria-label': 'Close' }),
-      h('div', { className: 'day-head' },
-        h('div', null,
-          h('p', { className: 'day-title' }, dateLabel),
-          h('p', { className: 'day-sub' }, occs.length === 0 ? 'Nothing scheduled' : summary)
-        ),
-        h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
-          h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
-            h('path', { d: 'M6 6l12 12M18 6L6 18' })
-          )
-        )
-      ),
-
-      occs.length === 0 ? null : h('div', { className: 'entry-list day-list' },
-        occs.map((o, i) => {
-          const income = o.kind === 'income';
-          const { paid, late } = lateState(data, o);
-          return h('div', {
-            key: `${o.id}-${i}`,
-            className: `day-row${paid && !income ? ' paid' : ''}`,
-            onClick: () => setPriceModal(o)
-          },
-            income
-              ? h('span', { className: 'entry-row-swatch', style: { background: getEntryColor(o, data) || '#4FAE6B' } })
+  return h(Sheet, {
+    title: formatDate(date, data.settings, { weekday: true }),
+    sub: occs.length === 0 ? 'Nothing scheduled' : summary,
+    className: 'day-modal',
+    onClose,
+    foot: h('div', { className: 'sheet-actions' },
+      h('button', { onClick: () => { onClose(); onAddEntry(); } }, `+ Add something on ${formatDate(date, data.settings)}`)
+    )
+  },
+    occs.length === 0 ? null : h('div', { className: 'entry-list' },
+      occs.map((o, i) => {
+        const income = o.kind === 'income';
+        const { paid, late } = lateState(data, o);
+        return h('div', {
+          key: `${o.id}-${i}`,
+          className: `day-row${paid && !income ? ' paid' : ''}`,
+          onClick: () => setPriceModal(o)
+        },
+          income
+            ? h('span', { className: 'entry-row-swatch', style: { background: getEntryColor(o, data) || '#4FAE6B' } })
+            : o.autoRepay
+              ? h('span', { className: 'auto-mark' }, 'Auto')
               : h('input', {
                   type: 'checkbox',
                   checked: paid,
@@ -561,27 +541,25 @@ function DayDetailModal({ data, setData, currency, dateStr, occs, onClose, onAdd
                   onChange: () => togglePaid(o),
                   'aria-label': `Mark ${o.name} paid`
                 }),
-            h('span', { className: 'entry-row-text' },
-              h('span', { className: 'entry-row-name' },
-                late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
-                o.name),
-              h('span', { className: 'entry-row-sub' },
-                income ? 'Income' : [paid ? 'Paid' : (late ? 'Late' : null), o.category || SOURCE_GROUP_LABELS[o.sourceList]].filter(Boolean).join(' \u00b7 '))
-            ),
-            h('span', { className: `entry-row-amt${income ? ' positive' : ''}` },
-              `${income ? '+' : ''}${occAmountLabel(o, currency)}`),
-            h('span', { className: 'att-chevron' }, '\u203a')
-          );
-        })
-      ),
+          h('span', { className: 'entry-row-text' },
+            h('span', { className: 'entry-row-name' },
+              late ? h('span', { className: 'late-dot', title: 'Late' }) : null,
+              o.name),
+            h('span', { className: 'entry-row-sub' },
+              income
+                ? (o.sourceList === 'advances' ? 'Advance' : 'Income')
+                : [paid ? (o.autoRepay ? 'Taken from paycheck' : 'Paid') : (late ? 'Late' : null), o.category || SOURCE_GROUP_LABELS[o.sourceList]].filter(Boolean).join(' \u00b7 '))
+          ),
+          h('span', { className: `entry-row-amt${income ? ' positive' : ''}` },
+            `${income ? '+' : ''}${occAmountLabel(o, currency)}`),
+          h('span', { className: 'att-chevron' }, '\u203a')
+        );
+      })
+    ),
 
-      h('button', { className: 'add-row', onClick: () => { onClose(); onAddEntry(); } },
-        `+ Add something on ${formatDate(date, data.settings)}`),
-
-      priceModal ? h(PriceOverrideModal, {
-        data, setData, occ: priceModal, currency,
-        onClose: () => setPriceModal(null)
-      }) : null
-    )
+    priceModal ? h(PriceOverrideModal, {
+      data, setData, occ: priceModal, currency,
+      onClose: () => setPriceModal(null)
+    }) : null
   );
 }

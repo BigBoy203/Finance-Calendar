@@ -122,10 +122,8 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
           : null,
         h('span', { className: `drop-chevron${attentionCollapsed ? '' : ' open'}` }, '\u203a')
       ),
-      !attentionCollapsed ? h('div', { style: { marginTop: '10px' } },
-        h('div', { className: 'info-banner' },
-          h('p', { style: { margin: 0, fontSize: '13px' } }, attentionSummary(attention, currency))
-        ),
+      !attentionCollapsed ? h('div', { className: 'attention-body' },
+        h('div', { className: 'info-banner' }, attentionSummary(attention, currency)),
         attention.length > 0
           ? h('div', { className: 'att-list' },
               visibleAttention.map((o) => h(AttentionRow, {
@@ -162,7 +160,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
       )
     );
 
-  return h('div', null,
+  return h('div', { className: 'page-stack' },
     isMobile ? null : h('h2', null, 'Bills'),
 
     attentionBlock,
@@ -170,7 +168,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
 
     unified.length === 0
       ? h('p', { className: 'empty-state' }, 'Nothing added yet.')
-      : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '18px', marginTop: '8px' } },
+      : h('div', { className: 'bill-groups' },
           visibleGroups.map(([key, rows]) =>
             h('div', { key },
               h('div', { className: 'category-group-header' },
@@ -185,7 +183,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
                 rows.map((e) => h(EntryRow, {
                   key: `${e.sourceList}-${e.id}`,
                   name: e.name,
-                  sub: scheduleLabel(e, data.settings),
+                  sub: scheduleLabel(e, data),
                   amount: entryAmountLabel(e, currency),
                   color: getEntryColor(e, data),
                   onClick: () => openEdit(e)
@@ -202,7 +200,7 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
 
     editing ? h(EntryFormModal, Object.assign(
       { data, entry: editing.form, onSubmit: handleEditSubmit, onClose: () => setEditing(null), submitLabel: 'Save' },
-      getEditModalConfig(editing.sourceList, editing.form),
+      getEditModalConfig(editing.sourceList),
       {
         deleteLabel: `Delete ${editing.form.name || 'this entry'}`,
         onDelete: () => { deleteEntry({ ...editing.form, sourceList: editing.sourceList }); setEditing(null); }

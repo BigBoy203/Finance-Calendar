@@ -5,7 +5,8 @@ const SECTION_COLOR_LABELS = [
   { key: 'creditCards', label: 'Credit card payments' },
   { key: 'incomeSources', label: 'Income' },
   { key: 'oneTimePayments', label: 'Purchases' },
-  { key: 'oneTimeIncome', label: 'One-time income' }
+  { key: 'oneTimeIncome', label: 'One-time income' },
+  { key: 'advances', label: 'Advances' }
 ];
 
 const SETTINGS_TABS = [
@@ -53,21 +54,22 @@ function CustomAccentPicker({ hex, onChange }) {
   const setHsl = (nh, ns, nl) => onChange(hslToHex(nh, ns, nl));
 
   const row = (label, value, min, max, onInput, trackBg) =>
-    h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' } },
-      h('span', { style: { fontSize: '12px', color: 'var(--text-secondary)', width: '68px', flexShrink: 0 } }, label),
+    h('label', { className: 'accent-slider-row' },
+      h('span', { className: 'accent-slider-label' }, label),
       h('input', {
         type: 'range', min, max, value,
         onChange: (e) => onInput(Number(e.target.value)),
         className: 'accent-slider',
-        style: { flex: 1, background: trackBg }
+        style: { background: trackBg }
       })
     );
 
   return h('div', { className: 'custom-accent-picker' },
-    h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' } },
+    h('div', { className: 'accent-hex-row' },
       h('span', { className: 'accent-preview', style: { background: hex } }),
       h('input', {
         type: 'text',
+        className: 'accent-hex',
         value: hex,
         onChange: (e) => {
           let v = e.target.value.trim();
@@ -75,7 +77,6 @@ function CustomAccentPicker({ hex, onChange }) {
           onChange(v);
         },
         placeholder: '#378ADD',
-        style: { width: '120px', fontFamily: 'monospace' },
         maxLength: 7
       })
     ),
@@ -92,6 +93,7 @@ function SettingsPage({ data, setData, onRestart }) {
   const [tab, setTab] = useState('general');
   const [confirming, setConfirming] = useState(false);
   const [editingIncome, setEditingIncome] = useState(null);
+  const [walletCheck, setWalletCheck] = useState(false);
   const currency = data.settings.currency;
 
   function updateSetting(field, value) {
@@ -128,7 +130,8 @@ function SettingsPage({ data, setData, onRestart }) {
   if (tab === 'general') {
     tabContent = h(GeneralTab, {
       data, currency, updateSetting,
-      onAddIncome: openAddIncome, onEditIncome: openEditIncome
+      onAddIncome: openAddIncome, onEditIncome: openEditIncome,
+      onWalletCheck: () => setWalletCheck(true)
     });
   } else if (tab === 'colors') {
     tabContent = h(ColorsTab, { data, updateSectionColor });
@@ -136,24 +139,20 @@ function SettingsPage({ data, setData, onRestart }) {
     tabContent = h(AdvancedTab, { data, setData, updateSetting, onRestart, confirming, setConfirming });
   }
 
-  return h('div', null,
-    h('div', { className: 'sub-head' },
-      h('h2', { className: 'sub-title' }, 'Settings'),
-      h('p', { className: 'sub-caption' }, `Finance Calendar \u00b7 version ${WEB_VERSION}`)
-    ),
-    h('div', { className: 'segmented', style: { marginBottom: '16px', maxWidth: '420px' } },
-      SETTINGS_TABS.map((t) =>
-        h('div', { key: t.id, className: tab === t.id ? 'selected' : '', onClick: () => setTab(t.id) }, t.label)
-      )
+  return h('div', { className: 'page-stack' },
+    h('h2', { className: 'sub-title' }, 'Settings'),
+    h('div', { className: 'settings-tabs' },
+      h(ChipToggle, { wide: true, options: SETTINGS_TABS, value: tab, onChange: setTab })
     ),
     tabContent,
+    walletCheck ? h(WalletCheckSheet, { data, setData, onClose: () => setWalletCheck(false) }) : null,
 
     editingIncome ? h(EntryFormModal, {
       data,
       title: editingIncome._isNew ? 'Add income source' : 'Edit income source',
       entry: editingIncome,
       categories: null,
-      dateLabel: 'Next pay date',
+      dateLabel: 'Pay date',
       isIncome: true,
       submitLabel: editingIncome._isNew ? 'Add' : 'Save',
       onSubmit: handleIncomeSubmit,
@@ -164,8 +163,47 @@ function SettingsPage({ data, setData, onRestart }) {
   );
 }
 
-function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome }) {
-  return h('div', null,
+function WalletSettingsCard({ data, updateSetting, onWalletCheck }) {
+  const on = walletOn(data);
+  const summary = on ? walletSummary(data) : null;
+  const currency = data.settings.currency;
+  return h('div', { className: 'card' },
+    h('p', { className: 'settings-card-title' }, 'Wallet'),
+    h('p', { className: 'settings-card-sub' },
+      summary
+        ? `${fmtCurrency(summary.balance, currency)} available \u00b7 last wallet check ${formatDate(parseYmd(summary.check.date), data.settings)}`
+        : 'A running balance of the money you actually have, kept honest by a quick check each month.'),
+    h('div', { className: 'switch-list' },
+      h(SettingSwitch, {
+        id: 'wallet-on',
+        title: 'Track my wallet',
+        sub: 'Turns Spending into your Wallet \u2014 paychecks add to it, bills and purchases take from it',
+        checked: on,
+        onChange: (v) => {
+          updateSetting('walletEnabled', v);
+          if (v && !lastWalletCheck(data)) onWalletCheck();
+        }
+      }),
+      on ? h(SettingSwitch, {
+        id: 'wallet-monthly',
+        title: 'Monthly wallet check',
+        sub: 'Asks what you have the first time you open the app each month',
+        checked: data.settings.walletMonthlyCheck !== false,
+        onChange: (v) => updateSetting('walletMonthlyCheck', v)
+      }) : null
+    ),
+    on ? h('div', { className: 'action-list' },
+      h(ActionRow, {
+        title: 'Do a wallet check now',
+        sub: 'Tell the app what you have so the balance matches your bank',
+        onClick: onWalletCheck
+      })
+    ) : null
+  );
+}
+
+function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome, onWalletCheck }) {
+  return h('div', { className: 'settings-stack' },
 
     h('div', { className: 'card' },
       h('p', { className: 'settings-card-title' }, 'Income sources'),
@@ -178,7 +216,7 @@ function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome }
               return h(EntryRow, {
                 key: e.id,
                 name: e.name,
-                sub: scheduleLabel(e, data.settings),
+                sub: scheduleLabel(e, data),
                 note: avg
                   ? (avg.ready
                       ? `\u2248${fmtCurrency(avg.amount, currency)} estimated \u00b7 average of your last ${avg.count} checks`
@@ -194,34 +232,32 @@ function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome }
       h('button', { className: 'add-row', onClick: onAddIncome }, '+ Add an income source')
     ),
 
-    h('div', { className: 'card', style: { marginTop: '12px' } },
+    h(WalletSettingsCard, { data, updateSetting, onWalletCheck }),
+
+    h('div', { className: 'card' },
       h('p', { className: 'settings-card-title' }, 'Appearance'),
-      h('label', null, 'Theme'),
-      h('div', { className: 'segmented', style: { marginBottom: '12px' } },
-        ['system', 'light', 'dark'].map((t) =>
-          h('div', {
-            key: t,
-            className: data.settings.theme === t ? 'selected' : '',
-            onClick: () => updateSetting('theme', t)
-          }, t.charAt(0).toUpperCase() + t.slice(1))
-        )
-      ),
-      h('label', null, 'Accent color'),
-      h('div', { className: 'swatch-row', style: { marginBottom: '12px' } },
+      h('p', { className: 'qa-label' }, 'Theme'),
+      h(ChipToggle, {
+        wide: true,
+        options: [{ id: 'system', label: 'System' }, { id: 'light', label: 'Light' }, { id: 'dark', label: 'Dark' }],
+        value: data.settings.theme,
+        onChange: (t) => updateSetting('theme', t)
+      }),
+      h('p', { className: 'qa-label' }, 'Accent color'),
+      h('div', { className: 'swatch-row' },
         ACCENTS.map((a) =>
-          h('div', {
+          h('button', {
             key: a.id,
             className: `swatch${data.settings.accent === a.id ? ' selected' : ''}`,
             style: { background: a.hex },
-            title: a.label,
-            onClick: () => updateSetting('accent', a.id)
+            'aria-label': a.label,
+            onClick: () => { haptic('light'); updateSetting('accent', a.id); }
           })
         ),
-
-        h('label', {
+        h('button', {
           className: `swatch swatch-custom${data.settings.accent === 'custom' ? ' selected' : ''}`,
-          title: 'Custom color',
-          onClick: () => updateSetting('accent', 'custom'),
+          'aria-label': 'Custom color',
+          onClick: () => { haptic('light'); updateSetting('accent', 'custom'); },
           style: data.settings.accent === 'custom' && data.settings.accentCustom
             ? { background: data.settings.accentCustom }
             : undefined
@@ -233,46 +269,39 @@ function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome }
             onChange: (hex) => updateSetting('accentCustom', hex)
           })
         : null,
-      h('label', null, 'First day of week'),
-      h('div', { className: 'segmented' },
-        [{ id: 0, label: 'Sunday' }, { id: 1, label: 'Monday' }].map((o) =>
-          h('div', {
-            key: o.id,
-            className: data.settings.firstDayOfWeek === o.id ? 'selected' : '',
-            onClick: () => updateSetting('firstDayOfWeek', o.id)
-          }, o.label)
-        )
-      )
+      h('p', { className: 'qa-label' }, 'First day of week'),
+      h(ChipToggle, {
+        wide: true,
+        options: [{ id: 0, label: 'Sunday' }, { id: 1, label: 'Monday' }],
+        value: data.settings.firstDayOfWeek,
+        onChange: (v) => updateSetting('firstDayOfWeek', v)
+      })
     ),
 
-    h('div', { className: 'card', style: { marginTop: '12px' } },
+    h('div', { className: 'card' },
       h('p', { className: 'settings-card-title' }, 'Money & bills'),
       h('div', { className: 'setup-entry-grid' },
-        h('div', { className: 'setup-field' },
-          h('label', null, 'Currency'),
+        h(Field, { label: 'Currency' },
           h('select', {
             value: data.settings.currency,
             onChange: (e) => updateSetting('currency', e.target.value)
           }, CURRENCIES.map((c) => h('option', { key: c, value: c }, c)))
         ),
-        h('div', { className: 'setup-field' },
-          h('label', null, 'Late after'),
+        h(Field, { label: 'Late after' },
           h('input', {
             type: 'number', inputMode: 'numeric', min: 0, max: 30,
             value: data.settings.lateGraceDays,
             onChange: (e) => updateSetting('lateGraceDays', parseInt(e.target.value, 10) || 0)
           })
         ),
-        h('div', { className: 'setup-field' },
-          h('label', null, 'Flag bills early'),
+        h(Field, { label: 'Flag bills early' },
           h('input', {
             type: 'number', inputMode: 'numeric', min: 0, max: 60,
             value: data.settings.needsAttentionLookaheadDays,
             onChange: (e) => updateSetting('needsAttentionLookaheadDays', parseInt(e.target.value, 10) || 0)
           })
         ),
-        h('div', { className: 'setup-field' },
-          h('label', null, 'Flag income early'),
+        h(Field, { label: 'Flag income early' },
           h('input', {
             type: 'number', inputMode: 'numeric', min: 0, max: 60,
             value: data.settings.incomeNeedsAttentionLookaheadDays,
@@ -302,43 +331,23 @@ function GeneralTab({ data, currency, updateSetting, onAddIncome, onEditIncome }
   );
 }
 
-function SettingSwitch({ id, title, sub, checked, onChange }) {
-  return h('label', { className: 'switch-row', htmlFor: id },
-    h('span', { className: 'switch-text' },
-      h('span', { className: 'switch-title' }, title),
-      sub ? h('span', { className: 'switch-sub' }, sub) : null
-    ),
-    h('input', {
-      type: 'checkbox',
-      id,
-      className: 'switch',
-      checked,
-      onChange: (e) => onChange(e.target.checked)
-    })
-  );
-}
-
 function ColorsTab({ data, updateSectionColor }) {
-  return h('div', null,
+  return h('div', { className: 'settings-stack' },
     h('div', { className: 'card' },
       h('p', { className: 'settings-card-title' }, 'Section colors'),
-      h('p', { style: { margin: '0 0 12px', fontSize: '13px', color: 'var(--text-secondary)' } },
-        'These colors are used for chips and bars on the calendar. Any individual bill, subscription, ' +
-        'income source, or one-time entry can override its color from its edit window.'),
-      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
+      h('p', { className: 'settings-card-sub' },
+        'Used for dots, bars and chips on the calendar. Any single bill, subscription or income source can use its own color from its edit window.'),
+      h('div', { className: 'color-list' },
         SECTION_COLOR_LABELS.map(({ key, label }) =>
-          h('div', { key, className: 'row-between' },
-            h('span', { style: { fontSize: '14px' } }, label),
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-              h('input', {
-                type: 'color',
-                value: data.settings.sectionColors[key] || '#888888',
-                onChange: (e) => updateSectionColor(key, e.target.value),
-                className: 'color-input'
-              }),
-              h('span', { style: { fontSize: '12px', color: 'var(--text-secondary)', fontFamily: 'monospace' } },
-                (data.settings.sectionColors[key] || '#888888').toUpperCase())
-            )
+          h('label', { key, className: 'color-row' },
+            h('span', { className: 'color-row-swatch', style: { background: data.settings.sectionColors[key] || '#888888' } }),
+            h('span', { className: 'color-row-name' }, label),
+            h('span', { className: 'color-row-hex' }, (data.settings.sectionColors[key] || '#888888').toUpperCase()),
+            h('input', {
+              type: 'color',
+              value: data.settings.sectionColors[key] || '#888888',
+              onChange: (e) => updateSectionColor(key, e.target.value)
+            })
           )
         )
       )
@@ -358,25 +367,21 @@ function relativeTime(ms) {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
-function SyncCard({ data, setData, embedded }) {
+function SyncCard({ data, setData }) {
   const [linked, setLinked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [conflict, setConflict] = useState(null);
-  const conflictOverlay = useOverlayDismiss(() => setConflict(null));
   const supportsFile = Sync.supportsFileSystem;
 
   useEffect(() => {
     Sync.hasLinkedFile().then(setLinked);
   }, []);
 
-  const lastModified = data.lastModified;
-
   function flash(ok, text) { setMsg({ ok, text }); }
 
   async function handleSync() {
     setBusy(true); setMsg(null);
-
     const stamp = Date.now();
     const stamped = { ...data, lastModified: stamp };
     const res = await Sync.writeOut(stamped);
@@ -386,10 +391,8 @@ function SyncCard({ data, setData, embedded }) {
       setData(withStamp, { lastModified: stamp });
       flash(true, res.mode === 'file'
         ? 'Synced to your file.'
-        : 'Exported \u2014 choose where to save it (Files, LocalSend, etc.).');
-    } else if (res.canceled) {
-
-    } else {
+        : 'Exported — choose where to save it (Files, LocalSend, etc.).');
+    } else if (!res.canceled) {
       flash(false, res.error || 'Could not sync.');
     }
   }
@@ -406,10 +409,7 @@ function SyncCard({ data, setData, embedded }) {
       return;
     }
     const incoming = res.data;
-    const incomingTime = incoming.lastModified || 0;
-    const localTime = data.lastModified || 0;
-    if (incomingTime < localTime) {
-
+    if ((incoming.lastModified || 0) < (data.lastModified || 0)) {
       setConflict({ incoming });
       return;
     }
@@ -418,7 +418,6 @@ function SyncCard({ data, setData, embedded }) {
   }
 
   function applyIncoming(incoming) {
-
     setData(incoming, { lastModified: incoming.lastModified || Date.now() });
     setConflict(null);
   }
@@ -429,13 +428,7 @@ function SyncCard({ data, setData, embedded }) {
     setBusy(false);
     if (res.ok) {
       setLinked(true);
-      if (existing) {
-
-        await handleLoad();
-      } else {
-
-        await handleSync();
-      }
+      if (existing) await handleLoad(); else await handleSync();
     } else if (!res.canceled) {
       flash(false, res.error || 'Could not link a file.');
     }
@@ -447,74 +440,57 @@ function SyncCard({ data, setData, embedded }) {
     flash(true, 'Unlinked. This device no longer auto-syncs to that file.');
   }
 
-  return h('div', { className: embedded ? '' : 'card', style: embedded ? { marginTop: '4px' } : { marginTop: '12px' } },
-    embedded ? null : h('p', { className: 'settings-card-title' }, 'Sync'),
-    h('p', { style: { margin: '0 0 10px', fontSize: '13px', color: 'var(--text-secondary)' } },
+  return h('div', { className: 'sync-card' },
+    h('p', { className: 'sheet-lead' },
       supportsFile
-        ? 'Keep this device in step with a single data file. Link it once, then Sync writes your latest data to it and Load pulls the newest back in. Your data stays on your device and in your own file \u2014 never on a server.'
+        ? 'Keep this device in step with a single data file. Link it once, then Sync writes your latest data to it and Load pulls the newest back in. Your data stays on your device and in your own file — never on a server.'
         : 'Sync exports your data through the share sheet (Save to Files, LocalSend, and so on) and loads it back when you switch devices. Newest data always wins. Nothing is sent to a server.'),
 
     h('div', { className: 'sync-status' },
-      h('span', { className: 'sync-dot', style: { background: lastModified ? 'var(--text-success)' : 'var(--text-tertiary)' } }),
-      h('span', { style: { fontSize: '13px' } },
-        'Last change: ', h('strong', null, relativeTime(lastModified)))
+      h('span', { className: `sync-dot${data.lastModified ? ' on' : ''}` }),
+      h('span', null, 'Last change: ', h('strong', null, relativeTime(data.lastModified))),
+      linked ? h('span', { className: 'sync-linked-pill' }, '✓ File linked') : null
     ),
 
-    supportsFile ? h('div', { style: { marginTop: '10px' } },
+    supportsFile ? h('div', { className: 'button-row' },
       linked
-        ? h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
-            h('span', { className: 'sync-linked-pill' }, '\u2713 File linked'),
-            h('button', { className: 'link-btn', onClick: handleUnlink }, 'Unlink')
-          )
-        : h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+        ? h('button', { onClick: handleUnlink, disabled: busy }, 'Unlink file')
+        : h(React.Fragment, null,
             h('button', { onClick: () => handleLink(false), disabled: busy }, 'Create sync file'),
             h('button', { onClick: () => handleLink(true), disabled: busy }, 'Link existing file')
           )
     ) : null,
 
-    h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '12px' } },
+    h('div', { className: 'button-row' },
+      h('button', { onClick: handleLoad, disabled: busy }, 'Load from file'),
       h('button', { className: 'primary', onClick: handleSync, disabled: busy },
-        busy ? 'Working\u2026' : (supportsFile && linked ? 'Sync now' : 'Export / share')),
-      h('button', { onClick: handleLoad, disabled: busy },
-        supportsFile && linked ? 'Load from file' : 'Load from file\u2026')
+        busy ? 'Working…' : (supportsFile && linked ? 'Sync now' : 'Export / share'))
     ),
 
-    msg ? h('p', { style: { margin: '10px 0 0', fontSize: '13px', color: msg.ok ? 'var(--text-success)' : 'var(--late-red)' } }, msg.text) : null,
+    msg ? h('p', { className: `form-msg ${msg.ok ? 'good' : 'bad'}` }, msg.text) : null,
 
-    conflict ? h('div', Object.assign({ className: 'modal-overlay as-window' }, conflictOverlay),
-      h('div', { className: 'modal-content as-window' },
-        h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, 'That file is older'),
-        h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
-          `The data you're loading was last changed ${relativeTime(conflict.incoming.lastModified)}, but this device has newer changes from ${relativeTime(data.lastModified)}. Loading it will replace your newer data.`),
-        h('div', { className: 'row-between', style: { marginTop: '4px' } },
-          h('button', { onClick: () => setConflict(null) }, 'Keep mine'),
-          h('button', { className: 'danger-text', onClick: () => { applyIncoming(conflict.incoming); flash(true, 'Loaded the older file.'); } }, 'Load it anyway')
-        )
+    conflict ? h(Sheet, {
+      title: 'That file is older',
+      onClose: () => setConflict(null),
+      foot: h('div', { className: 'sheet-actions' },
+        h('button', { onClick: () => setConflict(null) }, 'Keep mine'),
+        h('button', { className: 'danger', onClick: () => { applyIncoming(conflict.incoming); flash(true, 'Loaded the older file.'); } }, 'Load it anyway')
       )
+    },
+      h('p', { className: 'sheet-lead' },
+        `The data you're loading was last changed ${relativeTime(conflict.incoming.lastModified)}, but this device has newer changes from ${relativeTime(data.lastModified)}. Loading it will replace your newer data.`)
     ) : null
   );
 }
 
 function SyncModal({ data, setData, onClose }) {
-  const overlay = useOverlayDismiss(onClose);
-  return h('div', Object.assign({ className: 'modal-overlay as-window' }, overlay),
-    h('div', { className: 'modal-content as-window' },
-      h('div', { className: 'modal-window-head' },
-        h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px' } }, 'Sync'),
-        h('button', { className: 'modal-x', onClick: onClose, 'aria-label': 'Close' },
-          h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' },
-            h('path', { d: 'M6 6l12 12M18 6L6 18' })
-          )
-        )
-      ),
-      h(SyncCard, { data, setData, embedded: true })
-    )
+  return h(Sheet, { title: 'Sync', onClose },
+    h(SyncCard, { data, setData })
   );
 }
 
 function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setConfirming }) {
   const [importWarning, setImportWarning] = useState(false);
-  const importOverlay = useOverlayDismiss(() => setImportWarning(false));
   const [importError, setImportError] = useState(null);
   const [importSuccess, setImportSuccess] = useState(false);
   const [exportError, setExportError] = useState(null);
@@ -546,77 +522,46 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
     }
   }
 
-  return h('div', null,
+  return h('div', { className: 'settings-stack' },
     h('div', { className: 'card' },
       h('p', { className: 'settings-card-title' }, 'Display'),
-      h('label', null, 'Date format'),
-      h('div', { className: 'segmented', style: { marginBottom: '12px' } },
-        [
+      h('p', { className: 'qa-label' }, 'Date format'),
+      h(ChipToggle, {
+        wide: true,
+        options: [
           { id: 'short', label: 'Jun 15' },
           { id: 'long', label: 'June 15, 2026' },
           { id: 'iso', label: '2026-06-15' }
-        ].map((o) =>
-          h('div', {
-            key: o.id,
-            className: data.settings.dateFormat === o.id ? 'selected' : '',
-            onClick: () => updateSetting('dateFormat', o.id)
-          }, o.label)
-        )
-      ),
-      h('label', null, 'Density'),
-      h('div', { className: 'segmented', style: { marginBottom: '12px' } },
-        [{ id: 'comfortable', label: 'Comfortable' }, { id: 'compact', label: 'Compact' }].map((o) =>
-          h('div', {
-            key: o.id,
-            className: data.settings.density === o.id ? 'selected' : '',
-            onClick: () => updateSetting('density', o.id)
-          }, o.label)
-        )
-      )
-    ),
-
-    h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { className: 'settings-card-title' }, 'Custom CSS'),
-      h('p', { style: { margin: '0 0 8px', fontSize: '13px', color: 'var(--text-secondary)' } },
-        'For advanced users - add your own CSS to override styles. Applied live; clear the box to remove it.'),
-      h('textarea', {
-        value: data.settings.customCss || '',
-        onChange: (e) => updateSetting('customCss', e.target.value),
-        placeholder: '.sidebar { font-family: monospace; }',
-        className: 'custom-css-input',
-        rows: 8
+        ],
+        value: data.settings.dateFormat,
+        onChange: (v) => updateSetting('dateFormat', v)
+      }),
+      h('p', { className: 'qa-label' }, 'Density'),
+      h(ChipToggle, {
+        wide: true,
+        options: [{ id: 'comfortable', label: 'Comfortable' }, { id: 'compact', label: 'Compact' }],
+        value: data.settings.density,
+        onChange: (v) => updateSetting('density', v)
       })
     ),
 
-    h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { className: 'settings-card-title' }, 'Activity log'),
-      (!data.activityLog || data.activityLog.length === 0)
-        ? h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--text-secondary)' } }, 'Nothing logged yet.')
-        : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '320px', overflowY: 'auto' } },
-            data.activityLog.slice(0, 25).map((entry) =>
-              h('div', { key: entry.id, style: { display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '13px' } },
-                h('span', null, entry.message),
-                h('span', { style: { color: 'var(--text-tertiary)', whiteSpace: 'nowrap', fontSize: '12px' } }, formatLogTimestamp(entry.timestamp))
-              )
-            )
-          )
+    h('div', { className: 'card' },
+      h('p', { className: 'settings-card-title' }, 'Sync'),
+      h(SyncCard, { data, setData })
     ),
 
-    h(SyncCard, { data, setData }),
-
-    h('div', { className: 'card', style: { marginTop: '12px' } },
+    h('div', { className: 'card' },
       h('p', { className: 'settings-card-title' }, 'Data portability'),
-      h('p', { style: { margin: '0 0 12px', fontSize: '13px', color: 'var(--text-secondary)' } },
-        'Export your data as a .json file to back it up or move it to another computer. ',
-        'Import a previously exported file to restore or transfer your data \u2014 this will permanently replace everything currently saved in this app.'),
-      h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap' } },
-        h('button', { onClick: handleExport }, 'Export data (.json)'),
-        h('button', { onClick: () => setImportWarning(true) }, 'Import from .json file')
+      h('p', { className: 'settings-card-sub' },
+        'Export your data as a .json file to back it up or move it to another device. Importing a file replaces everything currently saved in this app.'),
+      h('div', { className: 'button-row' },
+        h('button', { onClick: handleExport }, 'Export data'),
+        h('button', { onClick: () => setImportWarning(true) }, 'Import a file')
       ),
-      exportSuccess ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--text-success)' } }, 'Export saved successfully.') : null,
-      exportError ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--late-red)' } }, exportError) : null,
-      importSuccess ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--text-success)' } }, 'Data imported successfully. Your app is now showing the imported data.') : null,
-      importError ? h('p', { style: { margin: '8px 0 0', fontSize: '13px', color: 'var(--late-red)' } }, importError) : null,
+      exportSuccess ? h('p', { className: 'form-msg good' }, 'Export saved.') : null,
+      exportError ? h('p', { className: 'form-msg bad' }, exportError) : null,
+      importSuccess ? h('p', { className: 'form-msg good' }, 'Data imported. The app is now showing the imported data.') : null,
+      importError ? h('p', { className: 'form-msg bad' }, importError) : null,
       h('div', { className: 'switch-list' },
         h(SettingSwitch, {
           id: 'backup-reminder',
@@ -628,38 +573,64 @@ function AdvancedTab({ data, setData, updateSetting, onRestart, confirming, setC
       )
     ),
 
-    importWarning ? h('div', Object.assign({ className: 'modal-overlay as-window' }, importOverlay),
-      h('div', { className: 'modal-content as-window' },
-        h('p', { style: { margin: 0, fontWeight: 600, fontSize: '16px', color: 'var(--late-red)' } }, '\u26a0\ufe0f This will delete all your current data'),
-        h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
-          'Importing a file will permanently erase all your current bills, income, subscriptions, credit cards, history, and settings. ',
-          'This cannot be undone. Your current data will be gone immediately and replaced with whatever is in the file you choose.'),
-        h('p', { style: { margin: 0, fontSize: '14px', fontWeight: 500 } }, 'Are you absolutely sure you want to continue?'),
-        h('div', { className: 'row-between' },
-          h('button', { onClick: () => setImportWarning(false) }, 'Cancel \u2014 keep my current data'),
-          h('button', { className: 'danger-text', style: { borderColor: 'var(--late-red)' }, onClick: handleImportConfirmed }, 'Yes, delete and import')
-        )
+    importWarning ? h(Sheet, {
+      title: 'This replaces all your data',
+      onClose: () => setImportWarning(false),
+      foot: h('div', { className: 'sheet-actions' },
+        h('button', { onClick: () => setImportWarning(false) }, 'Keep my data'),
+        h('button', { className: 'danger', onClick: handleImportConfirmed }, 'Delete and import')
       )
+    },
+      h('p', { className: 'sheet-lead' },
+        'Importing a file permanently erases your current bills, income, subscriptions, credit cards, wallet, history and settings, and replaces them with whatever is in the file. This cannot be undone.')
     ) : null,
 
-    h('div', { className: 'card', style: { marginTop: '12px' } },
-      h('p', { className: 'settings-card-title' }, 'Reset all data'),
-      h('p', { style: { margin: '0 0 12px', fontSize: '14px', color: 'var(--text-secondary)' } },
-        'This clears your income, bills, subscriptions, and paid history, then takes you back through setup.'),
-      confirming
-        ? h('div', { style: { display: 'flex', gap: '8px' } },
-            h('button', { onClick: () => setConfirming(false) }, 'Cancel'),
-            h('button', { className: 'danger-text', onClick: onRestart }, 'Yes, reset everything')
-          )
-        : h('button', { className: 'danger-text', onClick: () => setConfirming(true) }, 'Reset and run setup again')
+    h('div', { className: 'card' },
+      h('p', { className: 'settings-card-title' }, 'Custom CSS'),
+      h('p', { className: 'settings-card-sub' },
+        'For advanced users — add your own CSS to override styles. Applied live; clear the box to remove it.'),
+      h('textarea', {
+        value: data.settings.customCss || '',
+        onChange: (e) => updateSetting('customCss', e.target.value),
+        placeholder: '.sidebar { font-family: monospace; }',
+        className: 'custom-css-input',
+        rows: 6
+      })
     ),
 
-    h('div', { className: 'card about-card', style: { marginTop: '12px' } },
+    h('div', { className: 'card' },
+      h('p', { className: 'settings-card-title' }, 'Activity log'),
+      (!data.activityLog || data.activityLog.length === 0)
+        ? h('p', { className: 'settings-card-sub' }, 'Nothing logged yet.')
+        : h('div', { className: 'log-list' },
+            data.activityLog.slice(0, 25).map((entry) =>
+              h('div', { key: entry.id, className: 'log-row' },
+                h('span', { className: 'log-text' }, entry.message),
+                h('span', { className: 'log-time' }, formatLogTimestamp(entry.timestamp))
+              )
+            )
+          )
+    ),
+
+    h('div', { className: 'card' },
+      h('p', { className: 'settings-card-title' }, 'Reset all data'),
+      h('p', { className: 'settings-card-sub' },
+        'Clears your income, bills, subscriptions, wallet and paid history, then takes you back through setup.'),
+      confirming
+        ? h('div', { className: 'button-row' },
+            h('button', { onClick: () => setConfirming(false) }, 'Cancel'),
+            h('button', { className: 'danger', onClick: onRestart }, 'Yes, reset everything')
+          )
+        : h('div', { className: 'button-row' },
+            h('button', { className: 'danger', onClick: () => setConfirming(true) }, 'Reset and run setup again')
+          )
+    ),
+
+    h('div', { className: 'card about-card' },
       h('img', { src: 'assets/icon.svg', alt: '', className: 'about-logo' }),
       h('div', null,
         h('p', { className: 'settings-card-title' }, 'Finance Calendar'),
-        h('p', { style: { margin: 0, fontSize: '14px', color: 'var(--text-secondary)' } },
-          'Stores all data locally on this device - nothing is sent anywhere.')
+        h('p', { className: 'settings-card-sub' }, `Version ${WEB_VERSION} · all data stays on this device — nothing is sent anywhere.`)
       )
     )
   );

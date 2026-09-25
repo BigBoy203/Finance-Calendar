@@ -14,8 +14,12 @@
       subscriptions: [],
       oneTimeEntries: [],
       creditCards: [],
+      advances: [],
       budgets: {},
+      wallet: { checks: [], snoozed: null },
       paidHistory: {},
+      paidAt: {},
+      coverLog: {},
       dismissedLate: {},
       forcedLate: {},
       deferred: {},
@@ -43,8 +47,11 @@
           creditCards: '#8B6FD6',
           incomeSources: '#4FAE6B',
           oneTimePayments: '#D8845A',
-          oneTimeIncome: '#4FAE6B'
+          oneTimeIncome: '#4FAE6B',
+          advances: '#5AA8D8'
         },
+        walletEnabled: true,
+        walletMonthlyCheck: true,
         backupReminderEnabled: true,
         hapticsEnabled: true,
         lastBackupReminderShown: null

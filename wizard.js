@@ -1,6 +1,6 @@
 
 const MAJOR_CATEGORIES = ['Rent/mortgage', 'Power', 'Water', 'Gas', 'Insurance', 'Car payment', 'Phone', 'Internet', 'Credit card', 'Other'];
-const MINOR_CATEGORIES = ['Streaming', 'Gaming', 'Cloud storage', 'Memberships', 'Other'];
+const MINOR_CATEGORIES = ['Streaming', 'Gaming', 'Cloud storage', 'Memberships', 'Payment plan', 'Other'];
 const ONE_TIME_PAYMENT_CATEGORIES = ['Groceries', 'Food & drink', 'Gas', 'Shopping', 'Household', 'Health', 'Transport', 'Entertainment', 'Pets', 'Gifts', 'Travel', 'Other'];
 const ONE_TIME_INCOME_CATEGORIES = ['Paycheck', 'Bonus', 'Gift', 'Refund', 'Side income', 'Other'];
 
@@ -49,6 +49,8 @@ function OnboardingWizard({ data, onComplete }) {
   const [importError, setImportError] = useState(null);
   const [importing, setImporting] = useState(false);
   const [markPastPaid, setMarkPastPaid] = useState(true);
+  const [walletAmount, setWalletAmount] = useState('');
+  const [trackWallet, setTrackWallet] = useState(true);
 
   const [income, setIncome] = useState(
     data.incomeSources && data.incomeSources.length
@@ -69,11 +71,19 @@ function OnboardingWizard({ data, onComplete }) {
     { title: 'Your income', subtitle: 'When does money come in?' },
     { title: 'Your bills', subtitle: 'The essentials you pay every month.' },
     { title: 'Subscriptions', subtitle: 'The smaller recurring stuff.' },
-    { title: 'Credit cards', subtitle: 'Optional \u2014 track balances and payments. You can skip this.' }
+    { title: 'Credit cards', subtitle: 'Optional \u2014 track balances and payments. You can skip this.' },
+    { title: 'Your wallet', subtitle: 'Optional \u2014 how much money do you have right now?' }
   ];
 
   function updateRow(list, setList, id, field, value) {
-    setList(list.map((row) => (row.id === id ? { ...row, [field]: value } : row)));
+    setList(list.map((row) => {
+      if (row.id !== id) return row;
+      const next = { ...row, [field]: value };
+      if (field === 'category' && value === PAYMENT_PLAN && !row.repeatUntil && next.freq !== 'none') {
+        next.repeatUntil = untilForCount(next.date, next.freq, defaultPlanCount(next.freq));
+      }
+      return next;
+    }));
   }
 
   function addRow(list, setList, defaults) {
@@ -134,6 +144,12 @@ function OnboardingWizard({ data, onComplete }) {
         finalData = { ...finalData, paidHistory: paid };
       }
 
+      finalData = { ...finalData, settings: { ...finalData.settings, walletEnabled: trackWallet } };
+      const startingBalance = parseFloat(walletAmount);
+      finalData = (trackWallet && !isNaN(startingBalance))
+        ? recordWalletCheck(finalData, startingBalance)
+        : snoozeWalletCheck(finalData);
+
       haptic('success');
       onComplete(finalData);
     }
@@ -175,7 +191,8 @@ function OnboardingWizard({ data, onComplete }) {
       onAdd: () => addRow(income, setIncome, { freq: 'biweekly', category: 'Income' }),
       onRemove: (id) => removeRow(income, setIncome, id),
       addLabel: 'Add another income source',
-      dateLabel: 'Next pay date'
+      dateLabel: 'Next pay date',
+      settings: data.settings
     });
   } else if (step === 1) {
     body = h(EntryList, {
@@ -189,6 +206,7 @@ function OnboardingWizard({ data, onComplete }) {
       onRemove: (id) => removeRow(majorBills, setMajorBills, id),
       addLabel: 'Add your own',
       dateLabel: 'Due date',
+      settings: data.settings,
       emptyHint: 'Tap the bills you have \u2014 each one becomes a card you can fill in.'
     });
   } else if (step === 2) {
@@ -203,15 +221,37 @@ function OnboardingWizard({ data, onComplete }) {
       onRemove: (id) => removeRow(subscriptions, setSubscriptions, id),
       addLabel: 'Add your own',
       dateLabel: 'Billing date',
+      settings: data.settings,
       emptyHint: 'Tap any you pay for \u2014 skip the rest.'
     });
-  } else {
+  } else if (step === 3) {
     body = h(CreditCardEntryList, {
       cards: creditCards,
+      settings: data.settings,
       onChange: (id, field, value) => setCreditCards(creditCards.map((c) => (c.id === id ? { ...c, [field]: value } : c))),
       onAdd: () => setCreditCards([...creditCards, blankCreditCard()]),
       onRemove: (id) => setCreditCards(creditCards.filter((c) => c.id !== id))
     });
+  } else {
+    body = h('div', { className: 'setup-list' },
+      h(AmountField, {
+        value: walletAmount,
+        onChange: setWalletAmount,
+        currency: data.settings.currency,
+        label: 'In your checking account and cash'
+      }),
+      h('p', { className: 'setup-empty-hint' },
+        'The app keeps a running balance from here \u2014 paychecks add to it, bills and purchases take from it \u2014 and asks again at the start of each month so it stays accurate. Leave it blank to do this later.'),
+      h('div', { className: 'switch-list' },
+        h(SettingSwitch, {
+          id: 'wiz-wallet',
+          title: 'Track my wallet',
+          sub: 'You can turn this off any time in Settings',
+          checked: trackWallet,
+          onChange: setTrackWallet
+        })
+      )
+    );
   }
 
   async function handleImportFromFile() {
@@ -275,23 +315,22 @@ function OnboardingWizard({ data, onComplete }) {
   if (phase === 'import') {
     return h('div', { className: 'wizard-shell' },
       h('div', { className: 'wizard-scroll' },
-        h('div', null,
-          h('h2', null, 'Import your backup'),
-          h('p', { style: { color: 'var(--text-secondary)', marginTop: '4px' } },
+        h('div', { className: 'wizard-head' },
+          h('h2', { className: 'wizard-title' }, 'Import your backup'),
+          h('p', { className: 'wizard-sub' },
             'Do you have a .json backup from another browser or device that you\u2019d like to restore?')
         ),
-        h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' } },
+        h('div', { className: 'wizard-import-actions' },
           h('button', {
             className: 'primary',
             onClick: handleImportFromFile,
             disabled: importing
           }, importing ? 'Importing\u2026' : 'Yes \u2014 import my backup file'),
           h('button', { onClick: () => setPhase('setup') }, 'No \u2014 start fresh'),
-          importError ? h('p', { style: { margin: 0, fontSize: '13px', color: 'var(--late-red)' } }, importError) : null
+          importError ? h('p', { className: 'form-msg bad' }, importError) : null
         ),
-        h('p', { style: { fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '16px' } },
-          'Choosing "Import" will load your backup file and take you straight into the app with all your existing data. ',
-          'Choosing "Start fresh" takes you through the quick setup wizard.')
+        h('p', { className: 'setup-hint' },
+          'Import loads your backup and takes you straight into the app with all your existing data. Start fresh takes you through the quick setup.')
       )
     );
   }
@@ -301,37 +340,32 @@ function OnboardingWizard({ data, onComplete }) {
       h('div', { className: 'wizard-progress' },
         steps.map((s, i) => h('div', { key: i, className: `wizard-step-dot${i <= step ? ' active' : ''}` }))
       ),
-      h('div', null,
-        h('h2', null, steps[step].title),
-        h('p', { style: { color: 'var(--text-secondary)', marginTop: '4px' } }, steps[step].subtitle)
+      h('div', { className: 'wizard-head' },
+        h('p', { className: 'wizard-step' }, `Step ${step + 1} of ${steps.length}`),
+        h('h2', { className: 'wizard-title' }, steps[step].title),
+        h('p', { className: 'wizard-sub' }, steps[step].subtitle)
       ),
       body,
       (step === steps.length - 1 && new Date().getDate() > 1)
-        ? h('div', { className: 'wizard-midmonth' },
-            h('label', { className: 'wizard-midmonth-row' },
-              h('input', {
-                type: 'checkbox',
-                checked: markPastPaid,
-                onChange: (e) => setMarkPastPaid(e.target.checked)
-              }),
-              h('div', null,
-                h('span', { className: 'wizard-midmonth-title' }, 'Bills earlier this month are already paid'),
-                h('span', { className: 'wizard-midmonth-sub' }, 'Since you\u2019re starting mid-month, we\u2019ll check off bills whose date has already passed so nothing shows up as late. You can uncheck any of them later.')
-              )
-            )
+        ? h('div', { className: 'switch-list wizard-midmonth' },
+            h(SettingSwitch, {
+              id: 'wiz-midmonth',
+              title: 'Bills earlier this month are already paid',
+              sub: 'Since you\u2019re starting mid-month, bills whose date has passed get checked off so nothing shows up as late. You can uncheck any of them later.',
+              checked: markPastPaid,
+              onChange: setMarkPastPaid
+            })
           )
         : null
     ),
-    h('div', { className: 'row-between' },
-      step > 0
-        ? h('button', { onClick: handleBack }, 'Back')
-        : h('div'),
+    h('div', { className: 'wizard-foot' },
+      step > 0 ? h('button', { onClick: handleBack }, 'Back') : null,
       h('button', { className: 'primary', onClick: handleNext }, step < steps.length - 1 ? 'Next' : 'Finish setup')
     )
   );
 }
 
-function EntryList({ rows, categories, namePlaceholder, suggestions, onAddPreset, onChange, onAdd, onRemove, addLabel, dateLabel, emptyHint }) {
+function EntryList({ rows, categories, namePlaceholder, suggestions, onAddPreset, onChange, onAdd, onRemove, addLabel, dateLabel, emptyHint, settings }) {
   const usedNames = new Set(rows.map((r) => r.name.trim().toLowerCase()));
   const availableChips = (suggestions || []).filter((s) => !usedNames.has(s.name.toLowerCase()));
   return h('div', { className: 'setup-list' },
@@ -345,6 +379,7 @@ function EntryList({ rows, categories, namePlaceholder, suggestions, onAddPreset
         categories,
         namePlaceholder,
         dateLabel,
+        settings,
         onChange: (field, value) => onChange(row.id, field, value),
         onRemove: () => onRemove(row.id)
       })
@@ -362,7 +397,7 @@ function EntryList({ rows, categories, namePlaceholder, suggestions, onAddPreset
   );
 }
 
-function EntryCard({ row, categories, namePlaceholder, dateLabel, onChange, onRemove }) {
+function EntryCard({ row, categories, namePlaceholder, dateLabel, settings, onChange, onRemove }) {
   const recurring = row.freq !== 'none';
   return h('div', { className: 'setup-entry' },
     h('div', { className: 'setup-entry-head' },
@@ -397,28 +432,18 @@ function EntryCard({ row, categories, namePlaceholder, dateLabel, onChange, onRe
           ),
       row.useDateRange
         ? h(React.Fragment, null,
-            h('div', { className: 'setup-field' },
-              h('label', null, 'Start'),
-              h('input', { type: 'date', value: row.date, onChange: (e) => onChange('date', e.target.value) })
-            ),
-            h('div', { className: 'setup-field' },
-              h('label', null, 'End'),
-              h('input', { type: 'date', value: row.dateEnd, onChange: (e) => onChange('dateEnd', e.target.value) })
-            )
+            h(Field, { label: 'Start' }, h(DateField, { value: row.date, onChange: (d) => onChange('date', d), settings })),
+            h(Field, { label: 'End' }, h(DateField, { value: row.dateEnd, onChange: (d) => onChange('dateEnd', d), settings, placeholder: 'Pick a day' }))
           )
-        : h('div', { className: 'setup-field' },
-            h('label', null, dateLabel || 'Date'),
-            h('input', { type: 'date', value: row.date, onChange: (e) => onChange('date', e.target.value) })
-          ),
+        : h(Field, { label: dateLabel || 'Date' }, h(DateField, { value: row.date, onChange: (d) => onChange('date', d), settings })),
       h('div', { className: 'setup-field' },
         h('label', null, 'Repeats'),
         h('select', { value: row.freq, onChange: (e) => onChange('freq', e.target.value) },
           FREQS.map((f) => h('option', { key: f, value: f }, FREQ_LABELS[f])))
       ),
       (recurring && row.repeatUntil)
-        ? h('div', { className: 'setup-field' },
-            h('label', null, 'Repeat ends'),
-            h('input', { type: 'date', value: row.repeatUntil, onChange: (e) => onChange('repeatUntil', e.target.value) })
+        ? h(Field, { label: row.category === PAYMENT_PLAN ? 'Last payment' : 'Repeat ends' },
+            h(DateField, { value: row.repeatUntil, onChange: (d) => onChange('repeatUntil', d), settings })
           )
         : null,
       categories
@@ -443,10 +468,10 @@ function EntryCard({ row, categories, namePlaceholder, dateLabel, onChange, onRe
 }
 
 
-function CreditCardEntryList({ cards, onChange, onAdd, onRemove }) {
+function CreditCardEntryList({ cards, settings, onChange, onAdd, onRemove }) {
   return h('div', { className: 'setup-list' },
     cards.length === 0 ? h('p', { className: 'setup-empty-hint' },
-      'No credit cards added \u2014 that\u2019s fine, you can skip this entirely.') : null,
+      'No credit cards added — that’s fine, you can skip this entirely.') : null,
     cards.map((c) =>
       h('div', { key: c.id, className: 'setup-entry' },
         h('div', { className: 'setup-entry-head' },
@@ -464,53 +489,41 @@ function CreditCardEntryList({ cards, onChange, onAdd, onRemove }) {
           )
         ),
         h('div', { className: 'setup-entry-grid' },
-          h('div', { className: 'setup-field' },
-            h('label', null, 'Total debt'),
+          h(Field, { label: 'Total debt' },
             h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: c.totalDebt, onChange: (e) => onChange(c.id, 'totalDebt', e.target.value) })
           ),
-          h('div', { className: 'setup-field' },
-            h('label', null, 'Amount paid'),
+          h(Field, { label: 'Amount paid' },
             h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: c.amountPaid, onChange: (e) => onChange(c.id, 'amountPaid', e.target.value) })
           )
         ),
-        h('div', { className: 'checkbox-row', style: { marginTop: '12px' } },
-          h('input', {
-            type: 'checkbox',
+        h('div', { className: 'switch-list' },
+          h(SettingSwitch, {
             id: `cc-recurring-${c.id}`,
-            checked: c.hasRecurringPayment,
-            onChange: (e) => onChange(c.id, 'hasRecurringPayment', e.target.checked)
+            title: 'Has a monthly payment',
+            checked: !!c.hasRecurringPayment,
+            onChange: (v) => onChange(c.id, 'hasRecurringPayment', v)
           }),
-          h('label', { htmlFor: `cc-recurring-${c.id}`, style: { margin: 0 } }, 'Has a required recurring payment')
+          h(SettingSwitch, {
+            id: `cc-apr-${c.id}`,
+            title: 'Track interest',
+            checked: !!c.useApr,
+            onChange: (v) => onChange(c.id, 'useApr', v)
+          })
         ),
-        c.hasRecurringPayment ? h('div', { className: 'setup-entry-grid', style: { marginTop: '10px' } },
-          h('div', { className: 'setup-field' },
-            h('label', null, 'Payment'),
+        (c.hasRecurringPayment || c.useApr) ? h('div', { className: 'setup-entry-grid' },
+          c.hasRecurringPayment ? h(Field, { label: 'Payment' },
             h('input', { type: 'number', inputMode: 'decimal', placeholder: '0', value: c.paymentAmount, onChange: (e) => onChange(c.id, 'paymentAmount', e.target.value) })
-          ),
-          h('div', { className: 'setup-field' },
-            h('label', null, 'Due date'),
-            h('input', { type: 'date', value: c.paymentDate, onChange: (e) => onChange(c.id, 'paymentDate', e.target.value) })
-          ),
-          h('div', { className: 'setup-field' },
-            h('label', null, 'Repeats'),
+          ) : null,
+          c.hasRecurringPayment ? h(Field, { label: 'Due date' },
+            h(DateField, { value: c.paymentDate, onChange: (d) => onChange(c.id, 'paymentDate', d), settings })
+          ) : null,
+          c.hasRecurringPayment ? h(Field, { label: 'Repeats' },
             h('select', { value: c.paymentFreq, onChange: (e) => onChange(c.id, 'paymentFreq', e.target.value) },
               FREQS.filter((f) => f !== 'none').map((f) => h('option', { key: f, value: f }, FREQ_LABELS[f])))
-          )
-        ) : null,
-        h('div', { className: 'checkbox-row', style: { marginTop: '10px' } },
-          h('input', {
-            type: 'checkbox',
-            id: `cc-apr-${c.id}`,
-            checked: c.useApr,
-            onChange: (e) => onChange(c.id, 'useApr', e.target.checked)
-          }),
-          h('label', { htmlFor: `cc-apr-${c.id}`, style: { margin: 0 } }, 'Track APR / interest (optional)')
-        ),
-        c.useApr ? h('div', { className: 'setup-entry-grid', style: { marginTop: '10px' } },
-          h('div', { className: 'setup-field' },
-            h('label', null, 'APR %'),
+          ) : null,
+          c.useApr ? h(Field, { label: 'APR %' },
             h('input', { type: 'number', inputMode: 'decimal', step: '0.01', placeholder: 'e.g. 24.99', value: c.apr, onChange: (e) => onChange(c.id, 'apr', e.target.value) })
-          )
+          ) : null
         ) : null
       )
     ),
