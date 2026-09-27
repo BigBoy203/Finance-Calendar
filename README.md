@@ -16,18 +16,23 @@ be lost if that browser's site data is cleared.
 
 Because of that there are a few safety nets:
 
-- **Settings -> Advanced -> Data portability**: "Export data (.json)" saves a
-  backup you can keep anywhere; "Import from .json file" restores one (after a
-  clear warning, since importing replaces everything currently saved). This is
-  also how you move data between browsers or devices.
+- **Settings → Advanced → Data portability**: "Export data" saves a `.json`
+  backup you can keep anywhere; "Import a file" restores one (after a clear
+  warning, since importing replaces everything currently saved). This is also
+  how you move data between browsers or devices.
 - **Sync** (sidebar / header button): keeps a device in step with a single
-  data file. Where the File System Access API exists you link a file once and
-  Sync writes to it; elsewhere it exports through the share sheet. Newest data
-  always wins.
+  data file. Where the File System Access API exists (desktop Chrome/Edge) you
+  link a file once and Sync writes to it; elsewhere, including iPhone, it
+  downloads a `.json` file and can load one back. Newest data wins, with a
+  warning before loading older data.
 - **A Monday reminder** to download a backup, which can be turned off in the
   same Settings section.
 
-Importing is offered as the very first onboarding step, so a backup can be
+On iPhone, add the app to the Home Screen and use it from there: Safari can
+clear the data of websites that aren't on the Home Screen after a while of
+not being used.
+
+The welcome screen offers "I have a backup to import", so a backup can be
 restored before anything is entered by hand.
 
 ## Getting around
@@ -60,7 +65,9 @@ restored before anything is entered by hand.
 - **Bills** - "Needs attention" at the top (anything past due or still using a
   price range), then your Essentials, Subscriptions, and Credit cards, each
   with its own "Add" row.
-- **Settings** - the gear in the header (a sidebar item on desktop).
+- **Settings** - the gear in the header (a sidebar item on desktop): income
+  sources, wallet options, appearance, calendar colours, backups, and "Start
+  fresh".
 
 The layout switches at 768px via a media query rather than user-agent
 sniffing, so it also reacts to rotation, split screen, and a narrowed desktop
@@ -95,7 +102,7 @@ Pages, Netlify, plain Apache/Nginx), including `assets/` and `vendor/`.
 
 - `index.html`, `app.js`, `styles.css` - the app
 - `storage.js` - the IndexedDB layer plus export/import
-- `sync.js` - file-based sync and the share-sheet fallback
+- `sync.js` - file-based sync and the download/load fallback
 - `sw.js` - service worker (offline app-shell cache)
 - `vendor/` - React
 - `assets/` - icons and logo
@@ -117,3 +124,7 @@ concatenated into `app.js`. `mobile.js` sits second, right after
 
 The wallet and advance math has a dependency-free test suite:
 `node .claude/skills/verify/wallet.test.js` (run it after rebuilding).
+
+`CLAUDE.md` is the full guide for anyone working on the code: what the app is
+for, how every screen and money rule works, the house rules, and the current
+to-do list.
