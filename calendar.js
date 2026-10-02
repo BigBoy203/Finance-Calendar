@@ -220,22 +220,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return segments;
   }, [weeks, rangeSpans, data]);
 
-  const swipeStart = useRef(null);
-  function onTouchStart(e) {
-    if (e.touches.length !== 1) { swipeStart.current = null; return; }
-    swipeStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  }
-  function onTouchEnd(e) {
-    if (!swipeStart.current) return;
-    const t = e.changedTouches[0];
-    const dx = t.clientX - swipeStart.current.x;
-    const dy = t.clientY - swipeStart.current.y;
-    swipeStart.current = null;
-
-    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) {
-      changeMonth(dx < 0 ? 1 : -1);
-    }
-  }
+  const swipe = useSwipe(changeMonth);
 
   if (isMobile) {
     const gridView = h('div', { className: 'calm-grid-wrap' },
@@ -374,8 +359,8 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
 
       h('div', {
         className: 'calm-swipe',
-        onTouchStart: onTouchStart,
-        onTouchEnd: onTouchEnd
+        onTouchStart: swipe.onTouchStart,
+        onTouchEnd: swipe.onTouchEnd
       },
         h('div', {
           key: `${cursor.getFullYear()}-${cursor.getMonth()}-${view}`,
@@ -396,8 +381,8 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
   return h('div', { className: 'calendar-page' },
     h('div', {
       className: 'calendar-swipe-area',
-      onTouchStart: isMobile ? onTouchStart : undefined,
-      onTouchEnd: isMobile ? onTouchEnd : undefined
+      onTouchStart: isMobile ? swipe.onTouchStart : undefined,
+      onTouchEnd: isMobile ? swipe.onTouchEnd : undefined
     },
     h('div', { className: 'calendar-week-row dow-row' },
       h('div', { className: 'calendar-grid dow-grid' },

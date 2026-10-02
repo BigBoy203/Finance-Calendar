@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '5.3';
+const WEB_VERSION = '5.4';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -1526,6 +1526,23 @@ function SectionHead({ title, caption, right }) {
   );
 }
 
+function useSwipe(onSwipe) {
+  const start = useRef(null);
+  return {
+    onTouchStart: (e) => {
+      start.current = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+    },
+    onTouchEnd: (e) => {
+      if (!start.current) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - start.current.x;
+      const dy = t.clientY - start.current.y;
+      start.current = null;
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) onSwipe(dx < 0 ? 1 : -1);
+    }
+  };
+}
+
 function Pager({ pages, index, onIndex }) {
   const ref = useRef(null);
   const placed = useRef(false);
@@ -2997,7 +3014,15 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
 
 function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }) {
   const [overdueOpen, setOverdueOpen] = useState(false);
+  const [slide, setSlide] = useState(null);
   const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext, pushedOut, spent, spendStart, takes } = nextCheck;
+
+  function go(step) {
+    if (step > 0 ? !hasNext : !hasPrev) return;
+    setSlide(step > 0 ? 'left' : 'right');
+    if (step > 0) onNext(); else onPrev();
+  }
+  const swipe = useSwipe(go);
   const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
 
   const headingText = period === 0
@@ -3020,7 +3045,12 @@ function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }
   const spentPct = checkAmount > 0 ? Math.max(0, Math.min(100 - billsPct, (spent / checkAmount) * 100)) : 0;
   const rangeText = `${formatDate(windowStart, data.settings)} \u2013 ${formatDate(windowEnd, data.settings)}`;
 
-  return h('section', { className: `nextcheck${overdueCount > 0 ? ' urgent' : ''}` },
+  return h('section', {
+    className: `nextcheck${overdueCount > 0 ? ' urgent' : ''}`,
+    onTouchStart: swipe.onTouchStart,
+    onTouchEnd: swipe.onTouchEnd
+  },
+  h('div', { key: period, className: `nextcheck-slide${slide ? ' slide-' + slide : ''}` },
     h('div', { className: 'nextcheck-top' },
       h('div', { className: 'nextcheck-when' },
         h('p', { className: 'nextcheck-label' }, headingText),
@@ -3035,14 +3065,14 @@ function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }
     (hasPrev || hasNext) ? h('div', { className: 'nextcheck-nav' },
       h('button', {
         className: 'nextcheck-nav-btn',
-        onClick: onPrev,
+        onClick: () => go(-1),
         disabled: !hasPrev,
         'aria-label': 'Previous pay period'
       }, '\u2039'),
       h('span', { className: 'nextcheck-nav-range' }, rangeText),
       h('button', {
         className: 'nextcheck-nav-btn',
-        onClick: onNext,
+        onClick: () => go(1),
         disabled: !hasNext,
         'aria-label': 'Next pay period'
       }, '\u203a')
@@ -3103,7 +3133,7 @@ function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }
       h(PushedMark, { title: 'Moved to a later paycheck' }),
       `${pushedOut.count} moved to your ${formatDate(parseYmd(pushedOut.to), data.settings)} paycheck \u00b7 ${fmtCurrency(pushedOut.amount, currency)}`
     ) : null
-  );
+  ));
 }
 
 function HomePage({ data, setData, isMobile }) {
@@ -3868,22 +3898,7 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
     return segments;
   }, [weeks, rangeSpans, data]);
 
-  const swipeStart = useRef(null);
-  function onTouchStart(e) {
-    if (e.touches.length !== 1) { swipeStart.current = null; return; }
-    swipeStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  }
-  function onTouchEnd(e) {
-    if (!swipeStart.current) return;
-    const t = e.changedTouches[0];
-    const dx = t.clientX - swipeStart.current.x;
-    const dy = t.clientY - swipeStart.current.y;
-    swipeStart.current = null;
-
-    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) {
-      changeMonth(dx < 0 ? 1 : -1);
-    }
-  }
+  const swipe = useSwipe(changeMonth);
 
   if (isMobile) {
     const gridView = h('div', { className: 'calm-grid-wrap' },
@@ -4022,8 +4037,8 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
 
       h('div', {
         className: 'calm-swipe',
-        onTouchStart: onTouchStart,
-        onTouchEnd: onTouchEnd
+        onTouchStart: swipe.onTouchStart,
+        onTouchEnd: swipe.onTouchEnd
       },
         h('div', {
           key: `${cursor.getFullYear()}-${cursor.getMonth()}-${view}`,
@@ -4044,8 +4059,8 @@ function CalendarPage({ data, setData, isMobile, onAddEntry }) {
   return h('div', { className: 'calendar-page' },
     h('div', {
       className: 'calendar-swipe-area',
-      onTouchStart: isMobile ? onTouchStart : undefined,
-      onTouchEnd: isMobile ? onTouchEnd : undefined
+      onTouchStart: isMobile ? swipe.onTouchStart : undefined,
+      onTouchEnd: isMobile ? swipe.onTouchEnd : undefined
     },
     h('div', { className: 'calendar-week-row dow-row' },
       h('div', { className: 'calendar-grid dow-grid' },

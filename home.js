@@ -92,7 +92,15 @@ function BillTileGrid({ rows, data, currency, onToggle, onOpen }) {
 
 function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }) {
   const [overdueOpen, setOverdueOpen] = useState(false);
+  const [slide, setSlide] = useState(null);
   const { check, windowStart, windowEnd, bills, due, checkAmount, estimate, overdueCount, period, hasPrev, hasNext, pushedOut, spent, spendStart, takes } = nextCheck;
+
+  function go(step) {
+    if (step > 0 ? !hasNext : !hasPrev) return;
+    setSlide(step > 0 ? 'left' : 'right');
+    if (step > 0) onNext(); else onPrev();
+  }
+  const swipe = useSwipe(go);
   const dateLabel = formatDate(windowEnd, data.settings, { weekday: true });
 
   const headingText = period === 0
@@ -115,7 +123,12 @@ function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }
   const spentPct = checkAmount > 0 ? Math.max(0, Math.min(100 - billsPct, (spent / checkAmount) * 100)) : 0;
   const rangeText = `${formatDate(windowStart, data.settings)} \u2013 ${formatDate(windowEnd, data.settings)}`;
 
-  return h('section', { className: `nextcheck${overdueCount > 0 ? ' urgent' : ''}` },
+  return h('section', {
+    className: `nextcheck${overdueCount > 0 ? ' urgent' : ''}`,
+    onTouchStart: swipe.onTouchStart,
+    onTouchEnd: swipe.onTouchEnd
+  },
+  h('div', { key: period, className: `nextcheck-slide${slide ? ' slide-' + slide : ''}` },
     h('div', { className: 'nextcheck-top' },
       h('div', { className: 'nextcheck-when' },
         h('p', { className: 'nextcheck-label' }, headingText),
@@ -130,14 +143,14 @@ function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }
     (hasPrev || hasNext) ? h('div', { className: 'nextcheck-nav' },
       h('button', {
         className: 'nextcheck-nav-btn',
-        onClick: onPrev,
+        onClick: () => go(-1),
         disabled: !hasPrev,
         'aria-label': 'Previous pay period'
       }, '\u2039'),
       h('span', { className: 'nextcheck-nav-range' }, rangeText),
       h('button', {
         className: 'nextcheck-nav-btn',
-        onClick: onNext,
+        onClick: () => go(1),
         disabled: !hasNext,
         'aria-label': 'Next pay period'
       }, '\u203a')
@@ -198,7 +211,7 @@ function NextCheckCard({ data, currency, nextCheck, renderList, onPrev, onNext }
       h(PushedMark, { title: 'Moved to a later paycheck' }),
       `${pushedOut.count} moved to your ${formatDate(parseYmd(pushedOut.to), data.settings)} paycheck \u00b7 ${fmtCurrency(pushedOut.amount, currency)}`
     ) : null
-  );
+  ));
 }
 
 function HomePage({ data, setData, isMobile }) {

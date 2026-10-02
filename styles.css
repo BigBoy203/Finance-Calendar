@@ -1447,9 +1447,8 @@ input[type="checkbox"].switch:focus {
 }
 
 .nextcheck {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+  overflow: hidden;
+  touch-action: pan-y;
   padding: 18px;
   background: var(--surface);
   border: 0.5px solid var(--border-tertiary);
@@ -1458,6 +1457,27 @@ input[type="checkbox"].switch:focus {
 }
 .nextcheck.urgent {
   border-color: rgba(224, 53, 43, 0.5);
+}
+.nextcheck-slide {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.nextcheck-slide.slide-left,
+.calm-slide.slide-left {
+  animation: slide-in-left 0.22s ease;
+}
+.nextcheck-slide.slide-right,
+.calm-slide.slide-right {
+  animation: slide-in-right 0.22s ease;
+}
+@keyframes slide-in-left {
+  from { transform: translateX(28%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes slide-in-right {
+  from { transform: translateX(-28%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
 }
 .nextcheck-top {
   display: flex;
@@ -3748,20 +3768,6 @@ input[type="checkbox"].switch:focus {
     display: flex;
     flex-direction: column;
     min-height: 0;
-  }
-  .calm-slide.slide-left {
-    animation: calm-in-left 0.22s ease;
-  }
-  .calm-slide.slide-right {
-    animation: calm-in-right 0.22s ease;
-  }
-  @keyframes calm-in-left {
-    from { transform: translateX(28%); opacity: 0; }
-    to { transform: translateX(0); opacity: 1; }
-  }
-  @keyframes calm-in-right {
-    from { transform: translateX(-28%); opacity: 0; }
-    to { transform: translateX(0); opacity: 1; }
   }
   .calm-grid-wrap {
     display: flex;

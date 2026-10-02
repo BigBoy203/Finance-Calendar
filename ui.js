@@ -183,6 +183,23 @@ function SectionHead({ title, caption, right }) {
   );
 }
 
+function useSwipe(onSwipe) {
+  const start = useRef(null);
+  return {
+    onTouchStart: (e) => {
+      start.current = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+    },
+    onTouchEnd: (e) => {
+      if (!start.current) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - start.current.x;
+      const dy = t.clientY - start.current.y;
+      start.current = null;
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) onSwipe(dx < 0 ? 1 : -1);
+    }
+  };
+}
+
 function Pager({ pages, index, onIndex }) {
   const ref = useRef(null);
   const placed = useRef(false);
