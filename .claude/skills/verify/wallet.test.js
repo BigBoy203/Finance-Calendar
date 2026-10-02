@@ -32,7 +32,8 @@ function load() {
   const names = ['walletMoves', 'walletSummary', 'balanceUpdateDue', 'recordBalance', 'snoozeBalancePrompt', 'lastBalance',
     'advanceCost', 'advanceTotal', 'advanceRepayDate', 'nextPaycheckAfter', 'getAdvanceEntries', 'advanceInflows', 'advanceStatus',
     'isPaid', 'togglePaidStatus', 'setCovered', 'getLateBills', 'getAttentionItems', 'useNextCheck', 'useMonthFinancials',
-    'planProgress', 'paymentCount', 'untilForCount', 'scheduleLabel', 'saveAdvance', 'removeAdvance', 'toggleForcedLate', 'getBlankData', 'resetSpendingHistory', 'walletFloor'];
+    'planProgress', 'paymentCount', 'untilForCount', 'scheduleLabel', 'saveAdvance', 'removeAdvance', 'toggleForcedLate', 'getBlankData', 'resetSpendingHistory', 'walletFloor',
+    'applyEditedEntry', 'entryEditForm', 'expandEntry', 'expandAll', 'rescheduleEntry', 'cardPaymentEntry', 'resolvedAmount', 'setMoveCounted', 'parseYmd'];
   vm.runInContext(src + '\n;globalThis.__t = {' + names.join(',') + '};', ctx);
   return ctx.__t;
 }
@@ -57,6 +58,7 @@ function test(name, fn) {
   try { fn(); passed++; console.log('  ok  ' + name); }
   catch (err) { console.log('  FAIL ' + name + '\n       ' + err.message); process.exitCode = 1; }
 }
+const same = (a, b, msg) => assert.strictEqual(JSON.stringify(a), JSON.stringify(b), msg);
 const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 0.005, `${msg || ''} expected ${b}, got ${a}`);
 
 test('no check means no summary and a due prompt', () => {
@@ -326,6 +328,122 @@ test('a negative balance update carries through the wallet math', () => {
   const s = t.walletSummary(d);
   near(s.balance, -150);
   near(s.check.amount, -150);
+});
+
+const submitted = (form, changes) => Object.assign({}, form, {
+  amount: parseFloat(form.amount) || 0,
+  amountMin: parseFloat(form.amountMin) || 0,
+  amountMax: parseFloat(form.amountMax) || 0
+}, changes || {});
+const occDates = (entry, from, to) => t.expandEntry(entry, t.parseYmd(from), t.parseYmd(to)).map((o) => o.occDate);
+const rentData = () => {
+  let d = base({
+    majorBills: [e('rent', 'Rent', 765, '2026-06-30', 'monthly', 'Rent/mortgage')],
+    wallet: { checks: [check('2026-09-20', 500)], snoozed: null }
+  });
+  d.paidHistory = { 'rent|2026-08-30': true };
+  d.paidAt = { 'rent|2026-08-30': at(2026, 8, 30) };
+  return d;
+};
+
+test('editing a bill opens at the next unpaid one, not the day it was created', () => {
+  const d = rentData();
+  const form = t.entryEditForm(d, d.majorBills[0], false);
+  assert.strictEqual(form.date, '2026-09-30');
+  assert.strictEqual(form._from, '2026-09-30');
+});
+
+test('moving a bill to a new day keeps every earlier one where it was and still paid', () => {
+  const d = rentData();
+  const before = t.walletSummary(d).balance;
+  const form = t.entryEditForm(d, d.majorBills[0], false);
+  const next = t.applyEditedEntry(d, 'majorBills', submitted(form, { date: '2026-10-01', useDateRange: true, dateEnd: '2026-10-04' }));
+  const rent = next.majorBills[0];
+  same(occDates(rent, '2026-08-01', '2026-11-30'), ['2026-08-30', '2026-10-01', '2026-11-01']);
+  assert.strictEqual(t.isPaid(next, 'rent', '2026-08-30'), true);
+  assert.strictEqual(t.getLateBills(next).filter((o) => o.id === 'rent').length, 0);
+  near(t.walletSummary(next).balance, before, 'balance unchanged');
+});
+
+test('picking a start date far in the past cannot reach back over paid bills', () => {
+  const d = rentData();
+  const form = t.entryEditForm(d, d.majorBills[0], false);
+  const next = t.applyEditedEntry(d, 'majorBills', submitted(form, { date: '2026-06-01' }));
+  assert.strictEqual(t.isPaid(next, 'rent', '2026-08-30'), true);
+  same(t.getLateBills(next).filter((o) => o.id === 'rent').map((o) => o.occDate), ['2026-09-01']);
+});
+
+test('saving without changing the schedule leaves the bill exactly as it was', () => {
+  const d = rentData();
+  const form = t.entryEditForm(d, d.majorBills[0], false);
+  const next = t.applyEditedEntry(d, 'majorBills', submitted(form, { name: 'Apartment' }));
+  const rent = next.majorBills[0];
+  assert.strictEqual(rent.name, 'Apartment');
+  assert.strictEqual(rent.date, '2026-06-30');
+  assert.strictEqual(rent.history, undefined);
+});
+
+test('changing a price only changes it from the next unpaid one on', () => {
+  let d = base({ majorBills: [e('ph', 'Phone', 60, '2026-01-20', 'monthly', 'Phone')] });
+  d = t.togglePaidStatus(d, 'ph', '2026-08-20');
+  d = t.togglePaidStatus(d, 'ph', '2026-09-20');
+  const form = t.entryEditForm(d, d.majorBills[0], false);
+  assert.strictEqual(form.date, '2026-10-20');
+  const next = t.applyEditedEntry(d, 'majorBills', submitted(form, { amount: '70' }));
+  const phone = next.majorBills[0];
+  near(t.resolvedAmount(next, phone, '2026-09-20'), 60, 'September keeps the old price');
+  const oct = t.expandAll([phone], 'bill', t.parseYmd('2026-10-01'), t.parseYmd('2026-10-31'), next)[0];
+  near(oct.amount, 70, 'October uses the new price');
+});
+
+test('a price set on the next bill moves with it when its day changes', () => {
+  let d = base({ majorBills: [e('el', 'Electric', 90, '2026-01-15', 'monthly', 'Power')] });
+  d = t.togglePaidStatus(d, 'el', '2026-08-15');
+  d = t.togglePaidStatus(d, 'el', '2026-09-15');
+  d.overrides = { 'el|2026-10-15': { amount: 70 } };
+  const form = t.entryEditForm(d, d.majorBills[0], false);
+  const next = t.applyEditedEntry(d, 'majorBills', submitted(form, { date: '2026-10-18' }));
+  same(next.overrides['el|2026-10-18'], { amount: 70 });
+  assert.strictEqual(next.overrides['el|2026-10-15'], undefined);
+});
+
+test('changing a paycheck schedule does not change paychecks already counted', () => {
+  const d = base({
+    incomeSources: [e('pay', 'Paycheck', 1000, '2026-09-04', 'biweekly', 'Income')],
+    wallet: { checks: [check('2026-09-10', 100)], snoozed: null }
+  });
+  near(t.walletSummary(d).balance, 1100);
+  const form = t.entryEditForm(d, d.incomeSources[0], true);
+  assert.strictEqual(form.date, '2026-10-02');
+  const next = t.applyEditedEntry(d, 'incomeSources', submitted(form, { freq: 'weekly', amount: '600' }));
+  near(t.walletSummary(next).balance, 1100, 'past paycheck unchanged');
+  same(occDates(next.incomeSources[0], '2026-09-01', '2026-10-16'), ['2026-09-04', '2026-09-18', '2026-10-02', '2026-10-09', '2026-10-16']);
+});
+
+test('credit card payments keep their paid history when the due day moves', () => {
+  let d = base({ creditCards: [{ id: 'visa', name: 'Visa', totalDebt: 2000, amountPaid: 0, hasRecurringPayment: true, paymentAmount: 75, paymentDate: '2026-01-18', paymentFreq: 'monthly' }] });
+  d = t.togglePaidStatus(d, 'cc-visa', '2026-08-18');
+  d = t.togglePaidStatus(d, 'cc-visa', '2026-09-18');
+  const card = d.creditCards[0];
+  const moved = t.rescheduleEntry(d, t.cardPaymentEntry(card), t.cardPaymentEntry(Object.assign({}, card, { paymentDate: '2026-10-25' })), '2026-10-18');
+  same(occDates(moved.entry, '2026-08-01', '2026-11-30'), ['2026-08-18', '2026-09-18', '2026-10-25', '2026-11-25']);
+});
+
+test('leaving a move out of the balance takes it out of the math until the next update', () => {
+  let d = rentData();
+  d = t.togglePaidStatus(d, 'rent', '2026-09-30');
+  const s1 = t.walletSummary(d);
+  near(s1.balance, 500 - 765);
+  const move = s1.moves.find((m) => m.key === 'rent|2026-09-30');
+  d = t.setMoveCounted(d, move, false);
+  const s2 = t.walletSummary(d);
+  near(s2.balance, 500);
+  assert.strictEqual(s2.leftOut.length, 1);
+  d = t.setMoveCounted(d, s2.leftOut[0], true);
+  near(t.walletSummary(d).balance, 500 - 765);
+  d = t.setMoveCounted(d, move, false);
+  d = t.recordBalance(d, 480);
+  same(d.wallet.ignored, {});
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', some FAILED' : ''}`);

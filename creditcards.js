@@ -17,7 +17,11 @@ function blankCreditCard() {
 
 function CreditCardSheet({ data, card, onSave, onDelete, onClose }) {
   const currency = data.settings.currency;
-  const [form, setForm] = useState(() => (card ? { ...blankCreditCard(), ...card } : blankCreditCard()));
+  const [form, setForm] = useState(() => {
+    if (!card) return blankCreditCard();
+    const from = card.hasRecurringPayment && card.paymentDate ? editFromDate(data, cardPaymentEntry(card), false) : null;
+    return from ? { ...blankCreditCard(), ...card, paymentDate: from, _from: from } : { ...blankCreditCard(), ...card };
+  });
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
   const canSave = form.name.trim() !== '';
 
@@ -66,6 +70,8 @@ function CreditCardSheet({ data, card, onSave, onDelete, onClose }) {
           h(DateField, { value: form.paymentDate, onChange: (d) => set('paymentDate', d), settings: data.settings })
         )
       ),
+      form._from ? h('p', { className: 'setup-hint tight' },
+        'This is the next payment you haven’t made yet. Changes start here — earlier payments keep their dates and paid marks.') : null,
       h('div', { className: 'qa-block' },
         h('p', { className: 'qa-label' }, 'Repeats'),
         h(FreqChips, { value: form.paymentFreq, onPick: (f) => set('paymentFreq', f) })
@@ -96,16 +102,25 @@ function CreditCardsPage({ data, setData }) {
     const amountPaid = form.amountPaid === '' ? 0 : parseFloat(form.amountPaid) || 0;
     const existing = editing.card;
     const principalChanged = !existing || existing.totalDebt !== totalDebt || existing.amountPaid !== amountPaid;
-    const entry = {
-      ...form,
+    const { _from, ...fields } = form;
+    let entry = {
+      ...fields,
       totalDebt,
       amountPaid,
       paymentAmount: form.paymentAmount === '' ? 0 : parseFloat(form.paymentAmount) || 0,
       apr: form.apr === '' ? 0 : parseFloat(form.apr) || 0,
       balanceDate: principalChanged ? todayYmd() : (form.balanceDate || todayYmd())
     };
+    let next = data;
+    if (existing && existing.hasRecurringPayment && entry.hasRecurringPayment) {
+      const result = rescheduleEntry(data, cardPaymentEntry(existing), cardPaymentEntry(entry), _from);
+      next = result.data;
+      entry = { ...entry, paymentDate: result.entry.date };
+      delete entry.paymentHistory;
+      if (result.entry.history) entry.paymentHistory = result.entry.history;
+    }
     if (existing) {
-      setData(logActivity({ ...data, creditCards: cards.map((c) => (c.id === existing.id ? entry : c)) }, `Edited credit card "${entry.name}"`));
+      setData(logActivity({ ...next, creditCards: cards.map((c) => (c.id === existing.id ? entry : c)) }, `Edited credit card "${entry.name}"`));
     } else {
       setData(logActivity({ ...data, creditCards: [...cards, entry] }, `Added credit card "${entry.name}"`));
     }
@@ -140,7 +155,7 @@ function CreditCardsPage({ data, setData }) {
             const accruedInterest = Math.max(0, currentBalance - Math.max(0, total - paid));
             const pct = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
             const nextPay = c.hasRecurringPayment && c.paymentDate
-              ? nextDueDate({ date: c.paymentDate, freq: c.paymentFreq || 'monthly' })
+              ? nextDueDate(cardPaymentEntry(c))
               : null;
             const late = isCardPaymentLate(c, data);
             return h('div', { key: c.id, className: 'credit-card-tile' },

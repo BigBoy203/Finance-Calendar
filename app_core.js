@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '5.2';
+const WEB_VERSION = '5.3';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -230,7 +230,43 @@ function scheduleLabel(entry, data) {
   return [when, repeat, !plan && entry.category !== entry.name ? entry.category : ''].filter(Boolean).join(' \u00b7 ');
 }
 
+const VERSION_FIELDS = ['date', 'freq', 'amount', 'amountMin', 'amountMax', 'useAmountRange', 'useDateRange', 'dateEnd'];
+const OCCURRENCE_MAPS = ['paidHistory', 'paidAt', 'overrides', 'covered', 'coverLog', 'deferred', 'forcedLate', 'dismissedLate', 'removedOccurrences'];
+
+function scheduleVersion(entry) {
+  const version = {};
+  VERSION_FIELDS.forEach((k) => { version[k] = entry[k]; });
+  return version;
+}
+
+function entryOn(entry, occDate) {
+  const seg = (entry.history || []).find((s) => occDate < s.until);
+  if (!seg) return entry;
+  const { until, ...fields } = seg;
+  return { ...entry, ...fields };
+}
+
+function seriesStart(entry) {
+  return entry.history && entry.history.length ? entry.history[0].date : entry.date;
+}
+
 function expandEntry(entry, rangeStart, rangeEnd) {
+  const history = entry.history || [];
+  if (!history.length) return expandSchedule(entry, rangeStart, rangeEnd);
+  const occurrences = [];
+  let from = rangeStart;
+  history.forEach((seg) => {
+    const { until, ...fields } = seg;
+    const last = parseYmd(until);
+    last.setDate(last.getDate() - 1);
+    occurrences.push(...expandSchedule({ ...entry, ...fields }, from, last < rangeEnd ? last : rangeEnd));
+    const next = parseYmd(until);
+    if (next > from) from = next;
+  });
+  return occurrences.concat(expandSchedule(entry, from, rangeEnd));
+}
+
+function expandSchedule(entry, rangeStart, rangeEnd) {
   const occurrences = [];
   if (!entry.date) return occurrences;
   let cur = parseYmd(entry.date);
@@ -284,8 +320,8 @@ function expandAll(entries, kind, rangeStart, rangeEnd, data) {
       all.push({
         ...occ,
         kind,
-        amount: hasOverride ? Number(override.amount) || 0 : (isEstimate ? estimate.amount : entryAmount(entry)),
-        isRange: !!entry.useAmountRange,
+        amount: hasOverride ? Number(override.amount) || 0 : (isEstimate ? estimate.amount : entryAmount(occ)),
+        isRange: !!occ.useAmountRange,
         hasOverride,
         isEstimate,
         estimateCount: isEstimate ? estimate.count : 0
@@ -315,7 +351,7 @@ function hasAmountOverride(override) {
 
 function resolvedAmount(data, entry, occDate) {
   const override = getOverride(data, entry.id, occDate);
-  return hasAmountOverride(override) ? Number(override.amount) || 0 : entryAmount(entry);
+  return hasAmountOverride(override) ? Number(override.amount) || 0 : entryAmount(entryOn(entry, occDate));
 }
 
 function oneTimeOccurrence(data, entry) {
@@ -552,23 +588,28 @@ function getAllBillLikeEntries(data) {
   return [...data.majorBills, ...data.subscriptions, ...getCreditCardPaymentEntries(data), ...getAdvanceEntries(data)];
 }
 
+function cardPaymentEntry(card) {
+  const entry = {
+    id: `cc-${card.id}`,
+    name: `${card.name} payment`,
+    amount: Number(card.paymentAmount) || 0,
+    amountMin: 0,
+    amountMax: 0,
+    useAmountRange: false,
+    date: card.paymentDate,
+    dateEnd: '',
+    useDateRange: false,
+    freq: card.paymentFreq || 'monthly',
+    category: 'Credit card'
+  };
+  return card.paymentHistory && card.paymentHistory.length ? { ...entry, history: card.paymentHistory } : entry;
+}
+
 function getCreditCardPaymentEntries(data) {
   if (!data.creditCards) return [];
   return data.creditCards
     .filter((c) => c.hasRecurringPayment && c.paymentAmount && c.paymentDate)
-    .map((c) => ({
-      id: `cc-${c.id}`,
-      name: `${c.name} payment`,
-      amount: Number(c.paymentAmount) || 0,
-      amountMin: 0,
-      amountMax: 0,
-      useAmountRange: false,
-      date: c.paymentDate,
-      dateEnd: '',
-      useDateRange: false,
-      freq: c.paymentFreq || 'monthly',
-      category: 'Credit card'
-    }));
+    .map(cardPaymentEntry);
 }
 
 function getLateBills(data) {
@@ -749,7 +790,7 @@ function getNeedsAttention(data) {
 const _averageCache = new WeakMap();
 
 function averagePaycheck(data, entry) {
-  const key = `${entry.id}|${entry.date}|${entry.freq}|${entry.repeatUntil || ''}`;
+  const key = `${entry.id}|${entry.date}|${entry.freq}|${entry.repeatUntil || ''}|${(entry.history || []).length}`;
   let cached = _averageCache.get(data);
   if (!cached) { cached = {}; _averageCache.set(data, cached); }
   if (cached[key]) return cached[key];

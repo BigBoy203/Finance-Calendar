@@ -107,7 +107,7 @@ function SettingsPage({ data, setData, onRestart }) {
   }
 
   function openEditIncome(entry) {
-    setEditingIncome({ ...entryToFormShape(entry), _isNew: false });
+    setEditingIncome(entryEditForm(data, entry, true));
   }
 
   function handleIncomeSubmit(cleaned) {

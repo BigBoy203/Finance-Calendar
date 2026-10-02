@@ -62,7 +62,8 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
 
   function openEdit(e) {
     if (e.sourceList === 'creditCards') { setPage('creditcards'); return; }
-    setEditing({ sourceList: e.sourceList, form: { ...entryToFormShape(e), _isNew: false } });
+    const entry = (data[e.sourceList] || []).find((x) => x.id === e.id) || e;
+    setEditing({ sourceList: e.sourceList, form: entryEditForm(data, entry, false) });
   }
 
   function openAdd(sourceList) {

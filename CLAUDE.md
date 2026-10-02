@@ -23,7 +23,7 @@ Everything is private and local: no account, no server, data lives in the phone'
 - **iOS-native feel,** bold redesigns welcome. Avoid an "AI look" (see §5).
 - **Honesty about scope.** Flag difficulty and scope concerns before building, not midway. After every task, tell the owner exactly which files changed.
 
-**Where it runs:** https://finance-calendar-web.vercel.app — Vercel deploys the `main` branch of `BigBoy203/Finance-Calendar` automatically. Current version: **5.2** (`WEB_VERSION` in `app_core.js`).
+**Where it runs:** https://finance-calendar-web.vercel.app — Vercel deploys the `main` branch of `BigBoy203/Finance-Calendar` automatically. Current version: **5.3** (`WEB_VERSION` in `app_core.js`).
 
 ## 2. Workflow rules (how to work on it)
 
@@ -55,7 +55,7 @@ node --check app.js
 
 ### Verifying a change
 
-- **Money math tests:** `node .claude/skills/verify/wallet.test.js` — plain Node, no dependencies, runs against the built `app.js` in a VM with the clock frozen at 2026-09-25 14:00. Run it after touching wallet, advance, paid/covered, next-paycheck, payment-plan or reset code, and add a case when a rule changes. Currently 25 tests, all passing.
+- **Money math tests:** `node .claude/skills/verify/wallet.test.js` — plain Node, no dependencies, runs against the built `app.js` in a VM with the clock frozen at 2026-09-25 14:00. Run it after touching wallet, advance, paid/covered, next-paycheck, payment-plan or reset code, and add a case when a rule changes. Currently 34 tests, all passing.
 - **On-screen checks:** the recipe (static server + Playwright at iPhone size + IndexedDB seed) is in `.claude/skills/verify/SKILL.md`. Check 375, 390 and 430 widths, dark and light, and the desktop sidebar. Browser tests use the real clock, so never hard-code today's date in assertions.
 - **Class check:** after UI changes, every `className` used in JS must exist in `styles.css`, and CSS for removed classes must be deleted.
 
@@ -74,7 +74,7 @@ Mobile shell: translucent header (Sync button with "last synced" on the left, th
 - **Home** (`home.js`, `HomePage`) — bill-first. A full-bleed gradient hero (`.home-wash`) with one number, "So far this month" (money that came in minus what was paid out). Then the **"Before your next paycheck"** card (`NextCheckCard`): what's due between now and the next paycheck, with the overdue ones included, a bar comparing that to the paycheck, and `‹ ›` to look at later pay periods. More than `OVERDUE_FOLD` overdue bills fold into one row. Then a collapsible **"Bills this month"** row with a paid/to-go bar. No charts on Home.
 - **Overview** (`overview.js` + `calendar.js`) — one tab, two views switched by `OverviewSwitch` (it replaces the mobile header title): **Calendar** (month dot-grid with daily totals and spanning range bars, or Agenda; tapping a day opens `DayDetailModal`) and **Statistics** (`CashFlowChart` with drag-to-scrub and an In/Out/Left legend, `CategoryDonut`, `GlanceGrid` tiles).
 - **＋ Add window** (`quickadd.js`, `QuickAddModal`) — Purchase · Bill · Subscription · Income · Advance. Big autofocused amount, category chips, optional name (falls back to the category), Today/Yesterday/Other day, then switches for extras ("Already paid for", "The amount varies", "It stops on a date" / "It ends after the last payment", "It spans several days"). The Save button is disabled until there's an amount and says why ("Enter an amount") — never fail silently, that was a real bug. No `<select>` in this window.
-- **Wallet** (`spending.js` `SpendingPage` + `wallet.js`) — a four-page swipe pager (§6.6): **Balance** (available now, how it adds up, what changed, past balance updates, advances) · **Budget** (left to spend this month, how the month adds up, budgets) · **Spending** (Buy again chips, Where it went, purchases) · **Trends** (six-month chart, four stat tiles).
+- **Wallet** (`spending.js` `SpendingPage` + `wallet.js`) — a four-page swipe pager (§6.6): **Balance** (available now, how it adds up, what changed — tap any change to leave it out of the balance — past balance updates, advances) · **Budget** (left to spend this month, how the month adds up, budgets) · **Spending** (Buy again chips, Where it went, purchases) · **Trends** (six-month chart, four stat tiles).
 - **Bills** (`allbills.js`, `AllBillsPage`) — the only place work piles up. **Needs attention** (late bills first, then entries still using a price range), filter chips with monthly totals, then three groups that always show — Essentials, Subscriptions, Credit cards — each ending in an add row. The card group opens the **Credit cards** page (`creditcards.js`: balances, payments, APR interest, payoff projection), the only Bills sub-page. The tab badge counts the attention list.
 - **Settings** (`settings.js`, the header gear) — tabs **General** (income sources, Wallet switches incl. negative balance and overdraft limit, appearance, money & bills), **Calendar colors**, **Advanced** (date format, density, export/import + weekly backup reminder, custom CSS, activity log, **Start fresh**: reset spending history / reset everything, about + version).
 - **Sync** (header button → `SyncModal`) — link a data file where the browser allows it, otherwise export/load a JSON file. Newest data wins, with a warning before loading older data.
@@ -86,17 +86,17 @@ Source files, in concatenation order. Several shared pieces live in files you mi
 
 | File | What's in it |
 |---|---|
-| `app_core.js` | `WEB_VERSION`, hooks aliases, `haptic`, `useOverlayDismiss`, formatting (`fmtCurrency`, `fmtRange`, `formatDate`, `ymd`/`parseYmd`/`todayYmd`), recurrence (`expandEntry`, `expandAll`, `nextDueDate`, `scheduleLabel`, `repeatLabel`, `monthlyAmount`), paid/late/covered/deferred state (`isPaid`, `togglePaidStatus`, `setCovered`, `setDeferred`, `lateState`, `getLateBills`, `getNeedsAttention`, `getAttentionItems`), entry lookups (`getAllBillLikeEntries`, `buildEntryLookup`, `buildSourceListLookup`, `purchaseEntries`), credit-card math, `averagePaycheck`, `logActivity` (keeps 50), the `App` component (routing, theme, prompts, sync banner), `BackupReminderModal`, `getBlankData`, `Icon` |
+| `app_core.js` | `WEB_VERSION`, hooks aliases, `haptic`, `useOverlayDismiss`, formatting (`fmtCurrency`, `fmtRange`, `formatDate`, `ymd`/`parseYmd`/`todayYmd`), recurrence (`expandEntry` with schedule history, `expandSchedule`, `entryOn`, `seriesStart`, `expandAll`, `nextDueDate`, `scheduleLabel`, `repeatLabel`, `monthlyAmount`), `OCCURRENCE_MAPS`, `cardPaymentEntry`, paid/late/covered/deferred state (`isPaid`, `togglePaidStatus`, `setCovered`, `setDeferred`, `lateState`, `getLateBills`, `getNeedsAttention`, `getAttentionItems`), entry lookups (`getAllBillLikeEntries`, `buildEntryLookup`, `buildSourceListLookup`, `purchaseEntries`), credit-card math, `averagePaycheck`, `logActivity` (keeps 50), the `App` component (routing, theme, prompts, sync banner), `BackupReminderModal`, `getBlankData`, `Icon` |
 | `mobile.js` | `useIsMobile` (≤768px), tab bar, header, `MOBILE_SUBPAGES`, `useSheetDismiss` (swipe-down) |
 | `ui.js` | Shared UI kit: `Sheet`, `CloseX`, `Field`, `AmountField`, `PickChips`, `ChipScroller`, `DateField`, `DateChips`, `FreqChips`, `SettingSwitch`, `ActionRow`, `DeleteRow`, `SectionHead`, `Pager` |
-| `entryform.js` | `EntryRow` (the standard list row), `EntryFormModal` (add/edit bill, subscription, income), payment plans (`PAYMENT_PLAN`, `planEnd`, `planProgress`), `RepeatEndBlock`, `entryToFormShape`, `getEditModalConfig`, `applyEditedEntry` |
+| `entryform.js` | `EntryRow` (the standard list row), `EntryFormModal` (add/edit bill, subscription, income), payment plans (`PAYMENT_PLAN`, `planEnd`, `planProgress`), `RepeatEndBlock`, `entryToFormShape`, `getEditModalConfig`, and the edit-from-here engine (`editFromDate`, `entryEditForm`, `rescheduleEntry`, `applyEditedEntry`, §6.7) |
 | `wizard.js` | **Category lists** (`MAJOR_CATEGORIES`, `MINOR_CATEGORIES`, `ONE_TIME_PAYMENT_CATEGORIES`, `ONE_TIME_INCOME_CATEGORIES`), suggestion presets, `blankEntry`, `OnboardingWizard` |
 | `quickadd.js` | `QuickAddModal`, `TypeList`, `categoriesByUse` |
 | `home.js` | `HomePage`, `NextCheckCard`, checklists, **also** `ChipToggle`, `CashFlowChart`, `CategoryDonut`, `GlanceGrid`, `PriceOverrideModal` (router) and `OccurrenceHub` |
 | `calendar.js` | `CalendarPage`, `DayDetailModal`, **also** `MONTH_NAMES`, `fmtCompact` |
 | `overview.js` | `useMonthFinancials`, `useNextCheck`, `MonthHeader`, `OverviewSwitch`, `OverviewPage`, `StatisticsPage`, `SOURCE_GROUP_LABELS` |
 | `spending.js` | `SpendingPage` (the pager and its four pages), budgets, `categoryTotals`, `spendingHistory`, `repeatBuys` |
-| `wallet.js` | Wallet math (`walletMoves`, `walletSummary`, `walletFloor`, `balanceUpdateDue`, `recordBalance`, `resetSpendingHistory`), `BalanceSheet`, `WalletCard`, `WalletActivity`, advances (math, `AdvancesSection`, `AdvanceFields`, `AdvanceSheet`) |
+| `wallet.js` | Wallet math (`walletMoves`, `walletSummary`, `walletFloor`, `balanceUpdateDue`, `recordBalance`, `setMoveCounted`, `resetSpendingHistory`), `BalanceSheet`, `WalletCard`, `WalletActivity`, `MoveSheet`, advances (math, `AdvancesSection`, `AdvanceFields`, `AdvanceSheet`) |
 | `creditcards.js` | `CreditCardsPage`, `CreditCardSheet`, `ProjectionModal` |
 | `allbills.js` | `AllBillsPage`, attention list |
 | `settings.js` | `SettingsPage` and its tabs, `SyncCard`, `SyncModal`, `relativeTime` |
@@ -123,9 +123,9 @@ Runtime-only files: `storage.js` (IndexedDB load/save, defaults via `getDefaultD
 
 All state is one JSON object persisted through `window.api` (IndexedDB database `finance-calendar`, store `kv`, key `finance-data`). `persist(next, opts)` in `App` stamps `lastModified`. `storage.js` merges loaded data with `getDefaultData()`, **but data loaded through Sync is raw**, so always guard newer keys: `(data.advances || [])`, `(data.wallet || {})`, `(data.paidAt || {})`, `(data.budgets || {})`. Keep `getDefaultData` (`storage.js`) and `getBlankData` (`app_core.js`) in step when adding keys.
 
-- Entries: `incomeSources`, `majorBills` (Essentials), `subscriptions`, `oneTimeEntries` (`oneTimeKind: 'payment'` = purchase, `'income'` = one-time income), `creditCards`, `advances`. Recurring entries have `{ id, name, amount, amountMin, amountMax, useAmountRange, date, dateEnd, useDateRange, freq, repeatUntil, useAvgEstimate, category, color }`.
-- Per-occurrence maps, all keyed `"entryId|YYYY-MM-DD"`: `paidHistory`, `paidAt` (timestamp it was marked paid), `overrides` (actual price), `covered` + `coverLog` (part payments), `deferred` (moved to a later paycheck), `forcedLate`, `dismissedLate`, `removedOccurrences`.
-- `budgets = { [category]: monthlyAmount }`, `wallet = { checks: [...], snoozed }`, `activityLog` (50 newest), `settings` (theme, accent, currency, grace/lookahead days, wallet switches, section colours, `installDate`, …).
+- Entries: `incomeSources`, `majorBills` (Essentials), `subscriptions`, `oneTimeEntries` (`oneTimeKind: 'payment'` = purchase, `'income'` = one-time income), `creditCards`, `advances`. Recurring entries have `{ id, name, amount, amountMin, amountMax, useAmountRange, date, dateEnd, useDateRange, freq, repeatUntil, useAvgEstimate, category, color }` plus an optional `history` (earlier schedule versions, §6.7). Credit cards keep the same thing as `paymentHistory`.
+- Per-occurrence maps, all keyed `"entryId|YYYY-MM-DD"` and listed once in `OCCURRENCE_MAPS`: `paidHistory`, `paidAt` (timestamp it was marked paid), `overrides` (actual price), `covered` + `coverLog` (part payments), `deferred` (moved to a later paycheck), `forcedLate`, `dismissedLate`, `removedOccurrences`. Anything that has to touch "every per-occurrence map" (reset, rescheduling) loops over `OCCURRENCE_MAPS`.
+- `budgets = { [category]: monthlyAmount }`, `wallet = { checks: [...], snoozed, ignored }`, `activityLog` (50 newest), `settings` (theme, accent, currency, grace/lookahead days, wallet switches, section colours, `installDate`, …).
 - `settings.installDate` bounds how far back bills can count as late. Data without it looks back to the year 2000 and floods the late list — the wizard sets it; keep it when building seeds.
 
 ### 6.2 Paid, late, part-paid
@@ -153,6 +153,7 @@ All state is one JSON object persisted through `window.api` (IndexedDB database 
   - one-time income and advance inflows the same way, using `loggedAt` / `createdAt`;
   - bills, subscriptions, card payments and manual advance paybacks count when `paidAt` is later than the update, whatever their due date, minus any `coverLog` part payment made before it; unpaid part payments count by `coverLog.at`.
 - `recordBalance` saves what the app expected alongside the real figure so "Past balance updates" can show how close it was.
+- **Leaving a move out:** every row under "What changed" opens `MoveSheet`. "Leave it out of my balance" sets `data.wallet.ignored[move.key]` through `setMoveCounted`; `walletSummary` returns counted `moves` and a separate `leftOut` list (shown as "Left out of your balance", tap to count it again). It is for bookkeeping catch-up — something already paid before the last balance update, or money that never moved — and changes nothing else. `recordBalance` clears `ignored`, because a new balance starts fresh.
 - **The balance question only appears on the Wallet tab.** `balanceUpdateDue` (enabled + `walletMonthlyCheck` + no update this calendar month + not snoozed today) is read by `SpendingPage` when it mounts; it opens `BalanceSheet` with `prompted` and jumps the pager to Balance. "Not now" snoozes for the day. Never prompt on load, on Home, from Settings or in onboarding.
 - The card's "after bills" sentence = balance − `useNextCheck(data, 0).due`.
 - **Negative balances:** `settings.walletNegative` + `settings.walletOverdraftLimit` (0 = no set limit). `walletFloor(data)` is the one place the lowest allowed balance is decided: `0` when off, `-limit` with a limit, `-Infinity` with none. The iPhone decimal keypad has no minus key, so `BalanceSheet` shows an "Above zero / Below zero" toggle when the floor is below 0; entries below the floor disable Save with the reason. `WalletCard` words an overdrawn balance against the floor, and its bills line has three tones: fine, `.warn` (inside the overdraft), `.short` (past it).
@@ -170,6 +171,19 @@ All state is one JSON object persisted through `window.api` (IndexedDB database 
 - **Budget:** `MonthHeader`, hero = **left to spend** (projected income − recurring bills − logged purchases) with a per-day figure and a pace marker, "How this month adds up", budgets (`BudgetModal`, day-to-day categories only). Advances show here when the wallet is off.
 - **Spending:** `MonthHeader`, "Buy again" (`repeatBuys` chips that pass a `preset` into `QuickAddModal`, current month only), "Where it went" (tap a category to filter), the month's purchases.
 - **Trends:** `MonthHeader`, six-month bars, four stat tiles.
+
+### 6.7 Editing a recurring bill, subscription, paycheck or card payment
+
+**Edits never rewrite the past.** This exists because the owner changed Rent's start date, every past rent moved to the new day and showed up unpaid, and marking them paid took $3,060 out of the wallet.
+
+- `editFromDate(data, entry, isIncome)` picks the **pivot**: for bills, subscriptions and card payments, the first occurrence (from `installDate` and the start of the current version) that is not paid, removed or dismissed; for paychecks, the first one after today.
+- `entryEditForm` opens `EntryFormModal` with the date set to the pivot (and the span end shifted to match), plus `_from`. The form shows "This is the next one you haven't paid yet. Changes start here…". `CreditCardSheet` does the same for `paymentDate`. Never open an edit form at the entry's original anchor `date`.
+- `applyEditedEntry` → `rescheduleEntry(data, before, edited, from)`:
+  - If the schedule from the pivot is unchanged (`scheduleSignature`: dates for 400 days, price, span), only names/categories/colours/end date change and the original anchor is kept.
+  - Otherwise the old version is frozen into `entry.history` (`[{ ...VERSION_FIELDS, until }]`, oldest first; each segment covers dates before its `until`). The cut is `scheduleCut`: the earlier of the pivot and the new date, but never before the day after the last occurrence before the pivot, so picking an old start date can't reach back over paid bills.
+  - `carryOccurrences` moves per-occurrence state (paid, price, part payment, moved-to-paycheck, removed…) from old dates on/after the cut to the nearest new date within `CARRY_GAP`, so the next bill keeps its price and paid mark.
+- `expandEntry` plays the segments back (`expandSchedule` per version), so every screen, the late list, the wallet and plan progress see past occurrences exactly as they were. `entryOn(entry, date)` gives the version in effect on a date (`resolvedAmount` uses it); `seriesStart(entry)` is the first segment's anchor (payment counts use it). `RepeatEndBlock` counts "payments left" from the pivot when editing.
+- Covered by tests (rent move, far-back date, price change, carried price, paycheck change, card payment).
 
 Categories: `MAJOR_CATEGORIES` (bills) and `MINOR_CATEGORIES` (subscriptions, incl. Payment plan) are recurring-bill shaped; `ONE_TIME_PAYMENT_CATEGORIES` is day-to-day spending — keep bill-shaped names out of it. `categoriesByUse` floats the ones actually bought to the front.
 
@@ -211,10 +225,12 @@ Ordered by priority. Remove an item when it's done and add new ones as you find 
 6. **Fix the Home hero label for other months.** It reads "August so far" for a finished month and "October so far" for a future one. Use "All of August" for past months and hide or reword it for future months.
 7. **Commit the on-screen test scripts.** The Playwright click-through scripts (seed data, tour, add/advance/plan/balance flows, pager, balance prompt, overdraft, onboarding, desktop) have only lived in session scratch space. Add them under `.claude/skills/verify/` (loading `playwright-core` from an environment-provided path, no `package.json`) and document them in `SKILL.md`, with dates relative to today.
 8. **Small tidy-ups.** Delete the unused `assets/logo.svg` (only listed in `sw.js` `SHELL`). Refresh the `manifest.json` description to mention the wallet. Make the `index.html` load-failure message friendlier for a phone user (it currently talks about `npx serve`).
-9. **Desktop layout pass** — deliberately deferred until the owner says mobile is finished.
+9. **Ask "paid just now, or already paid?" when catching up.** Marking a bill paid whose due date is before the last balance update always takes it from the wallet (it's stamped now). Offer a choice in `OccurrenceHub` — "I paid it today" vs "It was already paid before <date>" (stamp `paidAt` before the update) — so catching up never needs the "Leave it out" fix afterwards.
+10. **Desktop layout pass** — deliberately deferred until the owner says mobile is finished.
 
 ## 11. History
 
 - **5.0** — wallet tracking, advances, payment plans, and the iOS-style redesign (Sheets, new Add window, new design tokens).
 - **5.1** — "check" → "paycheck" everywhere and a plain-language pass; balance question moved to the Wallet tab only; Wallet became a four-page swipe pager; "Reset spending history"; removed the duplicated Essentials/Subscriptions pages, Home "Projected", Statistics summary and "Coming up", the Settings Sync card, the onboarding wallet step and the credit-card tiles.
 - **5.2** — negative balances with an optional overdraft limit.
+- **5.3** — edits to recurring entries start from the next unpaid one and never rewrite the past (schedule history); "Leave it out of my balance" on every Wallet change.

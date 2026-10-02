@@ -248,7 +248,7 @@ function SpendingPage({ data, setData, onAddEntry, pageIndex, setPageIndex }) {
       due: !!summary && data.settings.walletMonthlyCheck !== false && summary.check.date.slice(0, 7) < todayYmd().slice(0, 7),
       onUpdate: () => { haptic('medium'); setBalanceSheet('manual'); }
     }),
-    summary ? h(WalletActivity, { data, summary }) : null,
+    summary ? h(WalletActivity, { data, setData, summary }) : null,
     advancesBlock
   );
 

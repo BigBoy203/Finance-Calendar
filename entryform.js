@@ -17,7 +17,7 @@ function planEnd(date, freq, plan) {
 
 function paymentCount(entry) {
   if (!entry.repeatUntil || !entry.date || !entry.freq || entry.freq === 'none') return 0;
-  return expandEntry(entry, parseYmd(entry.date), parseYmd(entry.repeatUntil)).length;
+  return expandEntry(entry, parseYmd(seriesStart(entry)), parseYmd(entry.repeatUntil)).length;
 }
 
 function planProgress(data, entry) {
@@ -25,7 +25,7 @@ function planProgress(data, entry) {
   if (!total) return null;
   const todayStr = todayYmd();
   const removed = data.removedOccurrences || {};
-  const left = expandEntry(entry, parseYmd(entry.date), parseYmd(entry.repeatUntil))
+  const left = expandEntry(entry, parseYmd(seriesStart(entry)), parseYmd(entry.repeatUntil))
     .filter((o) => !removed[`${entry.id}|${o.occDate}`] && !isPaid(data, entry.id, o.occDate) && o.occDate >= todayStr)
     .length;
   return { total, left };
@@ -45,14 +45,15 @@ function EntryRow({ name, sub, note, amount, positive, color, onClick }) {
   return h('button', { className: 'entry-row', onClick }, inner, h('span', { className: 'att-chevron' }, '›'));
 }
 
-function RepeatEndBlock({ form, amount, currency, settings, onUntil, onCount }) {
+function RepeatEndBlock({ form, amount, currency, settings, onUntil, onCount, left }) {
   const total = paymentCount(form);
+  const unit = left ? 'left' : (total === 1 ? 'payment' : 'payments');
   return h('div', { className: 'reveal-block' },
     h(Field, { label: 'Last payment' },
       h(DateField, { value: form.repeatUntil, onChange: onUntil, settings, placeholder: 'Pick the last payment' })
     ),
     h('div', { className: 'qa-block' },
-      h('p', { className: 'qa-label' }, 'Or pick how many payments'),
+      h('p', { className: 'qa-label' }, left ? 'Or pick how many are left' : 'Or pick how many payments'),
       h(ChipToggle, {
         wide: true,
         value: total,
@@ -61,7 +62,7 @@ function RepeatEndBlock({ form, amount, currency, settings, onUntil, onCount }) 
       })
     ),
     total > 0 ? h('p', { className: 'setup-hint' },
-      `${total} ${total === 1 ? 'payment' : 'payments'}${amount > 0 ? ` · ${fmtCurrency(amount * total, currency)} in all` : ''} · the last one is ${formatDate(parseYmd(form.repeatUntil), settings, { year: true })}`
+      `${total} ${unit}${amount > 0 ? ` · ${fmtCurrency(amount * total, currency)} ${left ? 'to go' : 'in all'}` : ''} · the last one is ${formatDate(parseYmd(form.repeatUntil), settings, { year: true })}`
     ) : null
   );
 }
@@ -171,6 +172,11 @@ function EntryFormModal({ data, title, entry, categories, dateLabel, showFreq, i
           h(DateField, { value: form.date, onChange: setDate, settings: data.settings })
         ),
 
+    form._from ? h('p', { className: 'setup-hint tight' },
+      isIncome
+        ? 'This is your next paycheck. Changes start here — earlier paychecks stay as they were.'
+        : 'This is the next one you haven’t paid yet. Changes start here — earlier ones keep their dates, amounts and paid marks.') : null,
+
     useFreq ? h('div', { className: 'qa-block' },
       h('p', { className: 'qa-label' }, 'Repeats'),
       h(FreqChips, { value: form.freq, onPick: setFreq, withOnce: true })
@@ -220,6 +226,7 @@ function EntryFormModal({ data, title, entry, categories, dateLabel, showFreq, i
       form,
       amount: amountValue,
       currency,
+      left: !!form._from,
       settings: data.settings,
       onUntil: (d) => { setPlan(null); update('repeatUntil', d); },
       onCount: (n) => { setPlan({ count: n }); setForm((f) => withPlan(f, { count: n })); }
@@ -268,16 +275,143 @@ function getEditModalConfig(sourceList) {
   return { title: 'Edit bill', categories: MAJOR_CATEGORIES, dateLabel: 'Due date', showFreq: true };
 }
 
+const CARRY_GAP = { weekly: 3, biweekly: 7, monthly: 15, yearly: 60 };
+
+function editFromDate(data, entry, isIncome) {
+  if (!entry.freq || entry.freq === 'none') return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const horizon = new Date(today);
+  horizon.setDate(horizon.getDate() + 400);
+  const history = entry.history || [];
+  const versionStart = history.length ? parseYmd(history[history.length - 1].until) : null;
+  let start = getEarliestTrackedDate(data);
+  if (isIncome) {
+    start = new Date(today);
+    start.setDate(start.getDate() + 1);
+  }
+  if (versionStart && versionStart > start) start = versionStart;
+  const removed = data.removedOccurrences || {};
+  const open = expandEntry(entry, start, horizon).find((o) => {
+    if (removed[`${entry.id}|${o.occDate}`]) return false;
+    return isIncome || (!isPaid(data, entry.id, o.occDate) && !isDismissedLate(data, entry.id, o.occDate));
+  });
+  return open ? open.occDate : null;
+}
+
+function shiftedDateEnd(entry, date) {
+  if (!entry.useDateRange || !entry.dateEnd || !entry.date) return entry.dateEnd || '';
+  const end = parseYmd(date);
+  end.setDate(end.getDate() + daysBetween(parseYmd(entry.date), parseYmd(entry.dateEnd)));
+  return ymd(end);
+}
+
+function entryEditForm(data, entry, isIncome) {
+  const form = { ...entryToFormShape(entry), _isNew: false };
+  const from = editFromDate(data, entry, isIncome);
+  return from ? { ...form, date: from, dateEnd: shiftedDateEnd(entry, from), _from: from } : form;
+}
+
+function scheduleSignature(entry, from) {
+  const start = parseYmd(from);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 400);
+  const dates = expandSchedule({ ...entry, repeatUntil: '' }, start, end).map((o) => o.occDate).join(',');
+  const price = entry.useAmountRange ? `r${Number(entry.amountMin) || 0}-${Number(entry.amountMax) || 0}` : `a${Number(entry.amount) || 0}`;
+  const span = entry.useDateRange && entry.dateEnd ? daysBetween(parseYmd(entry.date), parseYmd(entry.dateEnd)) : 0;
+  return `${dates}|${price}|${span}`;
+}
+
+function scheduleCut(entry, from, newDate) {
+  const earliest = newDate < from ? newDate : from;
+  const lookback = parseYmd(from);
+  lookback.setDate(lookback.getDate() - 400);
+  const before = parseYmd(from);
+  before.setDate(before.getDate() - 1);
+  const prior = expandEntry(entry, lookback, before);
+  if (!prior.length) return earliest;
+  const floor = parseYmd(prior[prior.length - 1].occDate);
+  floor.setDate(floor.getDate() + 1);
+  return ymd(floor) > earliest ? ymd(floor) : earliest;
+}
+
+function splitHistory(entry, cut) {
+  const kept = [];
+  let start = '';
+  for (const seg of entry.history || []) {
+    if (start >= cut) return kept;
+    kept.push(seg.until > cut ? { ...seg, until: cut } : seg);
+    start = seg.until;
+  }
+  const lastDay = parseYmd(cut);
+  lastDay.setDate(lastDay.getDate() - 1);
+  const firstDay = parseYmd(start || entry.date);
+  if (start < cut && expandSchedule(entry, firstDay, lastDay).length) kept.push({ ...scheduleVersion(entry), until: cut });
+  return kept;
+}
+
+function withHistory(entry, history) {
+  const out = { ...entry };
+  delete out.history;
+  if (history && history.length) out.history = history;
+  return out;
+}
+
+function carryOccurrences(data, before, after, cut) {
+  const start = parseYmd(cut);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 400);
+  const oldDates = expandEntry(before, start, end).map((o) => o.occDate);
+  const newDates = expandEntry(after, start, end).map((o) => o.occDate);
+  const gap = CARRY_GAP[after.freq] || CARRY_GAP.monthly;
+  const taken = new Set(newDates.filter((d) => oldDates.includes(d)));
+  const pairs = [];
+  oldDates.forEach((d) => {
+    if (newDates.includes(d)) return;
+    let best = null;
+    newDates.forEach((n) => {
+      if (taken.has(n)) return;
+      const dist = Math.abs(daysBetween(parseYmd(d), parseYmd(n)));
+      if (dist <= gap && (!best || dist < best.dist)) best = { n, dist };
+    });
+    if (best) {
+      taken.add(best.n);
+      pairs.push([d, best.n]);
+    }
+  });
+  if (!pairs.length) return data;
+  const next = { ...data };
+  OCCURRENCE_MAPS.forEach((name) => {
+    const map = data[name];
+    if (!map) return;
+    let copy = null;
+    pairs.forEach(([fromDate, toDate]) => {
+      const oldKey = `${after.id}|${fromDate}`;
+      const newKey = `${after.id}|${toDate}`;
+      if (!Object.prototype.hasOwnProperty.call(map, oldKey) || Object.prototype.hasOwnProperty.call(map, newKey)) return;
+      copy = copy || { ...map };
+      copy[newKey] = copy[oldKey];
+      delete copy[oldKey];
+    });
+    if (copy) next[name] = copy;
+  });
+  return next;
+}
+
+function rescheduleEntry(data, before, edited, from) {
+  if (!before) return { data, entry: edited };
+  if (!from || !before.freq || before.freq === 'none') return { data, entry: withHistory(edited, before.history) };
+  if (scheduleSignature(before, from) === scheduleSignature(edited, from)) {
+    return { data, entry: withHistory({ ...edited, date: before.date, dateEnd: before.dateEnd }, before.history) };
+  }
+  const cut = scheduleCut(before, from, edited.date);
+  const entry = withHistory(edited, splitHistory(before, cut));
+  return { data: carryOccurrences(data, before, entry, cut), entry };
+}
+
 function applyEditedEntry(data, sourceList, cleaned) {
-  const { _isNew, ...entry } = cleaned;
-  if (sourceList === 'majorBills') {
-    return { ...data, majorBills: data.majorBills.map((e) => (e.id === entry.id ? entry : e)) };
-  }
-  if (sourceList === 'subscriptions') {
-    return { ...data, subscriptions: data.subscriptions.map((e) => (e.id === entry.id ? entry : e)) };
-  }
-  if (sourceList === 'incomeSources') {
-    return { ...data, incomeSources: data.incomeSources.map((e) => (e.id === entry.id ? entry : e)) };
-  }
-  return data;
+  const { _isNew, _from, ...edited } = cleaned;
+  const list = data[sourceList] || [];
+  const result = rescheduleEntry(data, list.find((e) => e.id === edited.id), edited, _from);
+  return { ...result.data, [sourceList]: list.map((e) => (e.id === edited.id ? result.entry : e)) };
 }

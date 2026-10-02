@@ -187,10 +187,23 @@ function walletMoves(data, check) {
 function walletSummary(data) {
   const check = lastBalance(data);
   if (!check) return null;
-  const moves = walletMoves(data, check);
+  const ignored = (data.wallet && data.wallet.ignored) || {};
+  const all = walletMoves(data, check).map((m) => (ignored[m.key] ? { ...m, ignored: true } : m));
+  const moves = all.filter((m) => !m.ignored);
   const moneyIn = moves.filter((m) => m.amount > 0).reduce((sum, m) => sum + m.amount, 0);
   const moneyOut = moves.filter((m) => m.amount < 0).reduce((sum, m) => sum - m.amount, 0);
-  return { check, moves, moneyIn, moneyOut, balance: round2(check.amount + moneyIn - moneyOut) };
+  return { check, moves, leftOut: all.filter((m) => m.ignored), moneyIn, moneyOut, balance: round2(check.amount + moneyIn - moneyOut) };
+}
+
+function setMoveCounted(data, move, counted) {
+  const wallet = data.wallet || { checks: [], snoozed: null };
+  const ignored = { ...(wallet.ignored || {}) };
+  if (counted) delete ignored[move.key];
+  else ignored[move.key] = true;
+  return logActivity(
+    { ...data, wallet: { ...wallet, ignored } },
+    counted ? `Counted "${move.name}" in the balance again` : `Left "${move.name}" out of the balance`
+  );
 }
 
 function walletOn(data) {
@@ -222,7 +235,7 @@ function recordBalance(data, amount) {
   };
   const checks = [check, ...((data.wallet && data.wallet.checks) || [])].slice(0, BALANCE_HISTORY);
   return logActivity(
-    { ...data, wallet: { ...(data.wallet || {}), checks, snoozed: null } },
+    { ...data, wallet: { ...(data.wallet || {}), checks, snoozed: null, ignored: {} } },
     `Updated balance to ${fmtCurrency(check.amount, data.settings.currency)}`
   );
 }
@@ -238,18 +251,12 @@ function resetSpendingHistory(data) {
     Object.keys(map || {}).forEach((k) => { if (!gone.has(k)) out[k] = map[k]; });
     return out;
   };
+  const maps = {};
+  OCCURRENCE_MAPS.forEach((name) => { maps[name] = keep(data[name]); });
   return logActivity({
     ...data,
+    ...maps,
     oneTimeEntries: data.oneTimeEntries.filter((e) => e.oneTimeKind !== 'payment'),
-    paidHistory: keep(data.paidHistory),
-    paidAt: keep(data.paidAt),
-    overrides: keep(data.overrides),
-    forcedLate: keep(data.forcedLate),
-    dismissedLate: keep(data.dismissedLate),
-    deferred: keep(data.deferred),
-    covered: keep(data.covered),
-    coverLog: keep(data.coverLog),
-    removedOccurrences: keep(data.removedOccurrences),
     wallet: { checks: [], snoozed: null }
   }, 'Reset spending history');
 }
@@ -389,13 +396,56 @@ function WalletCard({ data, summary, nextCheck, due, onUpdate }) {
 
 const ACTIVITY_PREVIEW = 8;
 
-function WalletActivity({ data, summary }) {
+function MoveSheet({ data, setData, move, onClose }) {
+  const currency = data.settings.currency;
+
+  function toggle() {
+    haptic(move.ignored ? 'light' : 'medium');
+    setData(setMoveCounted(data, move, !!move.ignored));
+    onClose();
+  }
+
+  return h(Sheet, {
+    title: move.name,
+    sub: `${move.kind} · ${formatDate(parseYmd(move.date), data.settings, { weekday: true })}`,
+    onClose
+  },
+    h('div', { className: 'calc-list' },
+      h('div', { className: 'calc-row' },
+        h('span', null, move.ignored ? 'Left out of your balance' : (move.amount > 0 ? 'Added to your balance' : 'Taken from your balance')),
+        h('span', { className: `calc-amt${move.amount > 0 && !move.ignored ? ' good' : ''}` }, signedMoney(move.amount, currency))
+      )
+    ),
+    h('div', { className: 'action-list' },
+      move.ignored
+        ? h(ActionRow, { title: 'Count it in my balance again', sub: 'Puts it back into the math', onClick: toggle })
+        : h(ActionRow, {
+            title: 'Leave it out of my balance',
+            sub: 'For something already paid before your last balance update, or money that never actually moved. Nothing else changes — it stays on your calendar.',
+            onClick: toggle
+          })
+    ),
+    h('p', { className: 'setup-hint' }, 'Your next balance update starts fresh, so this only matters until then.')
+  );
+}
+
+function WalletActivity({ data, setData, summary }) {
   const currency = data.settings.currency;
   const [showAll, setShowAll] = useState(false);
-  const { check, moves, moneyIn, moneyOut, balance } = summary;
+  const [openMove, setOpenMove] = useState(null);
+  const { check, moves, leftOut, moneyIn, moneyOut, balance } = summary;
   const checkDate = formatDate(parseYmd(check.date), data.settings);
   const checks = (data.wallet && data.wallet.checks) || [];
   const visible = showAll ? moves : moves.slice(0, ACTIVITY_PREVIEW);
+  const moveRow = (m) => h(EntryRow, {
+    key: m.key,
+    name: m.name,
+    sub: `${m.kind} · ${formatDate(parseYmd(m.date), data.settings)}`,
+    amount: signedMoney(m.amount, currency),
+    positive: m.amount > 0 && !m.ignored,
+    color: m.amount > 0 && !m.ignored ? 'var(--text-success)' : 'var(--border-secondary)',
+    onClick: () => setOpenMove(m)
+  });
 
   return h(React.Fragment, null,
     h('section', { className: 'spend-section' },
@@ -418,25 +468,20 @@ function WalletActivity({ data, summary }) {
     h('section', { className: 'spend-section' },
       h(SectionHead, {
         title: 'What changed',
-        caption: moves.length === 0 ? `Nothing has moved since ${checkDate}` : `Since ${checkDate}, newest first`
+        caption: moves.length === 0 ? `Nothing has moved since ${checkDate}` : `Since ${checkDate}, newest first · tap one to leave it out`
       }),
       moves.length === 0
         ? h('p', { className: 'empty-state' }, 'Paychecks, bills you mark paid and purchases you log will show up here.')
-        : h('div', { className: 'entry-list' },
-            visible.map((m) => h(EntryRow, {
-              key: m.key,
-              name: m.name,
-              sub: `${m.kind} · ${formatDate(parseYmd(m.date), data.settings)}`,
-              amount: signedMoney(m.amount, currency),
-              positive: m.amount > 0,
-              color: m.amount > 0 ? 'var(--text-success)' : 'var(--border-secondary)'
-            }))
-          ),
+        : h('div', { className: 'entry-list' }, visible.map(moveRow)),
       moves.length > ACTIVITY_PREVIEW
         ? h('button', { className: 'att-more', onClick: () => setShowAll(!showAll) },
             showAll ? 'Show less' : `Show all ${moves.length}`)
         : null
     ),
+    leftOut.length > 0 ? h('section', { className: 'spend-section' },
+      h(SectionHead, { title: 'Left out of your balance', caption: 'Still on your calendar · tap one to count it again' }),
+      h('div', { className: 'entry-list' }, leftOut.map(moveRow))
+    ) : null,
     checks.length > 1 ? h('section', { className: 'spend-section' },
       h(SectionHead, { title: 'Past balance updates', caption: 'What you had, and how close the app was' }),
       h('div', { className: 'entry-list' },
@@ -453,7 +498,8 @@ function WalletActivity({ data, summary }) {
           });
         })
       )
-    ) : null
+    ) : null,
+    openMove ? h(MoveSheet, { data, setData, move: openMove, onClose: () => setOpenMove(null) }) : null
   );
 }
 

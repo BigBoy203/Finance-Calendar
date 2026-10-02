@@ -616,7 +616,7 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
 
   function openEdit() {
     const entry = (data[occ.sourceList] || []).find((e) => e.id === occ.id);
-    if (entry) setEditing({ ...entryToFormShape(entry), _isNew: false });
+    if (entry) setEditing(entryEditForm(data, entry, occ.sourceList === 'incomeSources'));
   }
 
   function saveEdit(cleaned) {

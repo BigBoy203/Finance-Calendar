@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const h = React.createElement;
 
-const WEB_VERSION = '5.2';
+const WEB_VERSION = '5.3';
 
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -230,7 +230,43 @@ function scheduleLabel(entry, data) {
   return [when, repeat, !plan && entry.category !== entry.name ? entry.category : ''].filter(Boolean).join(' \u00b7 ');
 }
 
+const VERSION_FIELDS = ['date', 'freq', 'amount', 'amountMin', 'amountMax', 'useAmountRange', 'useDateRange', 'dateEnd'];
+const OCCURRENCE_MAPS = ['paidHistory', 'paidAt', 'overrides', 'covered', 'coverLog', 'deferred', 'forcedLate', 'dismissedLate', 'removedOccurrences'];
+
+function scheduleVersion(entry) {
+  const version = {};
+  VERSION_FIELDS.forEach((k) => { version[k] = entry[k]; });
+  return version;
+}
+
+function entryOn(entry, occDate) {
+  const seg = (entry.history || []).find((s) => occDate < s.until);
+  if (!seg) return entry;
+  const { until, ...fields } = seg;
+  return { ...entry, ...fields };
+}
+
+function seriesStart(entry) {
+  return entry.history && entry.history.length ? entry.history[0].date : entry.date;
+}
+
 function expandEntry(entry, rangeStart, rangeEnd) {
+  const history = entry.history || [];
+  if (!history.length) return expandSchedule(entry, rangeStart, rangeEnd);
+  const occurrences = [];
+  let from = rangeStart;
+  history.forEach((seg) => {
+    const { until, ...fields } = seg;
+    const last = parseYmd(until);
+    last.setDate(last.getDate() - 1);
+    occurrences.push(...expandSchedule({ ...entry, ...fields }, from, last < rangeEnd ? last : rangeEnd));
+    const next = parseYmd(until);
+    if (next > from) from = next;
+  });
+  return occurrences.concat(expandSchedule(entry, from, rangeEnd));
+}
+
+function expandSchedule(entry, rangeStart, rangeEnd) {
   const occurrences = [];
   if (!entry.date) return occurrences;
   let cur = parseYmd(entry.date);
@@ -284,8 +320,8 @@ function expandAll(entries, kind, rangeStart, rangeEnd, data) {
       all.push({
         ...occ,
         kind,
-        amount: hasOverride ? Number(override.amount) || 0 : (isEstimate ? estimate.amount : entryAmount(entry)),
-        isRange: !!entry.useAmountRange,
+        amount: hasOverride ? Number(override.amount) || 0 : (isEstimate ? estimate.amount : entryAmount(occ)),
+        isRange: !!occ.useAmountRange,
         hasOverride,
         isEstimate,
         estimateCount: isEstimate ? estimate.count : 0
@@ -315,7 +351,7 @@ function hasAmountOverride(override) {
 
 function resolvedAmount(data, entry, occDate) {
   const override = getOverride(data, entry.id, occDate);
-  return hasAmountOverride(override) ? Number(override.amount) || 0 : entryAmount(entry);
+  return hasAmountOverride(override) ? Number(override.amount) || 0 : entryAmount(entryOn(entry, occDate));
 }
 
 function oneTimeOccurrence(data, entry) {
@@ -552,23 +588,28 @@ function getAllBillLikeEntries(data) {
   return [...data.majorBills, ...data.subscriptions, ...getCreditCardPaymentEntries(data), ...getAdvanceEntries(data)];
 }
 
+function cardPaymentEntry(card) {
+  const entry = {
+    id: `cc-${card.id}`,
+    name: `${card.name} payment`,
+    amount: Number(card.paymentAmount) || 0,
+    amountMin: 0,
+    amountMax: 0,
+    useAmountRange: false,
+    date: card.paymentDate,
+    dateEnd: '',
+    useDateRange: false,
+    freq: card.paymentFreq || 'monthly',
+    category: 'Credit card'
+  };
+  return card.paymentHistory && card.paymentHistory.length ? { ...entry, history: card.paymentHistory } : entry;
+}
+
 function getCreditCardPaymentEntries(data) {
   if (!data.creditCards) return [];
   return data.creditCards
     .filter((c) => c.hasRecurringPayment && c.paymentAmount && c.paymentDate)
-    .map((c) => ({
-      id: `cc-${c.id}`,
-      name: `${c.name} payment`,
-      amount: Number(c.paymentAmount) || 0,
-      amountMin: 0,
-      amountMax: 0,
-      useAmountRange: false,
-      date: c.paymentDate,
-      dateEnd: '',
-      useDateRange: false,
-      freq: c.paymentFreq || 'monthly',
-      category: 'Credit card'
-    }));
+    .map(cardPaymentEntry);
 }
 
 function getLateBills(data) {
@@ -749,7 +790,7 @@ function getNeedsAttention(data) {
 const _averageCache = new WeakMap();
 
 function averagePaycheck(data, entry) {
-  const key = `${entry.id}|${entry.date}|${entry.freq}|${entry.repeatUntil || ''}`;
+  const key = `${entry.id}|${entry.date}|${entry.freq}|${entry.repeatUntil || ''}|${(entry.history || []).length}`;
   let cached = _averageCache.get(data);
   if (!cached) { cached = {}; _averageCache.set(data, cached); }
   if (cached[key]) return cached[key];
@@ -1548,7 +1589,7 @@ function planEnd(date, freq, plan) {
 
 function paymentCount(entry) {
   if (!entry.repeatUntil || !entry.date || !entry.freq || entry.freq === 'none') return 0;
-  return expandEntry(entry, parseYmd(entry.date), parseYmd(entry.repeatUntil)).length;
+  return expandEntry(entry, parseYmd(seriesStart(entry)), parseYmd(entry.repeatUntil)).length;
 }
 
 function planProgress(data, entry) {
@@ -1556,7 +1597,7 @@ function planProgress(data, entry) {
   if (!total) return null;
   const todayStr = todayYmd();
   const removed = data.removedOccurrences || {};
-  const left = expandEntry(entry, parseYmd(entry.date), parseYmd(entry.repeatUntil))
+  const left = expandEntry(entry, parseYmd(seriesStart(entry)), parseYmd(entry.repeatUntil))
     .filter((o) => !removed[`${entry.id}|${o.occDate}`] && !isPaid(data, entry.id, o.occDate) && o.occDate >= todayStr)
     .length;
   return { total, left };
@@ -1576,14 +1617,15 @@ function EntryRow({ name, sub, note, amount, positive, color, onClick }) {
   return h('button', { className: 'entry-row', onClick }, inner, h('span', { className: 'att-chevron' }, '›'));
 }
 
-function RepeatEndBlock({ form, amount, currency, settings, onUntil, onCount }) {
+function RepeatEndBlock({ form, amount, currency, settings, onUntil, onCount, left }) {
   const total = paymentCount(form);
+  const unit = left ? 'left' : (total === 1 ? 'payment' : 'payments');
   return h('div', { className: 'reveal-block' },
     h(Field, { label: 'Last payment' },
       h(DateField, { value: form.repeatUntil, onChange: onUntil, settings, placeholder: 'Pick the last payment' })
     ),
     h('div', { className: 'qa-block' },
-      h('p', { className: 'qa-label' }, 'Or pick how many payments'),
+      h('p', { className: 'qa-label' }, left ? 'Or pick how many are left' : 'Or pick how many payments'),
       h(ChipToggle, {
         wide: true,
         value: total,
@@ -1592,7 +1634,7 @@ function RepeatEndBlock({ form, amount, currency, settings, onUntil, onCount }) 
       })
     ),
     total > 0 ? h('p', { className: 'setup-hint' },
-      `${total} ${total === 1 ? 'payment' : 'payments'}${amount > 0 ? ` · ${fmtCurrency(amount * total, currency)} in all` : ''} · the last one is ${formatDate(parseYmd(form.repeatUntil), settings, { year: true })}`
+      `${total} ${unit}${amount > 0 ? ` · ${fmtCurrency(amount * total, currency)} ${left ? 'to go' : 'in all'}` : ''} · the last one is ${formatDate(parseYmd(form.repeatUntil), settings, { year: true })}`
     ) : null
   );
 }
@@ -1702,6 +1744,11 @@ function EntryFormModal({ data, title, entry, categories, dateLabel, showFreq, i
           h(DateField, { value: form.date, onChange: setDate, settings: data.settings })
         ),
 
+    form._from ? h('p', { className: 'setup-hint tight' },
+      isIncome
+        ? 'This is your next paycheck. Changes start here — earlier paychecks stay as they were.'
+        : 'This is the next one you haven’t paid yet. Changes start here — earlier ones keep their dates, amounts and paid marks.') : null,
+
     useFreq ? h('div', { className: 'qa-block' },
       h('p', { className: 'qa-label' }, 'Repeats'),
       h(FreqChips, { value: form.freq, onPick: setFreq, withOnce: true })
@@ -1751,6 +1798,7 @@ function EntryFormModal({ data, title, entry, categories, dateLabel, showFreq, i
       form,
       amount: amountValue,
       currency,
+      left: !!form._from,
       settings: data.settings,
       onUntil: (d) => { setPlan(null); update('repeatUntil', d); },
       onCount: (n) => { setPlan({ count: n }); setForm((f) => withPlan(f, { count: n })); }
@@ -1799,18 +1847,145 @@ function getEditModalConfig(sourceList) {
   return { title: 'Edit bill', categories: MAJOR_CATEGORIES, dateLabel: 'Due date', showFreq: true };
 }
 
+const CARRY_GAP = { weekly: 3, biweekly: 7, monthly: 15, yearly: 60 };
+
+function editFromDate(data, entry, isIncome) {
+  if (!entry.freq || entry.freq === 'none') return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const horizon = new Date(today);
+  horizon.setDate(horizon.getDate() + 400);
+  const history = entry.history || [];
+  const versionStart = history.length ? parseYmd(history[history.length - 1].until) : null;
+  let start = getEarliestTrackedDate(data);
+  if (isIncome) {
+    start = new Date(today);
+    start.setDate(start.getDate() + 1);
+  }
+  if (versionStart && versionStart > start) start = versionStart;
+  const removed = data.removedOccurrences || {};
+  const open = expandEntry(entry, start, horizon).find((o) => {
+    if (removed[`${entry.id}|${o.occDate}`]) return false;
+    return isIncome || (!isPaid(data, entry.id, o.occDate) && !isDismissedLate(data, entry.id, o.occDate));
+  });
+  return open ? open.occDate : null;
+}
+
+function shiftedDateEnd(entry, date) {
+  if (!entry.useDateRange || !entry.dateEnd || !entry.date) return entry.dateEnd || '';
+  const end = parseYmd(date);
+  end.setDate(end.getDate() + daysBetween(parseYmd(entry.date), parseYmd(entry.dateEnd)));
+  return ymd(end);
+}
+
+function entryEditForm(data, entry, isIncome) {
+  const form = { ...entryToFormShape(entry), _isNew: false };
+  const from = editFromDate(data, entry, isIncome);
+  return from ? { ...form, date: from, dateEnd: shiftedDateEnd(entry, from), _from: from } : form;
+}
+
+function scheduleSignature(entry, from) {
+  const start = parseYmd(from);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 400);
+  const dates = expandSchedule({ ...entry, repeatUntil: '' }, start, end).map((o) => o.occDate).join(',');
+  const price = entry.useAmountRange ? `r${Number(entry.amountMin) || 0}-${Number(entry.amountMax) || 0}` : `a${Number(entry.amount) || 0}`;
+  const span = entry.useDateRange && entry.dateEnd ? daysBetween(parseYmd(entry.date), parseYmd(entry.dateEnd)) : 0;
+  return `${dates}|${price}|${span}`;
+}
+
+function scheduleCut(entry, from, newDate) {
+  const earliest = newDate < from ? newDate : from;
+  const lookback = parseYmd(from);
+  lookback.setDate(lookback.getDate() - 400);
+  const before = parseYmd(from);
+  before.setDate(before.getDate() - 1);
+  const prior = expandEntry(entry, lookback, before);
+  if (!prior.length) return earliest;
+  const floor = parseYmd(prior[prior.length - 1].occDate);
+  floor.setDate(floor.getDate() + 1);
+  return ymd(floor) > earliest ? ymd(floor) : earliest;
+}
+
+function splitHistory(entry, cut) {
+  const kept = [];
+  let start = '';
+  for (const seg of entry.history || []) {
+    if (start >= cut) return kept;
+    kept.push(seg.until > cut ? { ...seg, until: cut } : seg);
+    start = seg.until;
+  }
+  const lastDay = parseYmd(cut);
+  lastDay.setDate(lastDay.getDate() - 1);
+  const firstDay = parseYmd(start || entry.date);
+  if (start < cut && expandSchedule(entry, firstDay, lastDay).length) kept.push({ ...scheduleVersion(entry), until: cut });
+  return kept;
+}
+
+function withHistory(entry, history) {
+  const out = { ...entry };
+  delete out.history;
+  if (history && history.length) out.history = history;
+  return out;
+}
+
+function carryOccurrences(data, before, after, cut) {
+  const start = parseYmd(cut);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 400);
+  const oldDates = expandEntry(before, start, end).map((o) => o.occDate);
+  const newDates = expandEntry(after, start, end).map((o) => o.occDate);
+  const gap = CARRY_GAP[after.freq] || CARRY_GAP.monthly;
+  const taken = new Set(newDates.filter((d) => oldDates.includes(d)));
+  const pairs = [];
+  oldDates.forEach((d) => {
+    if (newDates.includes(d)) return;
+    let best = null;
+    newDates.forEach((n) => {
+      if (taken.has(n)) return;
+      const dist = Math.abs(daysBetween(parseYmd(d), parseYmd(n)));
+      if (dist <= gap && (!best || dist < best.dist)) best = { n, dist };
+    });
+    if (best) {
+      taken.add(best.n);
+      pairs.push([d, best.n]);
+    }
+  });
+  if (!pairs.length) return data;
+  const next = { ...data };
+  OCCURRENCE_MAPS.forEach((name) => {
+    const map = data[name];
+    if (!map) return;
+    let copy = null;
+    pairs.forEach(([fromDate, toDate]) => {
+      const oldKey = `${after.id}|${fromDate}`;
+      const newKey = `${after.id}|${toDate}`;
+      if (!Object.prototype.hasOwnProperty.call(map, oldKey) || Object.prototype.hasOwnProperty.call(map, newKey)) return;
+      copy = copy || { ...map };
+      copy[newKey] = copy[oldKey];
+      delete copy[oldKey];
+    });
+    if (copy) next[name] = copy;
+  });
+  return next;
+}
+
+function rescheduleEntry(data, before, edited, from) {
+  if (!before) return { data, entry: edited };
+  if (!from || !before.freq || before.freq === 'none') return { data, entry: withHistory(edited, before.history) };
+  if (scheduleSignature(before, from) === scheduleSignature(edited, from)) {
+    return { data, entry: withHistory({ ...edited, date: before.date, dateEnd: before.dateEnd }, before.history) };
+  }
+  const cut = scheduleCut(before, from, edited.date);
+  const entry = withHistory(edited, splitHistory(before, cut));
+  return { data: carryOccurrences(data, before, entry, cut), entry };
+}
+
 function applyEditedEntry(data, sourceList, cleaned) {
-  const { _isNew, ...entry } = cleaned;
-  if (sourceList === 'majorBills') {
-    return { ...data, majorBills: data.majorBills.map((e) => (e.id === entry.id ? entry : e)) };
-  }
-  if (sourceList === 'subscriptions') {
-    return { ...data, subscriptions: data.subscriptions.map((e) => (e.id === entry.id ? entry : e)) };
-  }
-  if (sourceList === 'incomeSources') {
-    return { ...data, incomeSources: data.incomeSources.map((e) => (e.id === entry.id ? entry : e)) };
-  }
-  return data;
+  const { _isNew, _from, ...edited } = cleaned;
+  const list = data[sourceList] || [];
+  const result = rescheduleEntry(data, list.find((e) => e.id === edited.id), edited, _from);
+  return { ...result.data, [sourceList]: list.map((e) => (e.id === edited.id ? result.entry : e)) };
 }
 
 const MAJOR_CATEGORIES = ['Rent/mortgage', 'Power', 'Water', 'Gas', 'Insurance', 'Car payment', 'Phone', 'Internet', 'Credit card', 'Other'];
@@ -3346,7 +3521,7 @@ function OccurrenceHub({ data, setData, occ, currency, inCheckCard, pushTo, onCl
 
   function openEdit() {
     const entry = (data[occ.sourceList] || []).find((e) => e.id === occ.id);
-    if (entry) setEditing({ ...entryToFormShape(entry), _isNew: false });
+    if (entry) setEditing(entryEditForm(data, entry, occ.sourceList === 'incomeSources'));
   }
 
   function saveEdit(cleaned) {
@@ -3491,22 +3666,23 @@ function getDateRangeSpans(data, allBills, gridStart, gridEnd) {
   const spans = [];
 
   function addFromEntry(e, kind, sourceList) {
-    if (!e.useDateRange || !e.date || !e.dateEnd) return;
-    const baseStart = parseYmd(e.date);
-    const baseEnd = parseYmd(e.dateEnd);
-    if (baseEnd < baseStart) return;
-    const offsetDays = daysBetween(baseStart, baseEnd);
-
+    if (!e.date) return;
     if (!e.freq || e.freq === 'none') {
-      if (baseEnd >= gridStart && baseStart <= gridEnd) {
+      if (!e.useDateRange || !e.dateEnd) return;
+      const baseStart = parseYmd(e.date);
+      const baseEnd = parseYmd(e.dateEnd);
+      if (baseEnd >= baseStart && baseEnd >= gridStart && baseStart <= gridEnd) {
         spans.push({ id: e.id, occDate: e.date, name: e.name, kind, sourceList, color: e.color, startDate: baseStart, endDate: baseEnd });
       }
       return;
     }
+    if (!e.useDateRange && !(e.history || []).some((seg) => seg.useDateRange)) return;
 
     const removed = data.removedOccurrences || {};
     expandEntry(e, gridStart, gridEnd).forEach((occ) => {
-      if (removed[`${e.id}|${occ.occDate}`]) return;
+      if (removed[`${e.id}|${occ.occDate}`] || !occ.useDateRange || !occ.dateEnd) return;
+      const offsetDays = daysBetween(parseYmd(occ.date), parseYmd(occ.dateEnd));
+      if (offsetDays < 0) return;
       const occStart = parseYmd(occ.occDate);
       const occEnd = new Date(occStart);
       occEnd.setDate(occEnd.getDate() + offsetDays);
@@ -4726,7 +4902,7 @@ function SpendingPage({ data, setData, onAddEntry, pageIndex, setPageIndex }) {
       due: !!summary && data.settings.walletMonthlyCheck !== false && summary.check.date.slice(0, 7) < todayYmd().slice(0, 7),
       onUpdate: () => { haptic('medium'); setBalanceSheet('manual'); }
     }),
-    summary ? h(WalletActivity, { data, summary }) : null,
+    summary ? h(WalletActivity, { data, setData, summary }) : null,
     advancesBlock
   );
 
@@ -5187,10 +5363,23 @@ function walletMoves(data, check) {
 function walletSummary(data) {
   const check = lastBalance(data);
   if (!check) return null;
-  const moves = walletMoves(data, check);
+  const ignored = (data.wallet && data.wallet.ignored) || {};
+  const all = walletMoves(data, check).map((m) => (ignored[m.key] ? { ...m, ignored: true } : m));
+  const moves = all.filter((m) => !m.ignored);
   const moneyIn = moves.filter((m) => m.amount > 0).reduce((sum, m) => sum + m.amount, 0);
   const moneyOut = moves.filter((m) => m.amount < 0).reduce((sum, m) => sum - m.amount, 0);
-  return { check, moves, moneyIn, moneyOut, balance: round2(check.amount + moneyIn - moneyOut) };
+  return { check, moves, leftOut: all.filter((m) => m.ignored), moneyIn, moneyOut, balance: round2(check.amount + moneyIn - moneyOut) };
+}
+
+function setMoveCounted(data, move, counted) {
+  const wallet = data.wallet || { checks: [], snoozed: null };
+  const ignored = { ...(wallet.ignored || {}) };
+  if (counted) delete ignored[move.key];
+  else ignored[move.key] = true;
+  return logActivity(
+    { ...data, wallet: { ...wallet, ignored } },
+    counted ? `Counted "${move.name}" in the balance again` : `Left "${move.name}" out of the balance`
+  );
 }
 
 function walletOn(data) {
@@ -5222,7 +5411,7 @@ function recordBalance(data, amount) {
   };
   const checks = [check, ...((data.wallet && data.wallet.checks) || [])].slice(0, BALANCE_HISTORY);
   return logActivity(
-    { ...data, wallet: { ...(data.wallet || {}), checks, snoozed: null } },
+    { ...data, wallet: { ...(data.wallet || {}), checks, snoozed: null, ignored: {} } },
     `Updated balance to ${fmtCurrency(check.amount, data.settings.currency)}`
   );
 }
@@ -5238,18 +5427,12 @@ function resetSpendingHistory(data) {
     Object.keys(map || {}).forEach((k) => { if (!gone.has(k)) out[k] = map[k]; });
     return out;
   };
+  const maps = {};
+  OCCURRENCE_MAPS.forEach((name) => { maps[name] = keep(data[name]); });
   return logActivity({
     ...data,
+    ...maps,
     oneTimeEntries: data.oneTimeEntries.filter((e) => e.oneTimeKind !== 'payment'),
-    paidHistory: keep(data.paidHistory),
-    paidAt: keep(data.paidAt),
-    overrides: keep(data.overrides),
-    forcedLate: keep(data.forcedLate),
-    dismissedLate: keep(data.dismissedLate),
-    deferred: keep(data.deferred),
-    covered: keep(data.covered),
-    coverLog: keep(data.coverLog),
-    removedOccurrences: keep(data.removedOccurrences),
     wallet: { checks: [], snoozed: null }
   }, 'Reset spending history');
 }
@@ -5389,13 +5572,56 @@ function WalletCard({ data, summary, nextCheck, due, onUpdate }) {
 
 const ACTIVITY_PREVIEW = 8;
 
-function WalletActivity({ data, summary }) {
+function MoveSheet({ data, setData, move, onClose }) {
+  const currency = data.settings.currency;
+
+  function toggle() {
+    haptic(move.ignored ? 'light' : 'medium');
+    setData(setMoveCounted(data, move, !!move.ignored));
+    onClose();
+  }
+
+  return h(Sheet, {
+    title: move.name,
+    sub: `${move.kind} · ${formatDate(parseYmd(move.date), data.settings, { weekday: true })}`,
+    onClose
+  },
+    h('div', { className: 'calc-list' },
+      h('div', { className: 'calc-row' },
+        h('span', null, move.ignored ? 'Left out of your balance' : (move.amount > 0 ? 'Added to your balance' : 'Taken from your balance')),
+        h('span', { className: `calc-amt${move.amount > 0 && !move.ignored ? ' good' : ''}` }, signedMoney(move.amount, currency))
+      )
+    ),
+    h('div', { className: 'action-list' },
+      move.ignored
+        ? h(ActionRow, { title: 'Count it in my balance again', sub: 'Puts it back into the math', onClick: toggle })
+        : h(ActionRow, {
+            title: 'Leave it out of my balance',
+            sub: 'For something already paid before your last balance update, or money that never actually moved. Nothing else changes — it stays on your calendar.',
+            onClick: toggle
+          })
+    ),
+    h('p', { className: 'setup-hint' }, 'Your next balance update starts fresh, so this only matters until then.')
+  );
+}
+
+function WalletActivity({ data, setData, summary }) {
   const currency = data.settings.currency;
   const [showAll, setShowAll] = useState(false);
-  const { check, moves, moneyIn, moneyOut, balance } = summary;
+  const [openMove, setOpenMove] = useState(null);
+  const { check, moves, leftOut, moneyIn, moneyOut, balance } = summary;
   const checkDate = formatDate(parseYmd(check.date), data.settings);
   const checks = (data.wallet && data.wallet.checks) || [];
   const visible = showAll ? moves : moves.slice(0, ACTIVITY_PREVIEW);
+  const moveRow = (m) => h(EntryRow, {
+    key: m.key,
+    name: m.name,
+    sub: `${m.kind} · ${formatDate(parseYmd(m.date), data.settings)}`,
+    amount: signedMoney(m.amount, currency),
+    positive: m.amount > 0 && !m.ignored,
+    color: m.amount > 0 && !m.ignored ? 'var(--text-success)' : 'var(--border-secondary)',
+    onClick: () => setOpenMove(m)
+  });
 
   return h(React.Fragment, null,
     h('section', { className: 'spend-section' },
@@ -5418,25 +5644,20 @@ function WalletActivity({ data, summary }) {
     h('section', { className: 'spend-section' },
       h(SectionHead, {
         title: 'What changed',
-        caption: moves.length === 0 ? `Nothing has moved since ${checkDate}` : `Since ${checkDate}, newest first`
+        caption: moves.length === 0 ? `Nothing has moved since ${checkDate}` : `Since ${checkDate}, newest first · tap one to leave it out`
       }),
       moves.length === 0
         ? h('p', { className: 'empty-state' }, 'Paychecks, bills you mark paid and purchases you log will show up here.')
-        : h('div', { className: 'entry-list' },
-            visible.map((m) => h(EntryRow, {
-              key: m.key,
-              name: m.name,
-              sub: `${m.kind} · ${formatDate(parseYmd(m.date), data.settings)}`,
-              amount: signedMoney(m.amount, currency),
-              positive: m.amount > 0,
-              color: m.amount > 0 ? 'var(--text-success)' : 'var(--border-secondary)'
-            }))
-          ),
+        : h('div', { className: 'entry-list' }, visible.map(moveRow)),
       moves.length > ACTIVITY_PREVIEW
         ? h('button', { className: 'att-more', onClick: () => setShowAll(!showAll) },
             showAll ? 'Show less' : `Show all ${moves.length}`)
         : null
     ),
+    leftOut.length > 0 ? h('section', { className: 'spend-section' },
+      h(SectionHead, { title: 'Left out of your balance', caption: 'Still on your calendar · tap one to count it again' }),
+      h('div', { className: 'entry-list' }, leftOut.map(moveRow))
+    ) : null,
     checks.length > 1 ? h('section', { className: 'spend-section' },
       h(SectionHead, { title: 'Past balance updates', caption: 'What you had, and how close the app was' }),
       h('div', { className: 'entry-list' },
@@ -5453,7 +5674,8 @@ function WalletActivity({ data, summary }) {
           });
         })
       )
-    ) : null
+    ) : null,
+    openMove ? h(MoveSheet, { data, setData, move: openMove, onClose: () => setOpenMove(null) }) : null
   );
 }
 
@@ -5744,7 +5966,11 @@ function blankCreditCard() {
 
 function CreditCardSheet({ data, card, onSave, onDelete, onClose }) {
   const currency = data.settings.currency;
-  const [form, setForm] = useState(() => (card ? { ...blankCreditCard(), ...card } : blankCreditCard()));
+  const [form, setForm] = useState(() => {
+    if (!card) return blankCreditCard();
+    const from = card.hasRecurringPayment && card.paymentDate ? editFromDate(data, cardPaymentEntry(card), false) : null;
+    return from ? { ...blankCreditCard(), ...card, paymentDate: from, _from: from } : { ...blankCreditCard(), ...card };
+  });
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
   const canSave = form.name.trim() !== '';
 
@@ -5793,6 +6019,8 @@ function CreditCardSheet({ data, card, onSave, onDelete, onClose }) {
           h(DateField, { value: form.paymentDate, onChange: (d) => set('paymentDate', d), settings: data.settings })
         )
       ),
+      form._from ? h('p', { className: 'setup-hint tight' },
+        'This is the next payment you haven’t made yet. Changes start here — earlier payments keep their dates and paid marks.') : null,
       h('div', { className: 'qa-block' },
         h('p', { className: 'qa-label' }, 'Repeats'),
         h(FreqChips, { value: form.paymentFreq, onPick: (f) => set('paymentFreq', f) })
@@ -5823,16 +6051,25 @@ function CreditCardsPage({ data, setData }) {
     const amountPaid = form.amountPaid === '' ? 0 : parseFloat(form.amountPaid) || 0;
     const existing = editing.card;
     const principalChanged = !existing || existing.totalDebt !== totalDebt || existing.amountPaid !== amountPaid;
-    const entry = {
-      ...form,
+    const { _from, ...fields } = form;
+    let entry = {
+      ...fields,
       totalDebt,
       amountPaid,
       paymentAmount: form.paymentAmount === '' ? 0 : parseFloat(form.paymentAmount) || 0,
       apr: form.apr === '' ? 0 : parseFloat(form.apr) || 0,
       balanceDate: principalChanged ? todayYmd() : (form.balanceDate || todayYmd())
     };
+    let next = data;
+    if (existing && existing.hasRecurringPayment && entry.hasRecurringPayment) {
+      const result = rescheduleEntry(data, cardPaymentEntry(existing), cardPaymentEntry(entry), _from);
+      next = result.data;
+      entry = { ...entry, paymentDate: result.entry.date };
+      delete entry.paymentHistory;
+      if (result.entry.history) entry.paymentHistory = result.entry.history;
+    }
     if (existing) {
-      setData(logActivity({ ...data, creditCards: cards.map((c) => (c.id === existing.id ? entry : c)) }, `Edited credit card "${entry.name}"`));
+      setData(logActivity({ ...next, creditCards: cards.map((c) => (c.id === existing.id ? entry : c)) }, `Edited credit card "${entry.name}"`));
     } else {
       setData(logActivity({ ...data, creditCards: [...cards, entry] }, `Added credit card "${entry.name}"`));
     }
@@ -5867,7 +6104,7 @@ function CreditCardsPage({ data, setData }) {
             const accruedInterest = Math.max(0, currentBalance - Math.max(0, total - paid));
             const pct = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
             const nextPay = c.hasRecurringPayment && c.paymentDate
-              ? nextDueDate({ date: c.paymentDate, freq: c.paymentFreq || 'monthly' })
+              ? nextDueDate(cardPaymentEntry(c))
               : null;
             const late = isCardPaymentLate(c, data);
             return h('div', { key: c.id, className: 'credit-card-tile' },
@@ -6046,7 +6283,8 @@ function AllBillsPage({ data, setData, attention, isMobile, setPage }) {
 
   function openEdit(e) {
     if (e.sourceList === 'creditCards') { setPage('creditcards'); return; }
-    setEditing({ sourceList: e.sourceList, form: { ...entryToFormShape(e), _isNew: false } });
+    const entry = (data[e.sourceList] || []).find((x) => x.id === e.id) || e;
+    setEditing({ sourceList: e.sourceList, form: entryEditForm(data, entry, false) });
   }
 
   function openAdd(sourceList) {
@@ -6301,7 +6539,7 @@ function SettingsPage({ data, setData, onRestart }) {
   }
 
   function openEditIncome(entry) {
-    setEditingIncome({ ...entryToFormShape(entry), _isNew: false });
+    setEditingIncome(entryEditForm(data, entry, true));
   }
 
   function handleIncomeSubmit(cleaned) {

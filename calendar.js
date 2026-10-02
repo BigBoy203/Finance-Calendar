@@ -18,22 +18,23 @@ function getDateRangeSpans(data, allBills, gridStart, gridEnd) {
   const spans = [];
 
   function addFromEntry(e, kind, sourceList) {
-    if (!e.useDateRange || !e.date || !e.dateEnd) return;
-    const baseStart = parseYmd(e.date);
-    const baseEnd = parseYmd(e.dateEnd);
-    if (baseEnd < baseStart) return;
-    const offsetDays = daysBetween(baseStart, baseEnd);
-
+    if (!e.date) return;
     if (!e.freq || e.freq === 'none') {
-      if (baseEnd >= gridStart && baseStart <= gridEnd) {
+      if (!e.useDateRange || !e.dateEnd) return;
+      const baseStart = parseYmd(e.date);
+      const baseEnd = parseYmd(e.dateEnd);
+      if (baseEnd >= baseStart && baseEnd >= gridStart && baseStart <= gridEnd) {
         spans.push({ id: e.id, occDate: e.date, name: e.name, kind, sourceList, color: e.color, startDate: baseStart, endDate: baseEnd });
       }
       return;
     }
+    if (!e.useDateRange && !(e.history || []).some((seg) => seg.useDateRange)) return;
 
     const removed = data.removedOccurrences || {};
     expandEntry(e, gridStart, gridEnd).forEach((occ) => {
-      if (removed[`${e.id}|${occ.occDate}`]) return;
+      if (removed[`${e.id}|${occ.occDate}`] || !occ.useDateRange || !occ.dateEnd) return;
+      const offsetDays = daysBetween(parseYmd(occ.date), parseYmd(occ.dateEnd));
+      if (offsetDays < 0) return;
       const occStart = parseYmd(occ.occDate);
       const occEnd = new Date(occStart);
       occEnd.setDate(occEnd.getDate() + offsetDays);
